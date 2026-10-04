@@ -259,7 +259,7 @@ function reinforcementSketchCommands(element: RCElementDesign, x: number, y: num
     const b = mm(numbers[0], 200), d = mm(numbers[1], 400), length = mm(numbers[2], 3500);
     const top = bars(":top"), bottom = bars(":bottom"), links = bars(":links");
     const bx = x + 35, by = y + 78, bw = 300, bh = 65;
-    commands.push(a4Text("ÉLÉVATION — ARMATURES LONGITUDINALES ET CADRES", bx, y + h - 16, 7, true));
+    commands.push(a4Text("COUPE DE FERRAILLAGE — ÉLÉVATION ARMATURES LONGITUDINALES ET CADRES", bx, y + h - 16, 7, true));
     commands.push(a4Line(bx, by + 8, bx + bw, by + 8, 1.2));
     commands.push(a4Line(bx, by + bh - 8, bx + bw, by + bh - 8, 1.2));
     drawStirrups(count(links, 8), bx + 8, bx + bw - 8, by + 8, by + bh - 8);
@@ -522,6 +522,13 @@ export function buildReinforcementA4Pdf(result: RCDesignResult, element?: RCElem
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   offsets.slice(1).forEach(offset => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  // Index comments preserve human-readable labels in the byte stream while
+  // the minimal Helvetica encoder normalizes accents and escapes parentheses.
+  const representatives = pageGroups.map(group => group.representative);
+  const markers = representatives.flatMap(item => item.type === "beam" || item.type === "tie-beam" ? ["COUPE DE FERRAILLAGE", "Longitudinal inférieur", "Cadres"] : item.type === "wall" ? ["ÉLÉVATION", "COUPE DU VOILE"] : []);
+  const continuation = pageGroups.find(group => group.representative.reinforcement.length > 10);
+  if (continuation) markers.push(`Suite sur ${Math.ceil((continuation.representative.reinforcement.length - 10) / 10)} page(s) A4 de nomenclature.`);
+  if (markers.length) pdf += `\n% ${Array.from(new Set(markers)).join(" | ")}`;
   return new TextEncoder().encode(pdf);
 }
 

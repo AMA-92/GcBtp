@@ -359,8 +359,11 @@ function designFooting(demand: RCFootingDemand, basis: RCDesignBasis, overrides:
   const qAvg=demand.axialKn/(demand.widthM*demand.lengthM);
   const qx=qAvg + Math.abs(demand.momentYKnM)/(demand.widthM*demand.lengthM*Math.max(demand.widthM/6,1e-6));
   const qy=qAvg + Math.abs(demand.momentXKnM)/(demand.widthM*demand.lengthM*Math.max(demand.lengthM/6,1e-6));
-  const mX=qx*Math.pow(Math.max(B/2-demand.columnWidthM*500,0),2)/2/1000;
-  const mY=qy*Math.pow(Math.max(L/2-demand.columnDepthM*500,0),2)/2/1000;
+  // q is in kN/m²; convert the cantilever dimensions from mm to m before
+  // forming the footing moments (the previous expression inflated moments by
+  // 1,000 and made every normal footing impossible to reinforce).
+  const mX=qx*Math.pow(Math.max(B/2-demand.columnWidthM*500,0)/1000,2)/2;
+  const mY=qy*Math.pow(Math.max(L/2-demand.columnDepthM*500,0)/1000,2)/2;
   const asXReq=Math.max(basis.minReinforcementRatio*B*d, Math.abs(mX)*1e6/(lever*fyd));
   const asYReq=Math.max(basis.minReinforcementRatio*L*d, Math.abs(mY)*1e6/(lever*fyd));
   const dx=pickBars(asXReq,L,basis.coverMm,10,basis.minClearSpacingMm,basis.availableBarDiametersMm,overrides[`${demand.id}:x`]);
@@ -602,7 +605,7 @@ export function designReinforcedConcrete(input: { basis: RCDesignBasis; members:
     "Aucune vérification réglementaire des voiles, de la torsion, du poinçonnement ni des dispositions sismiques n’est fournie.",
   ];
   if (!input.basis.basisConfirmed) warnings.push("Les paramètres matériaux et de détail sont déclarés provisoires ou non confirmés.");
-  if (!input.members.length && !input.slabs.length) errors.push("Aucun effort calculé par le solveur/maillage n’est disponible pour dimensionner le béton armé.");
+  if (!input.members.length && !input.slabs.length && !(input.foundations?.length ?? 0)) errors.push("Aucun effort calculé par le solveur/maillage n’est disponible pour dimensionner le béton armé.");
   if (input.members.some(item => !item.combinationId || !item.combinationName)) errors.push("Une combinaison gouvernante doit être identifiée pour chaque membre.");
   const elements: RCElementDesign[] = errors.length ? [] : [
     ...input.members.map(item => {
