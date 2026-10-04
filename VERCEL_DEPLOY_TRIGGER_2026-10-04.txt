@@ -1,0 +1,1 @@
+Deployment trigger after switching Vercel installation from pnpm to npm. The previous failing deployment used commit f01d8bd; this marker forces a fresh deployment from the current main branch configuration.
