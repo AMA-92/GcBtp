@@ -3,26 +3,27 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import AuthPage from "@/pages/AuthPage";
 
-type AuthGateProps = {
-  children: ReactNode;
-};
+type AuthGateProps = { children: ReactNode };
 
 export default function AuthGate({ children }: AuthGateProps) {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);\n  const [recovery, setRecovery] = useState(() => window.location.hash.includes("type=recovery"));
+  const [loading, setLoading] = useState(true);
+  const [recovery, setRecovery] = useState(() => window.location.hash.includes("type=recovery"));
 
   useEffect(() => {
     let mounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
-      if (mounted) {
-        setSession(data.session);
-        setLoading(false);
-      }
+      if (!mounted) return;
+      setSession(data.session);
+      setRecovery(window.location.hash.includes("type=recovery"));
+      setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (mounted) {\n        setSession(nextSession);\n        if (_event === "PASSWORD_RECOVERY") setRecovery(true);\n      }
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!mounted) return;
+      setSession(nextSession);
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
     });
 
     return () => {
@@ -45,5 +46,6 @@ export default function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (recovery) return <AuthPage initialMode="reset" />;\n  return session ? <>{children}</> : <AuthPage />;
+  if (recovery) return <AuthPage initialMode="reset" />;
+  return session ? <>{children}</> : <AuthPage />;
 }
