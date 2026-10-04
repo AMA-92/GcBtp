@@ -440,7 +440,7 @@ export default function BuildingCreateFlow({
     wind: false,
     seismic: false,
   });
-  const [loadProgram, setLoadProgram] = useState<LoadProgram>(() => createDefaultLoadProgram(norm));
+  const [loadProgram, setLoadProgram] = useState<LoadProgram>(() => createDefaultLoadProgram(norm, usageProfile().id));
   const [gridDistance, setGridDistance] = useState("4.00");
   const [editingElement, setEditingElement] = useState<ElementItem | null>(
     null
@@ -927,9 +927,9 @@ export default function BuildingCreateFlow({
     try {
       const raw = sessionStorage.getItem(key);
       const restored = raw ? JSON.parse(raw) as LoadProgram : null;
-      setLoadProgram(restored?.schemaVersion === 1 ? restored : createDefaultLoadProgram(selected.norm || norm));
+      setLoadProgram(restored?.schemaVersion === 1 ? restored : createDefaultLoadProgram(selected.norm || norm, selected.projectUsage ?? "habitation"));
     } catch {
-      setLoadProgram(createDefaultLoadProgram(selected.norm || norm));
+      setLoadProgram(createDefaultLoadProgram(selected.norm || norm, selected.projectUsage ?? "habitation"));
     }
   }, [selected?.id]);
 
@@ -987,7 +987,7 @@ export default function BuildingCreateFlow({
       if (typeof config.analyticalTolerance === "string") setAnalyticalTolerance(config.analyticalTolerance);
       if (typeof config.activeLevelId === "string" && normalized.levels.some(level => level.id === config.activeLevelId)) setActiveLevelId(config.activeLevelId);
       setCustomModels(Array.isArray(workspace.customModels) ? workspace.customModels : []);
-      const restoredLoadProgram = workspace.loadProgram?.schemaVersion === 1 ? normalizeLoadProgram(workspace.loadProgram) : createDefaultLoadProgram(normalized.norm);
+      const restoredLoadProgram = workspace.loadProgram?.schemaVersion === 1 ? normalizeLoadProgram(workspace.loadProgram) : createDefaultLoadProgram(normalized.norm, normalized.projectUsage ?? "habitation");
       setLoadProgram(restoredLoadProgram);
       const storyCount = Math.max(1, normalized.levels.filter(level => level.id !== "foundation").length);
       setClimateDraft(normalizeClimateDraft(workspace.climateDraft, storyCount));
