@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { BookOpen, Building2, ChevronRight, LogOut } from "lucide-react";
-import AndroidWorkspace from "@/components/AndroidWorkspace";\nimport { supabase } from "@/lib/supabase";
+import AndroidWorkspace from "@/components/AndroidWorkspace";
+import { supabase } from "@/lib/supabase";
 
 /** Accueil structurel : accès direct au bâtiment et à son catalogue de charges. */
 export default function AndroidHome() {
-  const [screen, setScreen] = useState<"home" | "Bâtiments" | "Catalogue des charges">("home");\n  const [email, setEmail] = useState("");\n  useEffect(() => { supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? "")); }, []);
+  const [screen, setScreen] = useState<"home" | "Bâtiments" | "Catalogue des charges">("home");
+  const [email, setEmail] = useState("");
+  useEffect(() => { supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? "")); }, []);
   if (screen !== "home") return <AndroidWorkspace screen={screen} onBack={() => setScreen("home")} onNavigate={next => setScreen(next as typeof screen)} />;
   return <div className="android-shell fixed inset-0 z-40 overflow-y-auto bg-[#f7f7f7]">
     <header className="sticky top-0 z-10 flex h-[62px] items-center justify-between border-b border-[#ececec] bg-white px-4"><div className="flex items-center gap-2"><div className="grid h-8 w-8 place-items-center rounded-lg bg-[#079ca0] text-white"><Building2 className="h-4 w-4" /></div><span className="text-[15px] font-bold">GcBtp · Structure</span></div><button type="button" title={email ? `Déconnexion · ${email}` : "Déconnexion"} onClick={() => supabase.auth.signOut()} className="grid h-9 w-9 place-items-center rounded-xl border border-[#e3e9ed] bg-white text-[#71808a] hover:bg-[#f4f7f8]"><LogOut className="h-4 w-4" /></button></header>
