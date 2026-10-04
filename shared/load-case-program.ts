@@ -1,7 +1,7 @@
 export const LOAD_PROGRAM_SCHEMA_VERSION = 1 as const;
 export type LoadPatternCategory = "self-weight" | "permanent" | "variable" | "wind" | "snow" | "seismic" | "thermal" | "settlement" | "accidental";
 export type LoadValueStatus = "user-input" | "calculated" | "default-provisional" | "to-confirm";
-export type LoadPattern = { id: string; name: string; category: LoadPatternCategory; unit: "kN"; value: number; source: string; status: LoadValueStatus; direction: "vertical" | "x" | "y" | "none"; selfWeightMultiplier: number; enabled: boolean };
+export type LoadPattern = { id: string; name: string; category: LoadPatternCategory; unit: "kN" | "kN/m²"; value: number; source: string; status: LoadValueStatus; direction: "vertical" | "x" | "y" | "none"; selfWeightMultiplier: number; enabled: boolean };
 export type AnalysisCase = { id: string; name: string; type: "linear-static" | "modal" | "spectral"; patternFactors: Record<string, number>; enabled: boolean; provenance: "automatic" | "manual"; status: "provisional" | "ready" };
 export type LoadCombination = { id: string; name: string; category: "ULS" | "SLS-characteristic" | "SLS-frequent" | "SLS-quasi-permanent" | "wind" | "seismic" | "accidental"; caseFactors: Record<string, number>; enabled: boolean; origin: "automatic" | "manual"; status: "provisional" | "ready"; note: string; formula?: string; reference?: string };
 export type MassSource = { id: string; name: string; patternFactors: Record<string, number>; gravityMPerS2: number; status: "provisional" | "ready"; note: string };
@@ -12,7 +12,7 @@ export type EvaluatedCombination = { id: string; name: string; category: LoadCom
 const ACTIONS: Array<Omit<LoadPattern,"value"|"enabled"> & { value?: number; enabled?: boolean }> = [
   { id:"G", name:"Poids propre", category:"self-weight", unit:"kN", value:0, source:"Géométrie/sections — calcul à confirmer", status:"calculated", direction:"vertical", selfWeightMultiplier:1 },
   { id:"Gsup", name:"Charges permanentes ajoutées", category:"permanent", unit:"kN", value:0, source:"À saisir et associer à des éléments", status:"to-confirm", direction:"vertical", selfWeightMultiplier:0 },
-  { id:"Q", name:"Exploitation", category:"variable", unit:"kN", value:0, source:"À saisir selon l’usage des locaux", status:"to-confirm", direction:"vertical", selfWeightMultiplier:0 },
+  { id:"Q", name:"Exploitation", category:"variable", unit:"kN/m²", value:0, source:"À saisir selon l’usage des locaux", status:"to-confirm", direction:"vertical", selfWeightMultiplier:0 },
   { id:"partitions", name:"Cloisons et murs", category:"permanent", unit:"kN", value:0, source:"À saisir et associer à des éléments", status:"to-confirm", direction:"vertical", selfWeightMultiplier:0 },
   { id:"roof", name:"Toiture", category:"variable", unit:"kN", value:0, source:"À confirmer selon le complexe et l’usage", status:"to-confirm", direction:"vertical", selfWeightMultiplier:0 },
   { id:"windX", name:"Vent X", category:"wind", unit:"kN", value:0, source:"Paramètres locaux requis", status:"to-confirm", direction:"x", selfWeightMultiplier:0 },
