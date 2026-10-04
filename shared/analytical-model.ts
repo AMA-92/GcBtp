@@ -133,7 +133,7 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
   const sectionFor = (type: string, name?: string) => {
     const value = buildSection(type, name, input.modelCatalog);
     sections.set(value.id, value);
-    if (value.provenance === "unresolved") diagnostics.push({ severity: "warning", code: "section-unresolved", message: `Section « ${name || "non renseignée"} » non résolue dans le catalogue ; ses propriétés sont inconnues.`, elementIds: elements.filter(element => element.type === type && element.section === name).map(element => element.id) });
+    if (value.provenance === "unresolved") diagnostics.push({ severity: "error", code: "section-unresolved", message: `Section « ${name || "non renseignée"} » non résolue dans le catalogue ; les propriétés nécessaires au solveur sont inconnues.`, elementIds: elements.filter(element => element.type === type && element.section === name).map(element => element.id) });
     return value;
   };
   const addFrame = (element: AnalyticalGraphicElement & { levelId: string }, start: [number,number,number], end: [number,number,number], sourceType = element.type) => {
