@@ -1,5 +1,14 @@
 export type ModelFamily = "Poteau (Rect)" | "Poteau (Cir)" | "Poutre" | "Semelle" | "Voile" | "Longrine de redressement" | "Plancher (Corps Creux)" | "Plancher (Dalle BA)" | "Escaliers";
 export type ModelSpec = { family: ModelFamily; type: string; name: string; dimensions: string; color: string };
+export type ConcreteMaterialProperties = { concreteClass: "C25/30" | "C30/37" | "C35/45"; fck: number; fcd: number; fctm: number; Ecm: number; poissonRatio: number; density: number; cover: number };
+const CONCRETE_CATALOG: Record<ConcreteMaterialProperties["concreteClass"], ConcreteMaterialProperties> = {
+  "C25/30": { concreteClass: "C25/30", fck: 25, fcd: 14.17, fctm: 2.56, Ecm: 31_476_000, poissonRatio: 0.20, density: 25, cover: 30 },
+  "C30/37": { concreteClass: "C30/37", fck: 30, fcd: 17.00, fctm: 2.90, Ecm: 32_837_000, poissonRatio: 0.20, density: 25, cover: 30 },
+  "C35/45": { concreteClass: "C35/45", fck: 35, fcd: 19.83, fctm: 3.21, Ecm: 34_077_000, poissonRatio: 0.20, density: 25, cover: 35 },
+};
+export function resolveConcreteMaterial(concreteClass = "C25/30"): ConcreteMaterialProperties {
+  return { ...(CONCRETE_CATALOG[concreteClass as ConcreteMaterialProperties["concreteClass"]] ?? CONCRETE_CATALOG["C25/30"]) };
+}
 
 export const MODEL_CATALOG: ModelSpec[] = [
   { family: "Poteau (Rect)", type: "Poteau", name: "Pot_20x30", dimensions: "0.20 × 0.30 m", color: "#27358f" },

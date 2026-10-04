@@ -10,6 +10,12 @@ describe("priority 2 — load actions, cases, combinations and mass source", () 
     expect(validateLoadProgram(program).some(item=>item.severity==="error")).toBe(false);
   });
 
+  it("selects the provisional Q catalogue value from the project usage", () => {
+    expect(createDefaultLoadProgram(undefined, "habitation").patterns.find(item => item.id === "Q")?.value).toBe(2);
+    expect(createDefaultLoadProgram(undefined, "bureau").patterns.find(item => item.id === "Q")?.value).toBe(2.5);
+    expect(createDefaultLoadProgram(undefined, "commerce").patterns.find(item => item.id === "Q")?.value).toBe(5);
+  });
+
   it("repairs imported programs with empty special actions", () => {
     const program = createDefaultLoadProgram();
     program.cases.forEach(item => { item.enabled = true; });
