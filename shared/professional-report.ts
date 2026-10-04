@@ -1,0 +1,2 @@
+export type ReportSection={title:string;items:Array<{label:string;value:string;status:'OK'|'ATTENTION'|'BLOQUÉ'}>};
+export function buildProfessionalReport(sections:ReportSection[]){return {schemaVersion:2,generatedAt:new Date().toISOString(),status:sections.some(s=>s.items.some(i=>i.status==='BLOQUÉ'))?'NON VALIDÉ':sections.some(s=>s.items.some(i=>i.status==='ATTENTION'))?'À VÉRIFIER':'OK',sections};}

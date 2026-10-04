@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1787024239183,
+      "tag": "0000_numerous_multiple_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1787024400930,
+      "tag": "0001_small_loa",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787025127660,
+      "tag": "0002_illegal_menace",
+      "breakpoints": true
+    }
+  ]
+}

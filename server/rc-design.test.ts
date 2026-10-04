@@ -1,0 +1,151 @@
+import { describe, expect, it } from "vitest";
+import { deriveRCMemberDemandsFromPlane, designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
+import { solvePlaneFrame } from "@shared/frame-solver-2d";
+import type { AnalyticalModel } from "@shared/analytical-model";
+
+const basis = (): RCDesignBasis => ({
+  schemaVersion: 1,
+  standard: "Eurocode 2 — saisie de pré-étude",
+  nationalAnnex: "Annexe nationale à confirmer",
+  sourceReference: "Paramètres explicitement saisis pour le benchmark",
+  basisConfirmed: false,
+  fckMpa: 30,
+  fykMpa: 500,
+  gammaC: 1.5,
+  gammaS: 1.15,
+  alphaCC: 1,
+  coverMm: 30,
+  minReinforcementRatio: 0.0013,
+  maxReinforcementRatio: 0.04,
+  concreteShearStressLimitMpa: 0.4,
+  bondStressMpa: 2.25,
+  minClearSpacingMm: 20,
+  maxLinkSpacingMm: 300,
+  maxDeflectionRatio: 250,
+  maxColumnSlenderness: 100,
+  availableBarDiametersMm: [8, 10, 12, 16, 20, 25],
+});
+
+const beam = { id: "B1", type: "beam" as const, combinationId: "comb:uls", combinationName: "ELU benchmark", sectionWidthMm: 250, sectionDepthMm: 500, lengthMm: 5000, axialKn: 0, shearKn: 100, momentKnM: 100, positiveMomentKnM: 100, negativeMomentKnM: 60, serviceMomentKnM: 70, serviceDeflectionMm: 15 };
+
+describe("priority 6 — reinforced concrete pre-design and detailing proposals", () => {
+  it("blocks missing material, annex, provenance, and detailing inputs", () => {
+    const incomplete = basis();
+    incomplete.nationalAnnex = "";
+    incomplete.sourceReference = "";
+    incomplete.fckMpa = 0;
+    incomplete.maxDeflectionRatio = 0;
+    const errors = validateRCDesignBasis(incomplete);
+    expect(errors.some(item => item.includes("annexe"))).toBe(true);
+    expect(errors.some(item => item.includes("référence"))).toBe(true);
+    expect(errors.some(item => item.includes("fck"))).toBe(true);
+    expect(errors.some(item => item.includes("limite de flèche"))).toBe(true);
+  });
+
+  it("sizes top and bottom beam bars from separate governing moment signs and preserves combination provenance", () => {
+    const result = designReinforcedConcrete({ basis: basis(), members: [beam], slabs: [] });
+    expect(result.errors).toEqual([]);
+    expect(result.regulatoryReady).toBe(false);
+    const design = result.elements[0];
+    const bottom = design.reinforcement.find(item => item.id === "B1:bottom")!;
+    const top = design.reinforcement.find(item => item.id === "B1:top")!;
+    expect(bottom.requiredAreaMm2).toBeGreaterThan(top.requiredAreaMm2);
+    expect(bottom.diameterMm).toBeGreaterThan(0);
+    expect(bottom.count).toBeGreaterThanOrEqual(2);
+    expect(design.checks.find(item => item.id === "bottom-flexure")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "shear-total")?.status).toBe("satisfaisant");
+    expect(design.checks.every(item => item.combinationId === "comb:uls" && item.combinationName === "ELU benchmark")).toBe(true);
+  });
+
+  it("reruns checks against edited reinforcement and catches insufficient bar area", () => {
+    const result = designReinforcedConcrete({ basis: basis(), members: [beam], slabs: [], overrides: { "B1:bottom": { diameterMm: 8, count: 2 } } });
+    const design = result.elements[0];
+    expect(design.reinforcement.find(item => item.id === "B1:bottom")?.areaMm2).toBeCloseTo(100.531, 2);
+    expect(design.checks.find(item => item.id === "bottom-flexure")?.status).toBe("non satisfaisant");
+  });
+
+  it("checks column axial/bending demand, longitudinal bounds, slenderness, and rebar schedule", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(),
+      members: [{ id: "P1", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 700, shearKn: 15, momentKnM: 25, momentXKnM: 20, momentYKnM: 10 }],
+      slabs: [],
+    });
+    const design = result.elements[0];
+    expect(design.checks.map(item => item.id)).toContain("column-interaction");
+    expect(design.checks.map(item => item.id)).toContain("column-slenderness");
+    expect(design.reinforcement.map(item => item.id)).toContain("P1:ties");
+    expect(result.schedule.length).toBeGreaterThan(0);
+    expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
+  });
+
+  it("sizes slab X/Y strips separately and applies an explicit punching assumption", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(), members: [],
+      slabs: [{ id: "D1", combinationId: "comb:uls", combinationName: "ELU dalle", spanXM: 4, spanYM: 3, thicknessMm: 200, mxKnMPerM: 25, myKnMPerM: 10, serviceDeflectionMm: 8 }],
+    });
+    const design = result.elements[0];
+    expect(design.reinforcement.find(item => item.id === "D1:x")?.requiredAreaMm2).toBeGreaterThan(design.reinforcement.find(item => item.id === "D1:y")?.requiredAreaMm2 ?? 0);
+    expect(design.checks.find(item => item.id === "slab-punching")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "slab-deflection")?.status).toBe("satisfaisant");
+  });
+
+  it("refuses to design from missing solver demands and incomplete material data", () => {
+    const result = designReinforcedConcrete({ basis: basis(), members: [], slabs: [] });
+    expect(result.elements).toEqual([]);
+    expect(result.errors).toContain("Aucun effort calculé par le solveur/maillage n’est disponible pour dimensionner le béton armé.");
+    expect(result.blockers.length).toBeGreaterThan(0);
+  });
+
+  it("derives the interior positive moment from a solved uniformly loaded member and preserves the combination", () => {
+    const frameId = "F:B1";
+    const solved = solvePlaneFrame({
+      plane: "XZ",
+      nodes: [{ id: "A", x: 0, z: 0 }, { id: "B", x: 5, z: 0 }],
+      elements: [{ id: frameId, i: "A", j: "B", elasticModulusKnM2: 30_000_000, areaM2: 0.05, inertiaM4: 0.001 }],
+      supports: [{ nodeId: "A", restrained: [true, true, false] }, { nodeId: "B", restrained: [false, true, false] }],
+      memberLoads: [{ elementId: frameId, qyKnM: -10 }],
+    });
+    const model = {
+      frames: [{ id: frameId, sourceElementId: "B1", sourceType: "Poutre", startNodeId: "A", endNodeId: "B", sectionId: "S1" }],
+      sections: [{ id: "S1", dimensionsM: [0.25, 0.5] }],
+      nodes: [{ id: "A", x: 0, y: 0, z: 0 }, { id: "B", x: 5, y: 0, z: 0 }],
+    } as unknown as AnalyticalModel;
+    const extracted = deriveRCMemberDemandsFromPlane({ model, result: solved, combinationId: "comb:uls", combinationName: "ELU 1,35G+1,5Q", memberLoads: [{ elementId: frameId, qyKnM: -10 }] });
+    expect(extracted.warnings).toEqual([]);
+    expect(extracted.demands[0].positiveMomentKnM).toBeCloseTo(31.25, 7);
+    expect(extracted.demands[0].combinationName).toBe("ELU 1,35G+1,5Q");
+    expect(extracted.demands[0].sectionWidthMm).toBe(250);
+  });
+});
+
+
+it("ferraille une longrine de redressement avec le même calcul BA après résolution", () => {
+  const result = designReinforcedConcrete({
+    basis: basis(),
+    members: [{ id: "LR1", type: "beam", memberSubtype: "tie-beam", combinationId: "comb:uls", combinationName: "ELU longrine", sectionWidthMm: 300, sectionDepthMm: 500, lengthMm: 4000, axialKn: 80, shearKn: 60, momentKnM: 70, positiveMomentKnM: 70, negativeMomentKnM: 40 }],
+    slabs: [],
+  });
+  expect(result.elements[0].type).toBe("tie-beam");
+  expect(result.elements[0].reinforcement.some(item => item.id === "LR1:bottom")).toBe(true);
+  expect(result.elements[0].reinforcement.some(item => item.id === "LR1:links")).toBe(true);
+});
+
+it("ferraille une semelle à partir de la réaction et produit le métré acier", () => {
+  const result = designReinforcedConcrete({
+    basis: basis(), members: [], slabs: [],
+    foundations: [{ id: "S1", combinationId: "comb:uls", combinationName: "ELU fondation", widthM: 2, lengthM: 2, thicknessM: 0.45, columnWidthM: 0.30, columnDepthM: 0.30, axialKn: 500, shearKn: 20, momentXKnM: 20, momentYKnM: 15, soilBearingKPa: 180 }],
+  });
+  expect(result.errors).toEqual([]);
+  expect(result.elements[0].type).toBe("footing");
+  expect(result.elements[0].reinforcement.map(item => item.id)).toEqual(expect.arrayContaining(["S1:x", "S1:y"]));
+  expect(result.schedule.length).toBeGreaterThan(0);
+  expect(result.elements[0].checks.map(item => item.id)).toEqual(expect.arrayContaining(["bearing-screen", "flexion-x", "flexion-y", "punching"]));
+});
+
+describe("RC section optimization", () => {
+  it("finds a smaller footing when the available checks pass", () => {
+    const basis = { schemaVersion: 1 as const, standard: "test", nationalAnnex: "test", sourceReference: "test", basisConfirmed: true, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, alphaCC: 0.85, coverMm: 50, minReinforcementRatio: 0.0015, maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.8, bondStressMpa: 2.0, minClearSpacingMm: 20, maxLinkSpacingMm: 250, maxDeflectionRatio: 250, maxColumnSlenderness: 30, availableBarDiametersMm: [8,10,12,16,20,25] };
+    const proposals = proposeOptimizedRCSections({ basis, members: [], slabs: [], foundations: [{ id: "S1", levelLabel: "Fondation", combinationId: "ELU", combinationName: "ELU", widthM: 1, lengthM: 1, thicknessM: 0.2, columnWidthM: 0.2, columnDepthM: 0.2, axialKn: 20, shearKn: 0, momentXKnM: 0, momentYKnM: 0, soilBearingKPa: 300 }] });
+    expect(proposals.some(item => item.elementId === "S1" && item.proposedSection.dimensions[0] < 1)).toBe(true);
+  });
+});
