@@ -1,6 +1,0 @@
-# Références de recalibrage des charges
-
-- La page officielle de la Commission européenne sur EN 1991 décrit les familles suivantes : densités et poids propres, charges imposées, incendie, neige, vent, thermique, exécution et actions accidentelles. Source : https://eurocodes.jrc.ec.europa.eu/EN-Eurocodes/eurocode-1-actions-structures
-- La documentation Autodesk Robot sur le Load Take-Down indique que la méthode distribue les charges des planchers vers poutres, poteaux et murs, puis transfère la charge des étages supérieurs vers les niveaux inférieurs. Source : https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/What-is-Load-Take-Down-method-feature-released-in-version-2023-of-Robot-Structural-Analysis.html
-- Conséquence pour GcBtp : séparer Gk/Qk, distinguer actions surfaciques/linéaires/ponctuelles, appliquer les coefficients uniquement aux combinaisons, cumuler chaque niveau vers ses supports inférieurs et contrôler l’équilibre entre charges appliquées et réactions.
-- Les valeurs locales de vent, neige et séisme ne doivent pas être présentées comme universelles : elles doivent rester liées au pays, à la zone, au sol et au référentiel sélectionné, avec une provenance et un statut de validation.
