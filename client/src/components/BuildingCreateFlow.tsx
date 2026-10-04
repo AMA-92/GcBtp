@@ -4840,15 +4840,13 @@ function LoadProgramEditor({
       </div>
       <div className="space-y-1">
         <div className="font-semibold">Actions / patterns</div>
-        {program.patterns.map(pattern => {
-          const derived = pattern.id === "G" || pattern.id === "Q";
+        {program.patterns.filter(pattern => pattern.enabled).map(pattern => {
           const value = patternValues[pattern.id] ?? pattern.value;
-          return <div key={pattern.id} className="grid grid-cols-[20px_1fr_90px] items-center gap-2 rounded border border-[#edf1f1] p-2">
-            <input aria-label={`Activer ${pattern.name}`} type="checkbox" checked={pattern.enabled} onChange={event=>updatePattern(pattern.id,{enabled:event.target.checked})} />
+          return <div key={pattern.id} className="grid grid-cols-[1fr_90px] items-center gap-2 rounded border border-[#edf1f1] p-2">
             <div><b>{pattern.name}</b><div className="text-[9px] text-[#74858c]">{pattern.source} · {pattern.status}{pattern.selfWeightMultiplier ? ` · poids propre × ${pattern.selfWeightMultiplier}` : ""}</div></div>
-            <label className="flex items-center gap-1">{derived ? <span className="font-semibold">{value.toFixed(2)}</span> : <input aria-label={`Valeur ${pattern.name}`} className="h-7 w-[66px] rounded border px-1 text-right" type="number" min="0" step="0.1" value={pattern.value} onChange={event=>updatePattern(pattern.id,{value:Number(event.target.value),status:"user-input",source:"Saisie globale — affectation spatiale à définir"})} />}<span>kN</span></label>
+            <div className="text-right font-semibold">{value.toFixed(2)} kN</div>
           </div>;
-        })}
+        })}}
       </div>
       <div className="grid gap-1 rounded border border-[#edf1f1] p-2">
         <div className="font-semibold">Source de masse : {evaluation.massTonnes.toFixed(3)} t équivalentes</div>
