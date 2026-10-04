@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: gcbtp
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install --no-audit --no-fund && npm run build
+    startCommand: npm start
+    autoDeploy: true
+    healthCheckPath: /
