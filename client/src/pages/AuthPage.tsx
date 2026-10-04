@@ -3,7 +3,7 @@ import { ArrowRight, Building2, Check, Eye, EyeOff, LockKeyhole, Mail, ShieldChe
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 
-type Mode = "login" | "signup" | "forgot";
+type Mode = "login" | "signup" | "forgot" | "reset";
 
 const features = [
   "Modélisation 3D",
@@ -12,8 +12,8 @@ const features = [
   "Suivi de projet",
 ];
 
-export default function AuthPage() {
-  const [mode, setMode] = useState<Mode>("login");
+export default function AuthPage({ initialMode = "login" }: { initialMode?: Mode }) {
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -207,7 +207,7 @@ export default function AuthPage() {
               )}
 
               <button disabled={busy} className="gcbtp-auth-primary" type="submit">
-                {busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : mode === "signup" ? "Créer mon compte" : "Envoyer le lien"}
+                {busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : mode === "signup" ? "Créer mon compte" : mode === "reset" ? "Enregistrer le nouveau mot de passe" : "Envoyer le lien"}
                 {!busy && <ArrowRight className="h-4 w-4" />}
               </button>
             </form>
