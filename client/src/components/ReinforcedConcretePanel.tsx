@@ -151,7 +151,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, member
     onResultChange(next);
   };
   const runOptimization = () => {
-    const proposals = proposeOptimizedRCSections({ basis, members, slabs, foundations, overrides })
+    const proposals = proposeOptimizedRCSections({ basis, members, slabs, foundations, overrides, lockedElementIds: optimizedElementIds })
       .filter(proposal => !optimizedElementIds.has(proposal.elementId));
     // Voiles : recherche de la plus petite épaisseur conservant les contrôles disponibles.
     for (const wall of walls) {
