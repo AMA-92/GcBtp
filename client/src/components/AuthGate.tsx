@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import AuthPage from "@/pages/AuthPage";
 
 type AuthGateProps = {
-  children: React.ReactNode;
+  children: ReactNode;
 };
 
 export default function AuthGate({ children }: AuthGateProps) {
