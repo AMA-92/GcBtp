@@ -27,8 +27,16 @@ const ACTIONS: Array<Omit<LoadPattern,"value"|"enabled"> & { value?: number; ena
 
 const staticCase = (id: string, name: string, patternFactors: Record<string, number>, enabled = false): AnalysisCase => ({ id, name, type:"linear-static", patternFactors, enabled, provenance:"automatic", status:"provisional" });
 
-export function createDefaultLoadProgram(selectedStandard = "EN 1990 + EN 1991 + EN 1998 — annexe nationale / prescriptions locales à confirmer"): LoadProgram {
-  const patterns = ACTIONS.map(pattern=>({ ...pattern, value:pattern.value ?? 0, enabled:pattern.id === "G" || pattern.id === "Q" }));
+export function createDefaultLoadProgram(selectedStandard = "EN 1990 + EN 1991 + EN 1998 — annexe nationale / prescriptions locales à confirmer", projectUsage: "habitation" | "logement" | "bureau" | "commerce" = "habitation"): LoadProgram {
+  const isBael = selectedStandard.toLowerCase().includes("bael");
+  const usageLoads: Record<typeof projectUsage, number> = { habitation: 2, logement: 2, bureau: 2.5, commerce: 5 };
+  const qk = usageLoads[projectUsage] ?? 2;
+  const patterns = ACTIONS.map(pattern=>({
+    ...pattern,
+    value: pattern.id === "Q" ? qk : (pattern.value ?? 0),
+    enabled: pattern.id === "G" || pattern.id === "Q",
+    ...(pattern.id === "Q" ? { status: "calculated" as const, source: `Catalogue d’usage — ${projectUsage} : ${qk.toFixed(2)} kN/m²` } : {}),
+  }));
   const cases: AnalysisCase[] = [
     staticCase("case:G","G — permanentes et poids propre",{G:1,Gsup:1,partitions:1}, true),
     staticCase("case:Q","Q — exploitation",{Q:1}, true),
@@ -46,10 +54,10 @@ export function createDefaultLoadProgram(selectedStandard = "EN 1990 + EN 1991 +
     staticCase("case:settlement","Tassement",{settlement:1}),
     staticCase("case:accidental","Accidentel",{accidental:1}),
   ];
-  const combination = (id:string,name:string,category:LoadCombination["category"],caseFactors:Record<string,number>, enabled = false, formula = "Combinaison à confirmer selon l’annexe nationale"):LoadCombination => ({ id,name,category,caseFactors,enabled,origin:"automatic",status:"provisional",formula,reference:"EN 1990 · EN 1991 · EN 1998 · annexe nationale / prescriptions locales à confirmer",note:"Coefficient ou ψ provisoire : confirmer la catégorie d’usage, la situation de projet et l’annexe nationale applicable." });
+  const combination = (id:string,name:string,category:LoadCombination["category"],caseFactors:Record<string,number>, enabled = false, formula = "Combinaison à confirmer selon le référentiel"):LoadCombination => ({ id,name,category,caseFactors,enabled,origin:"automatic",status:isBael && (category === "ULS" || category === "SLS-characteristic") ? "ready" : "provisional",formula,reference:isBael ? "BAEL 91 mod. 99 — projet déclaré" : "EN 1990 · EN 1991 · EN 1998 · annexe nationale / prescriptions locales à confirmer",note:isBael ? "Coefficient chargé automatiquement depuis le profil BAEL déclaré." : "Coefficient ou ψ à confirmer selon le référentiel applicable." });
   const combinations: LoadCombination[] = [
-    combination("comb:uls-gravity","ELU gravitaire","ULS",{"case:G":1.35,"case:Q":1.5,"case:roof":1.5}, true, "1,35G + 1,50Q"),
-    combination("comb:sls-char","ELS caractéristique","SLS-characteristic",{"case:G":1,"case:Q":1,"case:roof":1}, true, "G + Q"),
+    combination("comb:uls-gravity","ELU gravitaire","ULS",{"case:G":1.35,"case:Q":1.5}, true, "1,35G + 1,50Q"),
+    combination("comb:sls-char","ELS caractéristique","SLS-characteristic",{"case:G":1,"case:Q":1}, true, "G + Q"),
     combination("comb:sls-frequent","ELS fréquente","SLS-frequent",{"case:G":1,"case:Q":0.5,"case:roof":0.5}, true, "G + ψ1Q — ψ1 provisoire 0,50"),
     combination("comb:sls-quasi","ELS quasi-permanente","SLS-quasi-permanent",{"case:G":1,"case:Q":0.3,"case:roof":0.3}, true, "G + ψ2Q — ψ2 provisoire 0,30"),
     combination("comb:uls-wind-x+","ELU vent X +","wind",{"case:G":1.35,"case:Q":1.05,"case:windX+":1.5}, false, "1,35G + 1,50W + 1,50ψ0Q — ψ0 provisoire 0,70"),
