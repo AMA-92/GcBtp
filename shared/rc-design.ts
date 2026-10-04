@@ -564,7 +564,7 @@ export function proposeOptimizedRCSections(input: {
       proposals.push({elementId:demand.id, levelLabel:demand.levelLabel, type:demand.memberSubtype === "tie-beam" ? "tie-beam" : demand.type, currentSection:{dimensions:current,unit:"mm"}, proposedSection:{dimensions:bestDims,unit:"mm"}, utilization:maxUtilization(best), currentUtilization:currentDesign ? maxUtilization(currentDesign) : null, reason:`Section minimale testée satisfaisant les contrôles disponibles (${bestDims[0]} × ${bestDims[1]} mm).`, estimatedMaterialRatio:(bestDims[0]*bestDims[1])/(baseW*baseD)});
     }
   }
-  for (const demand of input.slabs) {
+  for (const demand of input.slabs) {\n    if (lockedElementIds.has(demand.id)) continue;
     const current=demand.thicknessMm;
     const candidates=[120,130,140,150,160,180,200,220,250].filter(v=>v<=current).sort((a,b)=>a-b);
     for (const h of candidates) {
@@ -575,7 +575,7 @@ export function proposeOptimizedRCSections(input: {
       }
     }
   }
-  for (const demand of (input.foundations ?? [])) {
+  for (const demand of (input.foundations ?? [])) {\n    if (lockedElementIds.has(demand.id)) continue;
     const current=[demand.widthM,demand.lengthM,demand.thicknessM];
     const sizeCandidates=[0.30,0.35,0.40,0.45,0.50,0.60,0.70,0.80,0.90,1.00,1.10,1.20,1.40,1.60,1.80,2.00].sort((a,b)=>a-b);
     const thicknesses=[0.20,0.25,0.30,0.35,0.40,0.45,0.50].sort((a,b)=>a-b);
