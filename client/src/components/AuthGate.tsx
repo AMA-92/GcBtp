@@ -9,7 +9,7 @@ type AuthGateProps = {
 
 export default function AuthGate({ children }: AuthGateProps) {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);\n  const [recovery, setRecovery] = useState(() => window.location.hash.includes("type=recovery"));
 
   useEffect(() => {
     let mounted = true;
@@ -22,7 +22,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (mounted) setSession(nextSession);
+      if (mounted) {\n        setSession(nextSession);\n        if (_event === "PASSWORD_RECOVERY") setRecovery(true);\n      }
     });
 
     return () => {
@@ -45,5 +45,5 @@ export default function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  return session ? <>{children}</> : <AuthPage />;
+  if (recovery) return <AuthPage initialMode="reset" />;\n  return session ? <>{children}</> : <AuthPage />;
 }
