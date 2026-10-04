@@ -4846,7 +4846,7 @@ function LoadProgramEditor({
             <div><b>{pattern.name}</b><div className="text-[9px] text-[#74858c]">{pattern.source} · {pattern.status}{pattern.selfWeightMultiplier ? ` · poids propre × ${pattern.selfWeightMultiplier}` : ""}</div></div>
             <div className="text-right font-semibold">{value.toFixed(2)} kN</div>
           </div>;
-        })}}
+        })}
       </div>
       <div className="grid gap-1 rounded border border-[#edf1f1] p-2">
         <div className="font-semibold">Source de masse : {evaluation.massTonnes.toFixed(3)} t équivalentes</div>
