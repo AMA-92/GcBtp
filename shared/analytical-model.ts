@@ -11,7 +11,7 @@ export type AnalyticalNode = { id: string; x: number; y: number; z: number; leve
 export type AnalyticalFrame = { id: string; sourceElementId: string; sourceType: string; startNodeId: string; endNodeId: string; sectionId: string; materialId: string; levelId: string; releases: { start: DegreeOfFreedom[]; end: DegreeOfFreedom[] }; eccentricityM: { start: [number, number, number]; end: [number, number, number] } };
 export type AnalyticalSurface = { id: string; sourceElementId: string; sourceType: string; kind: "slab" | "wall" | "stair-flight" | "footing"; nodeIds: string[]; sectionId: string; materialId: string; levelId: string; openings: Array<{ nodeIds: string[] }> };
 export type AnalyticalSupportKind = "fixed-base" | "articulated" | "sliding" | "elastic" | "contact";
-export type AnalyticalSupport = { id: string; sourceElementId: string; nodeId: string; kind: AnalyticalSupportKind; role: "foundation-contact" | "column-base"; restrainedDofs: DegreeOfFreedom[]; stiffness?: Partial<Record<DegreeOfFreedom, number>>; selectionReason: string; status: "inferred-from-footing" | "declared" };
+export type AnalyticalSupport = { id: string; sourceElementId: string; nodeId: string; kind: AnalyticalSupportKind; role: "foundation-contact" | "column-base" | "stair-slab-contact"; restrainedDofs: DegreeOfFreedom[]; stiffness?: Partial<Record<DegreeOfFreedom, number>>; selectionReason: string; status: "inferred-from-footing" | "declared" };
 export type AnalyticalConnection = { id: string; sourceElementId: string; targetElementId: string; type: "monolithic" | "articulated" | "sliding" | "elastic" | "contact"; transmitted: Array<"N" | "Vx" | "Vy" | "Mx" | "My" | "Mz">; role: "stair-flight" | "intermediate-landing" | "arrival-landing" | "structural" };
 export type MaterialProperty = { id: string; name: string; elasticModulusKnM2: number; poissonRatio: number; densityKnM3: number; provenance: "model-catalog" | "provisional-default"; concreteClass?: "C25/30" | "C30/37" | "C35/45"; fckMpa?: number; fcdMpa?: number; fctmMpa?: number; coverMm?: number };
 export type SectionProperty = { id: string; name: string; shape: "rectangle" | "circle" | "unknown"; dimensionsM: number[]; areaM2: number | null; inertiaY4M4: number | null; inertiaZ4M4: number | null; torsionConstantM4?: number | null; provenance: "model-catalog" | "unresolved" };
@@ -202,7 +202,22 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
       const yA = centerY-halfY, yB = centerY+halfY;
       addSurface(element,"footing",[[xA,yA,z],[xB,yA,z],[xB,yB,z],[xA,yB,z]]);
     } else if (element.type === "Escaliers") {
-      const flights = [element.stairGeometry?.flight1,element.stairGeometry?.flight2].filter((flight): flight is StairFlight => Boolean(flight));
+      const host = levelById.get(element.levelId);
+      const rawFlights = [element.stairGeometry?.flight1, element.stairGeometry?.flight2].filter((flight): flight is StairFlight => Boolean(flight));
+      // Les anciens projets pouvaient conserver le niveau de la volée 2 après
+      // une duplication d’escalier. Le niveau hôte est le palier intermédiaire:
+      // volée 1 = niveau précédent → hôte, volée 2 = hôte → niveau suivant.
+      // On ne modifie que les références incohérentes, jamais la géométrie XY.
+      const flights = rawFlights.map((flight, flightIndex) => {
+        if (!host || host.index <= 0 || rawFlights.length < 2) return flight;
+        if (flightIndex === 0 && flight.upperLevelId === host.level.id) {
+          return { ...flight, lowerLevelId: levels[host.index - 1]?.id ?? flight.lowerLevelId, upperLevelId: host.level.id };
+        }
+        if (flightIndex === 1 && rawFlights[0]?.upperLevelId === host.level.id) {
+          return { ...flight, lowerLevelId: host.level.id, upperLevelId: levels[host.index + 1]?.id ?? flight.upperLevelId };
+        }
+        return flight;
+      });
       if (!flights.length) {
         diagnostics.push({ severity: "warning", code: "stair-geometry-unresolved", message: `Escalier ${element.id} sans géométrie de volée explicite ; géométrie analytique omise.`, elementIds: [element.id], levelId: element.levelId });
       }
@@ -284,19 +299,18 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
         if (isNearNode || isOnBeam) connected.add(structuralNode.id);
       }
     }
-    // Une volée 1 au RDC démarre sur le dallage porté par le sol. Ce contact
-    // est un appui vertical explicite, même lorsqu’aucun poteau/poutre n’est
-    // dessiné sous les deux points bas.
+    // La première volée démarre sur le plancher porteur. Ce contact vertical
+    // explicite représente les deux appuis bas de la volée, même lorsqu’aucun
+    // poteau ou aucune poutre n’est dessiné exactement sous ces points.
     const stairElementId = surface.sourceElementId.split(":")[0];
     const stairElement = elementById.get(stairElementId);
     const firstFlight = stairElement?.stairGeometry?.flight1;
-    const firstFlightLevel = firstFlight ? levelById.get(firstFlight.lowerLevelId) : undefined;
-    const isFirstFlightGroundContact = surface.sourceElementId.includes(":volée-1") && Boolean(firstFlightLevel && (firstFlightLevel.index === 0 || /rdc|rez|sol|fondation/i.test(`${firstFlightLevel.level.id} ${firstFlightLevel.level.label}`)));
-    if (isFirstFlightGroundContact) {
+    const isFirstFlightSlabContact = surface.sourceElementId.includes(":volée-1") && Boolean(firstFlight);
+    if (isFirstFlightSlabContact) {
       const lowestZ = Math.min(...stairNodes.map(node => node.z));
       stairNodes.filter(node => Math.abs(node.z - lowestZ) <= tolerance).forEach(node => {
         const supportId = `SUP:${stairElementId}:dallage:${node.id}`;
-        if (!supports.some(support => support.id === supportId)) supports.push({ id: supportId, sourceElementId: stairElementId, nodeId: node.id, kind: "contact", role: "foundation-contact", restrainedDofs: ["uz"], selectionReason: "Contact vertical de la première volée avec le dallage du sol au RDC.", status: "inferred-from-footing" });
+        if (!supports.some(support => support.id === supportId)) supports.push({ id: supportId, sourceElementId: stairElementId, nodeId: node.id, kind: "contact", role: "stair-slab-contact", restrainedDofs: ["uz"], selectionReason: "Contact vertical de l’un des deux appuis bas de la première volée avec le plancher porteur.", status: "declared" });
         connected.add(node.id);
       });
     }

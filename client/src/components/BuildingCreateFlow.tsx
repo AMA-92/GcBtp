@@ -1219,8 +1219,8 @@ export default function BuildingCreateFlow({
     URL.revokeObjectURL(url);
   };
   const executeBuildingCalculation = () => {
-    if (!meshPrerequisiteReady || !loadCasesPrerequisiteReady) {
-      toast.error("Le maillage des dalles et la validation des cas de chargement sont obligatoires avant le calcul.");
+    if (!meshPrerequisiteReady) {
+      toast.error("Le maillage des dalles est obligatoire avant le recalcul.");
       setShowCalculationPreflight(true);
       return;
     }
@@ -1235,7 +1235,7 @@ export default function BuildingCreateFlow({
       setBuildingCalculation(null);
       setBuildingLoadModel(null);
       setPlaneAnalysis(null);
-      setPanel("Calculer la descente");
+      setShowCalculationPreflight(true);
       toast.error(`Calcul bloqué : ${analytical.precheck.errors.length} erreur(s) de connectivité ou de géométrie`);
       return;
     }
@@ -1308,7 +1308,9 @@ export default function BuildingCreateFlow({
     setBuildingLoadModel(model);
     setBuildingCalculation(summarizeBuildingLoads(model));
     setMeshPrerequisiteReady(false);
-    setLoadCasesPrerequisiteReady(false);
+    // Les cas actifs et leurs combinaisons sont déjà enregistrés dans le
+    // programme de charges : aucune seconde validation manuelle n’est requise.
+    setLoadCasesPrerequisiteReady(true);
     setShowCalculationPreflight(true);
     setPanel("Calculer la descente");
   };
@@ -4827,26 +4829,19 @@ export default function BuildingCreateFlow({
         <div className="fixed inset-0 z-[80] grid place-items-center bg-[#102f45]/45 p-4" role="dialog" aria-modal="true" aria-labelledby="calculation-preflight-title">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-2xl border border-[#cbdde1] bg-[#f8fbfc] p-4 shadow-2xl">
             <div className="mb-3 flex items-start justify-between gap-3">
-              <div><h2 id="calculation-preflight-title" className="text-base font-bold text-[#173b50]">Préparer le lancement des calculs</h2><p className="mt-1 text-[11px] text-[#63777f]">Deux étapes sont obligatoires : mailler les dalles et appliquer les cas de chargement actifs.</p></div>
+              <div><h2 id="calculation-preflight-title" className="text-base font-bold text-[#173b50]">Préparer le recalcul</h2><p className="mt-1 text-[11px] text-[#63777f]">Commencez par mailler les dalles, puis lancez le recalcul de la structure.</p></div>
               <button type="button" className="grid h-8 w-8 place-items-center rounded-full bg-white text-[#718083]" onClick={() => setShowCalculationPreflight(false)} aria-label="Fermer"><X className="h-4 w-4" /></button>
             </div>
-            {analyticalPrecheck && !analyticalPrecheck.ok && <div className="mb-3 space-y-1 rounded-lg border border-[#efc4b9] bg-[#fff1ed] p-3 text-[10px] text-[#914d3d]"><b>Le modèle analytique doit être corrigé avant le calcul.</b>{analyticalPrecheck.errors.map((item, index) => <div key={`${item.code}-${index}`}>· {item.message}</div>)}</div>}
             <div className="grid gap-3 md:grid-cols-2">
               <div className={`rounded-xl border p-3 ${meshPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : "border-[#dce7eb] bg-white"}`}>
                 <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">1. Maillage des dalles</b><span className="text-[10px] font-bold">{meshPrerequisiteReady ? "OK" : "À faire"}</span></div>
                 <p className="mt-1 text-[10px] text-[#68767d]">Le maillage calcule les triangles, l’aire nette et les charges. L’aperçu 3D affichera ensuite les lignes du maillage.</p>
-                <Button type="button" className="mt-3 h-9 w-full bg-[#087f7f] text-[10px] text-white" disabled={!analyticalPrecheck?.ok} onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>{meshPrerequisiteReady ? "Recalculer le maillage" : "Mailler les dalles"}</Button>
+                <Button type="button" className="mt-3 h-9 w-full bg-[#087f7f] text-[10px] text-white" disabled={!analyticalModel} onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>{meshPrerequisiteReady ? "Refaire le maillage" : "Faire le maillage"}</Button>
                 {surfaceAnalysis && <div className="mt-2 text-[9px] text-[#536b70]">{surfaceAnalysis.rows.length} dalle(s) · {surfaceAnalysis.errors.length} erreur(s) · charge nette {surfaceAnalysis.rows.reduce((sum, row) => sum + (row.analysis.mesh?.totalUniformLoadKn ?? 0), 0).toFixed(2)} kN</div>}
               </div>
-              <div className={`rounded-xl border p-3 ${loadCasesPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : "border-[#dce7eb] bg-white"}`}>
-                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">2. Cas de chargement</b><span className="text-[10px] font-bold">{loadCasesPrerequisiteReady ? "OK" : "À appliquer"}</span></div>
-                <p className="mt-1 text-[10px] text-[#68767d]">Les cas actifs seront transmis aux combinaisons. Le poids propre G est calculé depuis la géométrie et ne reste plus à zéro.</p>
-                <div className="mt-2 rounded bg-[#f7fafb] p-2 text-[9px] text-[#536b70]">Gk calculé : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk calculé : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b> · {loadProgram.cases.filter(item => item.enabled).length} cas actifs · {loadProgram.combinations.filter(item => item.enabled).length} combinaisons actives</div>
-                <Button type="button" className="mt-3 h-9 w-full bg-[#27358f] text-[10px] text-white" disabled={loadProgramDiagnostics.some(item => item.severity === "error") || !loadProgram.combinations.some(item => item.enabled)} onClick={() => setLoadCasesPrerequisiteReady(true)}>{loadCasesPrerequisiteReady ? "Cas appliqués" : "Appliquer les cas actifs"}</Button>
-                {loadProgramDiagnostics.filter(item => item.severity === "error").map((item, index) => <div key={`${item.code}-${index}`} className="mt-1 text-[9px] text-[#914d3d]">{item.message}</div>)}
-              </div>
+              <div className="rounded-xl border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] text-[#245e60]"><b>2. Recalcul</b><p className="mt-1">Les cas de charges actifs et leurs combinaisons seront repris automatiquement au recalcul.</p><div className="mt-2 rounded bg-white p-2">Gk : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b></div></div>
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce7eb] bg-white p-3"><span className="text-[10px] text-[#68767d]">{meshPrerequisiteReady && loadCasesPrerequisiteReady ? "Les deux prérequis sont validés." : "Validez les deux étapes pour continuer."}</span><Button type="button" className="h-9 bg-[#102f45] px-4 text-[10px] text-white" disabled={!analyticalPrecheck?.ok || !meshPrerequisiteReady || !loadCasesPrerequisiteReady} onClick={executeBuildingCalculation}>Lancer les calculs maintenant</Button></div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce7eb] bg-white p-3"><span className="text-[10px] text-[#68767d]">{meshPrerequisiteReady ? "Maillage validé. Vous pouvez recalculer." : "Faites le maillage des dalles pour continuer."}</span><Button type="button" className="h-9 bg-[#102f45] px-4 text-[10px] text-white" disabled={!analyticalPrecheck?.ok || !meshPrerequisiteReady} onClick={executeBuildingCalculation}>Recalculer maintenant</Button></div>
           </div>
         </div>
       )}
