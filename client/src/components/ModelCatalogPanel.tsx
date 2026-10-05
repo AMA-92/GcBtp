@@ -29,7 +29,7 @@ export default function ModelCatalogPanel({ selectedType, selectedName, customMo
   const [draft, setDraft] = useState<ModelSpec | null>(null);
 
   const openEdit = (model: ModelSpec) => { setEditing(model); setDraft({ ...model }); };
-  const openCreate = (family: ModelFamily) => { setShowFamilyPicker(false); setCreatingFamily(family); const dimensions = family === "Semelle" ? "1.00 × 1.00 × 0.30 m" : family === "Voile" ? "0.20 × 3.20 m" : family === "Longrine de redressement" ? "0.20 × 0.40 m" : "0.20 × 0.30 m"; setDraft({ family, type: familyType(family), name: "Nouveau modèle", dimensions, color: "#6247a8" }); };
+  const openCreate = (family: ModelFamily) => { setShowFamilyPicker(false); setCreatingFamily(family); const dimensions = family === "Semelle" ? "1.00 × 1.00 × 0.30 m" : family === "Voile" ? "0.20 × 3.20 m" : family === "Longrine de redressement" ? "0.20 × 0.40 m" : family === "Balcon" ? "0.20 × 3.00 × 1.50 m" : "0.20 × 0.30 m"; setDraft({ family, type: familyType(family), name: "Nouveau modèle", dimensions, color: "#6247a8" }); };
   const closeEditor = () => { setDraft(null); setCreatingFamily(null); setShowFamilyPicker(false); setEditing(null); };
   const save = () => {
     if (!draft || !draft.name.trim() || !draft.dimensions.trim()) return;

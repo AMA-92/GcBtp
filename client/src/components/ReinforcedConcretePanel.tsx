@@ -27,13 +27,13 @@ type Draft = {
   availableBarDiametersMm: string;
 };
 
-const createDraft = (standard: string): Draft => ({
+const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRebarFykMpa?: number): Draft => ({
   standard: standard || "EN 1992-1-1 + EN 1992-1-2 — annexe nationale / prescriptions locales à confirmer",
   nationalAnnex: "Annexes nationales françaises — édition applicable à confirmer",
   sourceReference: "EN 1990 · EN 1991 · EN 1992 · EN 1998 — édition, annexe nationale et projet à confirmer",
   basisConfirmed: false,
-  fckMpa: "",
-  fykMpa: "",
+  fckMpa: projectConcreteFckMpa ? String(projectConcreteFckMpa) : "",
+  fykMpa: projectRebarFykMpa ? String(projectRebarFykMpa) : "",
   gammaC: "",
   gammaS: "",
   alphaCC: "",
@@ -55,6 +55,8 @@ const statusStyle = (status: string) => status === "satisfaisant" ? "text-emeral
 type Props = {
   projectId: string;
   projectNorm: string;
+  projectConcreteFckMpa?: number;
+  projectRebarFykMpa?: number;
   members: RCMemberDemand[];
   slabs: RCSlabDemand[];
   foundations?: RCFootingDemand[];
@@ -65,8 +67,8 @@ type Props = {
   optimizedElementIds?: Set<string>;
 };
 
-export default function ReinforcedConcretePanel({ projectId, projectNorm, members, slabs, foundations = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set() }: Props) {
-  const [draft, setDraft] = useState<Draft>(() => createDraft(projectNorm));
+export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set() }: Props) {
+  const [draft, setDraft] = useState<Draft>(() => createDraft(projectNorm, projectConcreteFckMpa, projectRebarFykMpa));
   const [overrides, setOverrides] = useState<RCDesignOverrides>({});
   const [result, setResult] = useState<RCDesignResult | null>(null);
   const [optimizationProposals, setOptimizationProposals] = useState<RCOptimizationProposal[]>([]);
@@ -79,7 +81,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, member
     setDirty(false);
     setTemplateCompany(loadReinforcementTemplate().companyName);
     onResultChange(null);
-    const base = createDraft(projectNorm);
+    const base = createDraft(projectNorm, projectConcreteFckMpa, projectRebarFykMpa);
     try {
       const saved = sessionStorage.getItem(`gcbtp-rc-design:${projectId}`);
       const parsed = saved ? JSON.parse(saved) as { draft?: Partial<Draft>; overrides?: RCDesignOverrides } : {};
@@ -89,7 +91,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, member
       setDraft(base);
       setOverrides({});
     }
-  }, [projectId, projectNorm, onResultChange]);
+  }, [projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, onResultChange]);
 
   useEffect(() => {
     if (projectId) sessionStorage.setItem(`gcbtp-rc-design:${projectId}`, JSON.stringify({ schemaVersion: 1, draft, overrides }));
@@ -229,7 +231,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, member
       <div><b className="text-[12px]">Béton armé · dimensionnement et ferraillage</b><p className="mt-1 text-[9px] text-[#765f36]">Dalles, poutres, poteaux, longrines de redressement, voiles et semelles sont traités après résolution des efforts. Les sorties ne sont pas une note réglementaire ni une autorisation d’exécution.</p></div>
       <span className="shrink-0 rounded bg-[#f9e7c4] px-2 py-1 font-semibold">Non réglementaire</span>
     </div>
-    <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">Règles nationales et annexes, fissuration wk, poinçonnement, ancrages normatifs, torsion, effets du second ordre et détails sismiques ne sont pas certifiés ici. Les paramètres code/matériaux restent obligatoires, sans valeurs normatives préremplies.</div>
+    <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">fck et fyk sont proposés depuis les catalogues matériaux du projet ; vérifiez les certificats et la norme contractuelle. Coefficients code, annexes, enrobage, adhérence et détails restent à renseigner/valider ; les valeurs nominales catalogue ne constituent pas une vérification normative.</div>
     {sourceWarnings.map((warning, index) => <div key={`source-${index}`} className="rounded bg-amber-50 p-2 text-amber-900">Source / périmètre · {warning}</div>)}
     <div className="grid grid-cols-2 gap-2">
       <label>Référentiel<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.standard} onChange={event => update("standard", event.target.value)} /></label>

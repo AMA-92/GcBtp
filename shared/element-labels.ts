@@ -1,9 +1,10 @@
 export type LabelableElement = { id: string; type: string };
 
-const prefixByType: Record<string, string> = { Poteau: "P", Poutre: "B", Semelle: "S", Dalle: "PL" };
+const prefixByType: Record<string, string> = { Poteau: "P", Poutre: "B", Semelle: "S", Dalle: "PL", Balcon: "BAL" };
 const compactType = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s_\-]+/g, "");
 export function normalizeStructuralElementType(type: string) {
   const key = compactType(type);
+  if (["balcon", "balcony", "balconterrasse"].includes(key)) return "Balcon";
   if (["dalle", "plancher", "slab", "floor", "floorpanel", "plancherbacorpscreux", "planchercorpscreux"].includes(key)) return "Dalle";
   if (["poutre", "beam", "girder", "poutreba", "poutrebetonarme"].includes(key)) return "Poutre";
   if (["poteau", "column", "colonne", "pilier"].includes(key)) return "Poteau";

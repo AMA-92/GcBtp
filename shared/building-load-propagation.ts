@@ -1,7 +1,9 @@
 import { distributeFloorToBeams, type BeamSupport, type RectangularFloor, type TributaryContribution, type PropagatedLoad } from "./tributary-load";
 import type { FloorConfig } from "./floor-config";
+import { defaultBalconyFloorConfig, isSlabElementType } from "./floor-config";
 import { MATERIAL_CATALOG } from "./load-catalog";
 import { calculateStairPermanentLoad } from "./stair-load";
+import { checkRectangularSurfaceEdgeSupports, type RectangularSurfaceEdge } from "./surface-analysis";
 
 export type BuildingElementForLoads = { id: string; type: string; section?: string; x: number; y: number; x2?: number; y2?: number; levelId?: string; floorConfig?: Partial<FloorConfig>; stairGeometry?: { flight1?: { lowerA: { x: number; y: number }; lowerB: { x: number; y: number }; upperA: { x: number; y: number }; upperB: { x: number; y: number }; lowerLevelId: string; upperLevelId: string }; flight2?: { lowerA: { x: number; y: number }; lowerB: { x: number; y: number }; upperA: { x: number; y: number }; upperB: { x: number; y: number }; lowerLevelId: string; upperLevelId: string }; baseA?: { x: number; y: number }; baseB?: { x: number; y: number }; midA?: { x: number; y: number }; midB?: { x: number; y: number }; topA?: { x: number; y: number }; topB?: { x: number; y: number }; landingZ: number } };
 export type BuildingLoadRow = {
@@ -46,20 +48,40 @@ function beamAtPoint(element: BuildingElementForLoads, beam: BeamSupport) { retu
 const emptyLoad = (): PropagatedLoad => ({ gk: 0, qk: 0, sources: [] });
 const sectionDimensions = (section: string, fallback: [number, number]) => { const match = section.match(/(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+(?:[.,]\d+)?)/i); return match ? [Number(match[1].replace(",", ".")) / 100, Number(match[2].replace(",", ".")) / 100] as [number, number] : fallback; };
 const selfWeight = (gk: number, source: string): PropagatedLoad => ({ gk, qk: 0, sources: [source] });
+const axisIndexToMetric = (value: number, positions: number[] | undefined, fallbackStep: number) => {
+  if (!positions?.length) return value * fallbackStep;
+  const last = positions.length - 1;
+  if (value <= 0) return positions[0];
+  if (value >= last) return positions[last];
+  const index = Math.floor(value);
+  const ratio = value - index;
+  return positions[index] + (positions[index + 1] - positions[index]) * ratio;
+};
 
-export function buildBuildingLoadModel(elements: BuildingElementForLoads[], options: { levelOrder?: string[]; levelHeights?: Record<string, number>; gridDistance?: number } = {}) {
+export function buildBuildingLoadModel(elements: BuildingElementForLoads[], options: { levelOrder?: string[]; levelHeights?: Record<string, number>; gridDistance?: number; xAxisPositionsM?: number[]; yAxisPositionsM?: number[] } = {}) {
   const warnings: string[] = [];
   const discovered = Array.from(new Set(elements.map(levelKey)));
   const levelOrder = options.levelOrder?.length ? options.levelOrder.filter(id => discovered.includes(id) || id === "foundation") : discovered;
   const baseTransferLevel = levelOrder.find(id => id === "rdc") ?? levelOrder.find(id => id !== "foundation") ?? "rdc";
   const gridScale = Math.max(numeric(options.gridDistance, 4), 0.1);
+  const metricPoint = (point: { x: number; y: number }) => ({
+    x: axisIndexToMetric(point.x, options.xAxisPositionsM, gridScale),
+    y: axisIndexToMetric(point.y, options.yAxisPositionsM, gridScale),
+  });
   const levelHeights = options.levelHeights ?? {};
   const levelHeight = (id: string) => Math.max(numeric(levelHeights[id], id === "foundation" ? 1 : 3.2), 0.1);
   for (const id of discovered) if (!levelOrder.includes(id)) levelOrder.push(id);
-  const floors: RectangularFloor[] = elements.filter(e => (e.type === "Dalle" || e.type === "Escaliers") && e.x2 !== undefined && e.y2 !== undefined).map(e => {
+  const floors: RectangularFloor[] = elements.filter(e => (isSlabElementType(e.type) || e.type === "Escaliers") && e.x2 !== undefined && e.y2 !== undefined).map(e => {
     const x1 = Math.min(e.x, e.x2 as number), x2 = Math.max(e.x, e.x2 as number), y1 = Math.min(e.y, e.y2 as number), y2 = Math.max(e.y, e.y2 as number);
-    const rectArea = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs((b.x - a.x) * (b.y - a.y));
-    const intersectionArea = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }) => Math.max(0, Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) - Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x))) * Math.max(0, Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) - Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y)));
+    const rectArea = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+      const start = metricPoint(a), end = metricPoint(b);
+      return Math.abs((end.x - start.x) * (end.y - start.y));
+    };
+    const intersectionArea = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }) => {
+      const [startA, endA, startB, endB] = [a, b, c, d].map(metricPoint);
+      return Math.max(0, Math.min(Math.max(startA.x, endA.x), Math.max(startB.x, endB.x)) - Math.max(Math.min(startA.x, endA.x), Math.min(startB.x, endB.x)))
+        * Math.max(0, Math.min(Math.max(startA.y, endA.y), Math.max(startB.y, endB.y)) - Math.max(Math.min(startA.y, endA.y), Math.min(startB.y, endB.y)));
+    };
     const stairGeometry = e.stairGeometry;
     const legacyGeometry = stairGeometry?.baseA && stairGeometry.baseB && stairGeometry.midA && stairGeometry.midB && stairGeometry.topA && stairGeometry.topB;
     const flight1 = stairGeometry?.flight1;
@@ -68,9 +90,9 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
       ? rectArea(flight1.lowerA, flight1.lowerB) + rectArea(flight1.upperA, flight1.upperB) + rectArea(flight2.lowerA, flight2.lowerB) + rectArea(flight2.upperA, flight2.upperB) - intersectionArea(flight1.upperA, flight1.upperB, flight2.lowerA, flight2.lowerB) + Math.max(0, 2 - intersectionArea(flight1.upperA, flight1.upperB, flight2.lowerA, flight2.lowerB))
       : legacyGeometry
         ? rectArea(stairGeometry.baseA!, stairGeometry.baseB!) + rectArea(stairGeometry.midA!, stairGeometry.midB!) + rectArea(stairGeometry.topA!, stairGeometry.topB!)
-        : Math.max(0, (x2 - x1) * (y2 - y1));
-    const physicalArea = area * gridScale * gridScale;
-    const config = e.floorConfig ?? (e.type === "Escaliers" ? { type: "Dalle pleine", thickness: "15 cm", span: "3.00", direction: "X", concreteClass: "C25/30", characteristicImposedLoad: "2.50", stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60" } : undefined);
+        : rectArea({ x: x1, y: y1 }, { x: x2, y: y2 });
+    const physicalArea = area;
+    const config = e.floorConfig ?? (e.type === "Escaliers" ? { type: "Dalle pleine", thickness: "15 cm", span: "3.00", direction: "X", concreteClass: "C25/30", characteristicImposedLoad: "2.50", stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60" } : e.type === "Balcon" ? defaultBalconyFloorConfig() : undefined);
     const rate = (value: string | undefined, fallback: number) => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : fallback;
     const explicitPermanent = Number(String(config?.characteristicPermanentLoad ?? "").replace(",", "."));
     const explicitImposed = Number(String(config?.characteristicImposedLoad ?? "").replace(",", "."));
@@ -91,7 +113,7 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
     };
   });
   const beams: BeamSupport[] = elements.filter(e => (e.type === "Poutre" || e.type === "Voile" || e.type === "Longrine de redressement") && e.x2 !== undefined && e.y2 !== undefined).map(e => ({ id: e.id, x1: e.x, y1: e.y, x2: e.x2 as number, y2: e.y2 as number, levelId: levelKey(e) }));
-  const beamSelfWeights = Object.fromEntries(elements.filter(e => (e.type === "Poutre" || e.type === "Voile" || e.type === "Longrine de redressement") && e.x2 !== undefined && e.y2 !== undefined).map(e => { const [width, height] = e.type === "Voile" ? sectionDimensions(e.section ?? "", [0.2, 3.2]) : sectionDimensions(e.section ?? "", [0.2, 0.4]); const length = Math.max(Math.hypot((e.x2 as number) - e.x, (e.y2 as number) - e.y) * gridScale, 0.1); return [e.id, selfWeight(width * height * CONCRETE_UNIT_WEIGHT * length, `Poids propre ${e.id} · ${e.section ?? "section non renseignée"}`)]; }));
+  const beamSelfWeights = Object.fromEntries(elements.filter(e => (e.type === "Poutre" || e.type === "Voile" || e.type === "Longrine de redressement") && e.x2 !== undefined && e.y2 !== undefined).map(e => { const [width, height] = e.type === "Voile" ? sectionDimensions(e.section ?? "", [0.2, 3.2]) : sectionDimensions(e.section ?? "", [0.2, 0.4]); const start = metricPoint(e), end = metricPoint({ x: e.x2 as number, y: e.y2 as number }); const length = Math.max(Math.hypot(end.x - start.x, end.y - start.y), 0.1); return [e.id, selfWeight(width * height * CONCRETE_UNIT_WEIGHT * length, `Poids propre ${e.id} · ${e.section ?? "section non renseignée"}`)]; }));
   const columns = elements.filter(e => e.type === "Poteau");
   const foundations = elements.filter(e => e.type === "Semelle");
   const supportsById = new Map(elements.map(element => [element.id, element]));
@@ -187,6 +209,50 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
         }
         continue;
       }
+      if (floorElement?.type === "Balcon") {
+        const supportCheck = checkRectangularSurfaceEdgeSupports({ x1: floor.x1, y1: floor.y1, x2: floor.x2, y2: floor.y2 }, levelElements);
+        const configuredEdge = floorElement.floorConfig?.balconySupportEdge ?? "auto";
+        const fixedEdge: RectangularSurfaceEdge | undefined = configuredEdge === "auto"
+          ? supportCheck.supportedEdges.length === 1 ? supportCheck.supportedEdges[0] : undefined
+          : configuredEdge;
+        if (!fixedEdge || !supportCheck.supportedEdges.includes(fixedEdge)) {
+          warnings.push(`Balcon ${floor.id} : rive d’encastrement absente, non portée ou ambiguë sur ${levelId}; sa charge n’est pas répartie vers les rives libres.`);
+          continue;
+        }
+        const xFixed = fixedEdge === "left" ? floor.x1 : fixedEdge === "right" ? floor.x2 : undefined;
+        const yFixed = fixedEdge === "bottom" ? floor.y1 : fixedEdge === "top" ? floor.y2 : undefined;
+        const segments = levelBeams.flatMap(beam => {
+          const member = levelElements.find(element => element.id === beam.id);
+          if (!member || (member.type !== "Poutre" && member.type !== "Voile")) return [];
+          if (xFixed !== undefined && near(beam.x1, xFixed) && near(beam.x2, xFixed)) {
+            const start = Math.max(floor.y1, Math.min(beam.y1, beam.y2));
+            const end = Math.min(floor.y2, Math.max(beam.y1, beam.y2));
+            return end > start ? [{ id: beam.id, overlap: end - start }] : [];
+          }
+          if (yFixed !== undefined && near(beam.y1, yFixed) && near(beam.y2, yFixed)) {
+            const start = Math.max(floor.x1, Math.min(beam.x1, beam.x2));
+            const end = Math.min(floor.x2, Math.max(beam.x1, beam.x2));
+            return end > start ? [{ id: beam.id, overlap: end - start }] : [];
+          }
+          return [];
+        });
+        const totalOverlap = segments.reduce((sum, segment) => sum + segment.overlap, 0);
+        if (totalOverlap <= EPSILON) {
+          warnings.push(`Balcon ${floor.id} : la rive ${fixedEdge} ne correspond à aucune poutre/voile de transfert sur ${levelId}.`);
+          continue;
+        }
+        const balconyContributions = segments.map(segment => ({
+          floorId: floor.id,
+          beamId: segment.id,
+          area: 0,
+          gk: floor.gk * segment.overlap / totalOverlap,
+          qk: floor.qk * segment.overlap / totalOverlap,
+          source: `Balcon ${floor.id} · porte-à-faux · réaction sur rive ${fixedEdge}`,
+        }));
+        allContributions.push(...balconyContributions);
+        for (const contribution of balconyContributions) addLoad(localBeamLoads, contribution.beamId, { gk: contribution.gk, qk: contribution.qk, sources: [contribution.source] });
+        continue;
+      }
       const contributions = distributeFloorToBeams(floor, levelBeams);
       if (!contributions.length) warnings.push(`Dalle ${floor.id} sans poutre réelle compatible sur ${levelId}.`);
       allContributions.push(...contributions);
@@ -251,9 +317,9 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
   }
   const propagation = { beams: localBeamLoads, columns: cumulativeColumns, foundations: foundationLoads, warnings: [] as string[] };
   const allWarnings = [...warnings, ...propagation.warnings];
-  const rows = elements.filter(e => ["Dalle", "Escaliers", "Poutre", "Voile", "Longrine de redressement", "Poteau", "Semelle"].includes(e.type)).map(e => {
+  const rows = elements.filter(e => ["Dalle", "Balcon", "Escaliers", "Poutre", "Voile", "Longrine de redressement", "Poteau", "Semelle"].includes(e.type)).map(e => {
     const floor = floors.find(f => f.id === e.id);
-    const load: PropagatedLoad = (e.type === "Dalle" || e.type === "Escaliers")
+    const load: PropagatedLoad = (isSlabElementType(e.type) || e.type === "Escaliers")
       ? (floor ? { gk: floor.gk, qk: floor.qk, sources: [] } : emptyLoad())
       : (e.type === "Poutre" || e.type === "Voile" || e.type === "Longrine de redressement")
         ? (localBeamLoads[e.id] ?? emptyLoad())

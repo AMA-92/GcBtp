@@ -1,3 +1,5 @@
+import { IMPOSED_LOAD_PROFILES } from "./load-catalog";
+
 export type FloorType = "Corps creux" | "Dalle pleine";
 export type FloorConfig = {
   type: FloorType;
@@ -7,6 +9,8 @@ export type FloorConfig = {
   hollowBlockHeight?: string;
   compressionSlab?: string;
   ribWidth?: string;
+  ribSpacing?: string;
+  balconySupportEdge?: "auto" | "left" | "right" | "bottom" | "top";
   concreteClass: string;
   finishLoad?: string;
   ceilingLoad?: string;
@@ -36,6 +40,7 @@ export const defaultFloorConfig: FloorConfig = {
   hollowBlockHeight: "16",
   compressionSlab: "4",
   ribWidth: "12",
+  ribSpacing: "60",
   concreteClass: "C25/30",
   finishLoad: "1.00",
   ceilingLoad: "0.30",
@@ -50,6 +55,28 @@ export const defaultFloorConfig: FloorConfig = {
 export function normalizeFloorConfig(config: Partial<FloorConfig> = {}): FloorConfig {
   const type = config.type === "Dalle pleine" ? "Dalle pleine" : "Corps creux";
   return { ...defaultFloorConfig, ...config, type, thickness: config.thickness ?? FLOOR_PRESETS[type][0] };
+}
+
+export function isSlabElementType(type: string): boolean { return type === "Dalle" || type === "Balcon"; }
+
+/** Valeurs indicatives de balcon : dalle pleine BA 20 cm, finitions 1,00 et Qk 3,50 kN/m². */
+export function defaultBalconyFloorConfig(base: Partial<FloorConfig> = {}): FloorConfig {
+  const balconyImposedLoad = IMPOSED_LOAD_PROFILES.find(profile => profile.id === "balcony")?.defaultValue ?? 3.5;
+  const balconyImposedLoadText = balconyImposedLoad.toFixed(2);
+  return normalizeFloorConfig({
+    ...defaultFloorConfig,
+    ...base,
+    type: "Dalle pleine",
+    thickness: base.type === "Dalle pleine" ? base.thickness ?? "20 cm" : "20 cm",
+    balconySupportEdge: base.balconySupportEdge ?? "auto",
+    finishLoad: "1.00",
+    ceilingLoad: "0.00",
+    partitionLoad: "0.00",
+    equipmentLoad: "0.00",
+    imposedLoad: balconyImposedLoadText,
+    characteristicPermanentLoad: "6.00",
+    characteristicImposedLoad: balconyImposedLoadText,
+  });
 }
 
 export function serializeFloorConfig(config: FloorConfig): string { return JSON.stringify(normalizeFloorConfig(config)); }

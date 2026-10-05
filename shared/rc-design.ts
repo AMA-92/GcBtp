@@ -68,6 +68,8 @@ export type RCSlabDemand = {
   columnDepthMm?: number;
   openingAreaRatio?: number;
   floorType?: "Dalle pleine" | "Corps creux";
+  boundaryMode?: "simply-supported-four-edges" | "cantilever-fixed-edge" | "one-way-simply-supported";
+  spanDirection?: "X" | "Y";
   negativeMxKnMPerM?: number;
   negativeMyKnMPerM?: number;
 };
@@ -444,16 +446,19 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
 function designSlab(demand: RCSlabDemand, basis: RCDesignBasis, overrides: RCDesignOverrides): RCElementDesign {
   const combinationId = demand.combinationId, combinationName = demand.combinationName;
   const limitations = [
-    "La plaque Navier v1 est simplement appuyée sur quatre bords ; les résultats ne représentent pas une dalle continue ni une redistribution par poutres.",
     "La continuité réelle, la redistribution, la fissuration wk et les ancrages restent à vérifier avec les détails d’exécution.",
   ];
-  const assumedSupportReaction = demand.supportReactionKn === undefined;
+  const lineSupported = demand.boundaryMode === "cantilever-fixed-edge" || demand.boundaryMode === "one-way-simply-supported";
+  const assumedSupportReaction = !lineSupported && demand.supportReactionKn === undefined;
   const assumedColumnGeometry = !positive(demand.columnWidthMm ?? 0) || !positive(demand.columnDepthMm ?? 0);
   const negativeMx = demand.negativeMxKnMPerM ?? Math.abs(demand.mxKnMPerM) * 0.25;
   const negativeMy = demand.negativeMyKnMPerM ?? Math.abs(demand.myKnMPerM) * 0.25;
-  const supportReaction = demand.supportReactionKn ?? Math.max(0, (demand.uniformLoadKnM2 ?? 0) * demand.spanXM * demand.spanYM / 4);
+  const supportReaction = demand.supportReactionKn ?? (lineSupported ? 0 : Math.max(0, (demand.uniformLoadKnM2 ?? 0) * demand.spanXM * demand.spanYM / 4));
   const columnWidth = demand.columnWidthMm ?? 300;
   const columnDepth = demand.columnDepthMm ?? 300;
+  if (demand.boundaryMode === "cantilever-fixed-edge") limitations.push("Balcon résolu comme plaque encastrée sur une rive ; la réaction calculée est linéique sur la façade/poutre et ne constitue pas une réaction ponctuelle de poteau.");
+  else if (demand.boundaryMode === "one-way-simply-supported") limitations.push("Corps creux résolu comme plaque orthotrope équivalente sur deux rives de portée ; confirmer les rigidités et détails auprès du fabricant/projet.");
+  else limitations.push("Plaque isotrope Navier simplement appuyée sur quatre bords ; la dalle continue et la redistribution par poutres ne sont pas représentées.");
   if (assumedSupportReaction) limitations.push("Réaction de poteau non fournie : q·Lx·Ly/4 utilisée pour la pré-étude du poinçonnement.");
   if (assumedColumnGeometry) limitations.push("Dimensions du poteau non fournies : poteau provisoire 300×300 mm utilisé pour le périmètre critique.");
   if (demand.negativeMxKnMPerM === undefined || demand.negativeMyKnMPerM === undefined) limitations.push("Moments négatifs non disponibles : 25 % des moments positifs utilisés comme enveloppe provisoire aux appuis.");
@@ -485,7 +490,9 @@ function designSlab(demand: RCSlabDemand, basis: RCDesignBasis, overrides: RCDes
     check("slab-max-x", "Taux maximal X", areaX, maxSteel, "mm²/m", "As,prov ≤ ρmax·b·d", combinationId, combinationName),
     check("slab-flexure-y", "Flexion Y · armatures inférieures", reqY, areaY, "mm²/m", "As,req = My/(z·fyd), par bande de 1 m", combinationId, combinationName),
     check("slab-max-y", "Taux maximal Y", areaY, maxSteel, "mm²/m", "As,prov ≤ ρmax·b·d", combinationId, combinationName),
-    check("slab-punching", "Poinçonnement au périmètre critique", supportReaction, Math.max(1, (2 * (columnWidth + columnDepth) + 4 * Math.min(demand.thicknessMm, 200)) / 1000 * demand.thicknessMm * 0.6), "kN", "VEd ≤ VRd,c ; données réelles à confirmer pour la note finale", combinationId, combinationName),
+    lineSupported
+      ? emptyCheck("slab-punching", "Poinçonnement au périmètre critique", "kN", combinationId, combinationName, "réaction linéique sur poutre/façade ; la réaction ponctuelle au poteau et le poinçonnement ne sont pas calculés par ce modèle")
+      : check("slab-punching", "Poinçonnement au périmètre critique", supportReaction, Math.max(1, (2 * (columnWidth + columnDepth) + 4 * Math.min(demand.thicknessMm, 200)) / 1000 * demand.thicknessMm * 0.6), "kN", "VEd ≤ VRd,c ; données réelles à confirmer pour la note finale", combinationId, combinationName),
     demand.uniformLoadKnM2 !== undefined && demand.uniformLoadKnM2 >= 0
       ? check("slab-shear", "Cisaillement unidirectionnel", Math.abs(demand.uniformLoadKnM2 * Math.min(demand.spanXM, demand.spanYM) / 2), Math.max(1, 0.18 * basis.fckMpa * stripWidth * effectiveDepth / 1000), "kN", "VEd ≤ VRd,c ; vérification indicative par bande de 1 m", combinationId, combinationName)
       : emptyCheck("slab-shear", "Cisaillement unidirectionnel", "kN", combinationId, combinationName, "Charge uniforme ELS/ELU requise"),
@@ -494,9 +501,9 @@ function designSlab(demand: RCSlabDemand, basis: RCDesignBasis, overrides: RCDes
       : emptyCheck("slab-openings", "Trémies et ouvertures", "—", combinationId, combinationName, "Géométrie des ouvertures requise"),
     check("slab-negative-x", "Flexion négative aux appuis X", Math.abs(negativeMx), Math.max(minSteel, Math.abs(negativeMx) * 1e6 / Math.max(z * fyd, 1e-9)), "kN·m/m", "Enveloppe provisoire des moments négatifs X", combinationId, combinationName),
     check("slab-negative-y", "Flexion négative aux appuis Y", Math.abs(negativeMy), Math.max(minSteel, Math.abs(negativeMy) * 1e6 / Math.max(z * fyd, 1e-9)), "kN·m/m", "Enveloppe provisoire des moments négatifs Y", combinationId, combinationName),
-    demand.serviceDeflectionMm === undefined ? emptyCheck("slab-deflection", "Flèche de service", "mm", combinationId, combinationName, "Résultat ELS requis") : check("slab-deflection", "Flèche de service", demand.serviceDeflectionMm, Math.min(demand.spanXM, demand.spanYM) * 1000 / basis.maxDeflectionRatio, "mm", "δser ≤ L/limite saisie", combinationId, combinationName),
+    demand.serviceDeflectionMm === undefined ? emptyCheck("slab-deflection", "Flèche de service", "mm", combinationId, combinationName, "Résultat ELS requis") : check("slab-deflection", "Flèche de service", demand.serviceDeflectionMm, (demand.spanDirection === "X" ? demand.spanXM : demand.spanDirection === "Y" ? demand.spanYM : Math.min(demand.spanXM, demand.spanYM)) * 1000 / basis.maxDeflectionRatio, "mm", "δser ≤ L/limite saisie", combinationId, combinationName),
   ];
-  if (demand.floorType === "Corps creux") limitations.push("Plancher à corps creux : les nervures, entrevous, dalle de compression et zones pleines doivent être vérifiés séparément ; la plaque homogène n’est pas applicable automatiquement.");
+  if (demand.floorType === "Corps creux") limitations.push("La plaque orthotrope utilise l’entraxe, la largeur des nervures et l’épaisseur de la table déclarés ; les zones pleines, ancrages, cisaillement des nervures et prescriptions fabricant restent à vérifier séparément.");
   return { elementId: demand.id, type: "slab", combinationId, combinationName, checks, reinforcement, limitations };
 }
 

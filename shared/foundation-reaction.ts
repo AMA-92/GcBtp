@@ -140,6 +140,8 @@ export type FoundationReactionRecord = {
   thicknessM: number;
   columnWidthM: number;
   columnDepthM: number;
+  geometricEccentricityXM: number;
+  geometricEccentricityYM: number;
 };
 
 /** Join projected planar solver reactions to supports inferred from actual footings. */
@@ -153,8 +155,10 @@ export function mapFoundationReactions(model: AnalyticalModel, result: PlaneFram
     const points = surface.nodeIds.map(id => nodes.get(id)).filter((node): node is NonNullable<typeof node> => Boolean(node));
     const widthXM = points.length ? Math.max(...points.map(node => node.x)) - Math.min(...points.map(node => node.x)) : 0;
     const widthYM = points.length ? Math.max(...points.map(node => node.y)) - Math.min(...points.map(node => node.y)) : 0;
+    const centerXM = points.length ? (Math.max(...points.map(node => node.x)) + Math.min(...points.map(node => node.x))) / 2 : 0;
+    const centerYM = points.length ? (Math.max(...points.map(node => node.y)) + Math.min(...points.map(node => node.y))) / 2 : 0;
     const section = sections.get(surface.sectionId);
-    return [surface.sourceElementId, { widthXM, widthYM, thicknessM: section?.dimensionsM[2] ?? 0 }] as const;
+    return [surface.sourceElementId, { widthXM, widthYM, centerXM, centerYM, thicknessM: section?.dimensionsM[2] ?? 0 }] as const;
   }));
   const records: FoundationReactionRecord[] = [];
   const seenNodes = new Set<string>();
@@ -174,8 +178,21 @@ export function mapFoundationReactions(model: AnalyticalModel, result: PlaneFram
     const columnFrame = model.frames.find(frame => frame.sourceType === "Poteau" && frame.startNodeId === support.nodeId) ?? model.frames.find(frame => frame.sourceType === "Poteau" && (frame.startNodeId === support.nodeId || frame.endNodeId === support.nodeId));
     const section = columnFrame ? sections.get(columnFrame.sectionId) : undefined;
     const dimensions = section?.dimensionsM ?? [];
+    const geometricEccentricityXM = footing && node ? node.x - footing.centerXM : 0;
+    const geometricEccentricityYM = footing && node ? node.y - footing.centerYM : 0;
+    const normalizedEccentricityX = footing?.widthXM ? Math.abs(geometricEccentricityXM) / footing.widthXM : 0;
+    const normalizedEccentricityY = footing?.widthYM ? Math.abs(geometricEccentricityYM) / footing.widthYM : 0;
+    const eccentricityAxis: "x" | "y" = normalizedEccentricityX >= normalizedEccentricityY ? "x" : "y";
+    const geometricEccentricityM = Math.hypot(geometricEccentricityXM, geometricEccentricityYM);
+    const momentAxis = geometricEccentricityM > 1e-6 ? eccentricityAxis : plane === "XZ" ? "x" : "y";
+    const momentReactionKnM = geometricEccentricityM > 1e-6
+      ? Math.abs(reaction.momentKnM) + Math.abs(reaction.fzKn) * geometricEccentricityM
+      : reaction.momentKnM;
     if (!footing) warnings.push(`Semelle analytique absente pour l’appui ${support.id}.`);
     if (!section || dimensions.length < 2) warnings.push(`Section de poteau non résolue pour l’appui ${support.id}.`);
+    if (geometricEccentricityM > 1e-6) warnings.push(`Semelle ${support.sourceElementId} excentrée de ${geometricEccentricityM.toFixed(3)} m (résultante X/Y) : moment géométrique N·e ajouté au screening de portance.`);
+    if (Math.abs(geometricEccentricityXM) > 1e-6 && Math.abs(geometricEccentricityYM) > 1e-6) warnings.push(`Semelle ${support.sourceElementId} excentrée sur deux axes : le screening uniaxial utilise la résultante conservatrice et ne remplace pas une vérification biaxiale complète.`);
+    if (geometricEccentricityM > 1e-6 && momentAxis !== (plane === "XZ" ? "x" : "y")) warnings.push(`L’excentricité géométrique de ${support.sourceElementId} agit hors du plan ${plane} ; le contrôle uniaxial reste un screening et ne remplace pas une vérification biaxiale.`);
     records.push({
       footingId: support.sourceElementId,
       columnId: columnFrame?.sourceElementId ?? support.id,
@@ -183,13 +200,15 @@ export function mapFoundationReactions(model: AnalyticalModel, result: PlaneFram
       levelId: columnFrame?.levelId ?? node?.levelIds[0] ?? "",
       verticalReactionKn: reaction.fzKn,
       horizontalReactionKn: reaction.fxKn,
-      momentReactionKnM: reaction.momentKnM,
-      momentAxis: plane === "XZ" ? "x" : "y",
+      momentReactionKnM,
+      momentAxis,
       widthXM: footing?.widthXM ?? 0,
       widthYM: footing?.widthYM ?? 0,
       thicknessM: footing?.thicknessM ?? 0,
       columnWidthM: dimensions[0] ?? 0,
       columnDepthM: dimensions[1] ?? dimensions[0] ?? 0,
+      geometricEccentricityXM,
+      geometricEccentricityYM,
     });
   }
   if (!records.length) warnings.push("Aucune réaction de fondation exploitable pour l’analyse 2D sélectionnée.");

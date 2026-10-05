@@ -21,6 +21,68 @@ describe("building load propagation", () => {
     expect(summarizeBuildingLoads(model).rows.length).toBe(6);
   });
 
+  it("includes a balcony as a full-slab surface with its own imposed load", () => {
+    const model = buildBuildingLoadModel([
+      { id: "BAL1", type: "Balcon", x: 0, y: 0, x2: 1, y2: 1, levelId: "rdc" },
+    ]);
+    expect(model.floors).toHaveLength(1);
+    expect(model.floors[0]).toMatchObject({ gk: 96, qk: 56, distributionMode: "two-way" });
+    expect(model.rows.find(row => row.id === "BAL1")).toMatchObject({ type: "Balcon", gk: 96, qk: 56 });
+  });
+
+  it("transfers a cantilever balcony load only to its selected fixed edge", () => {
+    const model = buildBuildingLoadModel([
+      { id: "BAL2", type: "Balcon", x: 0, y: 0, x2: 1, y2: 1, levelId: "rdc", floorConfig: { type: "Dalle pleine", thickness: "20 cm", characteristicPermanentLoad: "6.00", characteristicImposedLoad: "3.50", balconySupportEdge: "left" } },
+      { id: "B-ROOT", type: "Poutre", x: 0, y: 0, x2: 0, y2: 1, levelId: "rdc" },
+      { id: "B-FREE-1", type: "Poutre", x: 0, y: 0, x2: 1, y2: 0, levelId: "rdc" },
+      { id: "B-FREE-2", type: "Poutre", x: 0, y: 1, x2: 1, y2: 1, levelId: "rdc" },
+      { id: "B-FREE-3", type: "Poutre", x: 1, y: 0, x2: 1, y2: 1, levelId: "rdc" },
+    ]);
+    expect(model.contributions.map(item => item.beamId)).toEqual(["B-ROOT"]);
+    expect(model.contributions[0]).toMatchObject({ gk: 96, qk: 56 });
+    expect(model.contributions[0].source).toContain("porte-à-faux");
+  });
+
+  it("transfère un balcon de coin uniquement sur la rive droite explicitement choisie", () => {
+    const model = buildBuildingLoadModel([
+      { id: "BAL2", type: "Balcon", x: 0.5, y: 1, x2: 1, y2: 1.8, levelId: "rdc", floorConfig: { type: "Dalle pleine", thickness: "20 cm", characteristicPermanentLoad: "6.00", characteristicImposedLoad: "3.50", balconySupportEdge: "right" } },
+      { id: "B18", type: "Poutre", x: 0, y: 1, x2: 1, y2: 1, levelId: "rdc" },
+      { id: "B19", type: "Poutre", x: 1, y: 1, x2: 1, y2: 1.8, levelId: "rdc" },
+    ], { levelOrder: ["rdc"], gridDistance: 4 });
+    expect(model.contributions.map(item => item.beamId)).toEqual(["B19"]);
+    expect(model.contributions[0].gk).toBeCloseTo(38.4, 8);
+    expect(model.contributions[0].qk).toBeCloseTo(22.4, 8);
+    expect(model.warnings.filter(warning => warning.includes("Balcon BAL2"))).toEqual([]);
+  });
+
+  it("uses physical axis positions for a balcony on a non-uniform grid", () => {
+    const model = buildBuildingLoadModel([
+      { id: "BAL2", type: "Balcon", x: 0.5, y: 1, x2: 1, y2: 1.8, levelId: "rdc", floorConfig: { type: "Dalle pleine", thickness: "20 cm", characteristicPermanentLoad: "6.00", characteristicImposedLoad: "3.50", balconySupportEdge: "right" } },
+      { id: "B18", type: "Poutre", x: 0, y: 1, x2: 1, y2: 1, levelId: "rdc" },
+      { id: "B19", type: "Poutre", x: 1, y: 1, x2: 1, y2: 1.8, levelId: "rdc" },
+    ], {
+      levelOrder: ["rdc"],
+      gridDistance: 4,
+      xAxisPositionsM: [0, 4, 8],
+      yAxisPositionsM: [0, 4, 9],
+    });
+
+    expect(model.floors[0]).toMatchObject({ gk: 48, qk: 28 });
+    expect(model.contributions.map(item => item.beamId)).toEqual(["B19"]);
+    expect(model.contributions[0].gk).toBeCloseTo(48, 8);
+    expect(model.contributions[0].qk).toBeCloseTo(28, 8);
+  });
+
+  it("does not distribute a balcony to free edges when its fixed edge is missing", () => {
+    const model = buildBuildingLoadModel([
+      { id: "BAL3", type: "Balcon", x: 0, y: 0, x2: 1, y2: 1, levelId: "rdc" },
+      { id: "B-TOP", type: "Poutre", x: 0, y: 0, x2: 1, y2: 0, levelId: "rdc" },
+      { id: "B-BOTTOM", type: "Poutre", x: 0, y: 1, x2: 1, y2: 1, levelId: "rdc" },
+    ]);
+    expect(model.contributions).toEqual([]);
+    expect(model.warnings.some(warning => warning.includes("rive d’encastrement absente"))).toBe(true);
+  });
+
   it("cumulates an upper-storey load through aligned lower columns to the footing", () => {
     const model = buildBuildingLoadModel([
       { id: "PL1", type: "Dalle", x: 0, y: 0, x2: 4, y2: 4, levelId: "r1", floorConfig: { thickness: "16+4 cm", direction: "X" } },

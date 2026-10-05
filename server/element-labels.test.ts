@@ -8,6 +8,7 @@ describe("repères d’éléments DSRCAD", () => {
     expect(elementLabel(elements, "Poutre")).toBe("B2");
     expect(elementLabel(elements, "Semelle")).toBe("S2");
     expect(elementLabel(elements, "Dalle")).toBe("PL2");
+    expect(elementLabel([], "Balcon")).toBe("BAL1");
   });
 
   it("compacte les repères de semelles en S1, S2, S3", () => {
@@ -25,5 +26,10 @@ describe("repères d’éléments DSRCAD", () => {
     const normalized = renumberBuildingElements(levels)[0].elements;
     expect(normalized.map(element => element.type)).toEqual(["Poutre", "Dalle", "Poteau"]);
     expect(normalized.map(element => element.id)).toEqual(["B1", "PL1", "P1"]);
+  });
+
+  it("normalise le balcon importé comme une famille de surface autonome", () => {
+    const normalized = renumberElements([{ id: "balcony-8", type: "Balcony" }]);
+    expect(normalized[0]).toMatchObject({ id: "BAL1", type: "Balcon" });
   });
 });

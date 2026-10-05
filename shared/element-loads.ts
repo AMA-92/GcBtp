@@ -1,4 +1,5 @@
 import type { FloorConfig } from "./floor-config";
+import { defaultBalconyFloorConfig, isSlabElementType } from "./floor-config";
 import { MATERIAL_CATALOG } from "./load-catalog";
 import { calculateStairPermanentLoad } from "./stair-load";
 
@@ -9,8 +10,8 @@ const floorSelfWeightRate = (config: FloorConfig) => { const parts = (config.thi
 
 export function elementLoadSummary(element: StructuralElement, gridDistance: string, fallback: FloorConfig) {
   const distance = Math.max(Number(gridDistance.replace(",", ".")) || 4, 0.1);
-  if (element.type === "Dalle" || element.type === "Escaliers") {
-    const config = element.floorConfig ?? (element.type === "Escaliers" ? { ...fallback, type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: "2.50", stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60", stairFinishLoad: "0.00" } : fallback);
+  if (isSlabElementType(element.type) || element.type === "Escaliers") {
+    const config = element.floorConfig ?? (element.type === "Escaliers" ? { ...fallback, type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: "2.50", stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60", stairFinishLoad: "0.00" } : element.type === "Balcon" ? defaultBalconyFloorConfig(fallback) : fallback);
     const thicknesses = config.thickness.match(/\d+(?:[.,]\d+)?/g)?.map(Number) ?? [20];
     const thickness = thicknesses.reduce((a, b) => a + b, 0) / 100;
     const surface = Math.max(Math.abs((element.x2 ?? element.x ?? 0) - (element.x ?? 0)), 1) * Math.max(Math.abs((element.y2 ?? element.y ?? 0) - (element.y ?? 0)), 1) * distance * distance;
@@ -22,7 +23,7 @@ export function elementLoadSummary(element: StructuralElement, gridDistance: str
     const qkRate = Number.isFinite(explicitImposed) ? Math.max(0, explicitImposed) : Number(config.imposedLoad ?? 2);
     const gk = surface * gkRate;
     const qk = surface * qkRate;
-    return { surface, gk, qk, design: 1.35 * gk + 1.5 * qk, label: `${config.type} · portée ${config.span} m` };
+    return { surface, gk, qk, design: 1.35 * gk + 1.5 * qk, label: `${element.type === "Balcon" ? "Balcon · dalle pleine" : config.type} · portée ${config.span} m` };
   }
   if (element.type === "Poutre") {
     const span = Math.max(Math.hypot((element.x2 ?? element.x ?? 0) - (element.x ?? 0), (element.y2 ?? element.y ?? 0) - (element.y ?? 0)) * distance, 0.1);

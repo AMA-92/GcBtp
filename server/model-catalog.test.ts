@@ -3,8 +3,8 @@ import { MODEL_CATALOG, mergeModelCatalog, modelColor, modelFamilies, modelSpec 
 
 describe("catalogue Mes modèles DSRCAD", () => {
   it("contient les familles structurelles et les escaliers", () => {
-    expect(modelFamilies()).toEqual(["Poteau (Rect)", "Poteau (Cir)", "Poutre", "Voile", "Longrine de redressement", "Semelle", "Plancher (Corps Creux)", "Plancher (Dalle BA)", "Escaliers"]);
-    expect(MODEL_CATALOG).toHaveLength(11);
+    expect(modelFamilies()).toEqual(["Poteau (Rect)", "Poteau (Cir)", "Poutre", "Voile", "Longrine de redressement", "Semelle", "Plancher (Corps Creux)", "Plancher (Dalle BA)", "Balcon", "Escaliers"]);
+    expect(MODEL_CATALOG).toHaveLength(12);
   });
   it("associe une couleur stable à chaque modèle", () => {
     expect(modelColor("Poteau", "Pot_20x30")).toBe("#27358f");
@@ -13,6 +13,7 @@ describe("catalogue Mes modèles DSRCAD", () => {
     expect(modelSpec("Escaliers", "Escalier BA 15 cm")?.dimensions).toContain("0.15");
     expect(modelSpec("Voile", "Voile_20cm")?.dimensions).toContain("0.20");
     expect(modelSpec("Longrine de redressement", "Longrine_20x40")?.dimensions).toContain("0.20");
+    expect(modelSpec("Balcon", "Balcon BA 20 cm")).toMatchObject({ type: "Balcon", family: "Balcon", dimensions: "0.20 × 3.00 × 1.50 m" });
   });
 });
 

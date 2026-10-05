@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { indexedDB as fakeIndexedDB } from "fake-indexeddb";
-import { createBuildingProjectBundle, hasRevisionConflict, loadBuildingProjectHistory, loadBuildingProjects, parseBuildingProjectBundle, saveBuildingProject, serializeBuildingProjectBundle, type BuildingProjectSnapshot } from "../shared/building-persistence";
+import { createBuildingProjectBundle, hasRevisionConflict, loadBuildingProjectHistory, loadBuildingProjects, parseBuildingProjectBundle, removeBuildingProject, saveBuildingProject, serializeBuildingProjectBundle, type BuildingProjectSnapshot } from "../shared/building-persistence";
 
 type ProjectFixture = { id: string; name: string; levels: Array<{ id: string; elements: unknown[] }> };
 const project: ProjectFixture = { id: "project-1", name: "Maison test", levels: [{ id: "rdc", elements: [{ id: "P1", type: "Poteau" }] }] };
@@ -52,5 +52,16 @@ describe("building project persistence", () => {
     expect(stale.current?.revision).toBe(2);
     expect((await loadBuildingProjects<ProjectFixture>()).find(item => item.projectId === id)?.project.name).toBe("Maison test modifiée");
     expect((await loadBuildingProjectHistory<ProjectFixture>(id)).map(item => item.revision)).toEqual([2, 1]);
+  });
+
+  it("removes a project and all its local revision history", async () => {
+    const id = `delete-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const first = await saveBuildingProject({ ...project, id }, 0);
+    expect(first.status).toBe("saved");
+    const second = await saveBuildingProject({ ...project, id, name: "Version suivante" }, 1);
+    expect(second.status).toBe("saved");
+    await removeBuildingProject(id);
+    expect((await loadBuildingProjects<ProjectFixture>()).some(snapshot => snapshot.projectId === id)).toBe(false);
+    expect(await loadBuildingProjectHistory<ProjectFixture>(id)).toEqual([]);
   });
 });

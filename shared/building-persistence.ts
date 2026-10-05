@@ -180,6 +180,36 @@ export async function loadBuildingProjectHistory<T extends BuildingProjectLike>(
   }
 }
 
+export async function removeBuildingProject(projectId: string): Promise<void> {
+  const removeFromFallback = () => {
+    const container = readFallback<BuildingProjectLike>();
+    container.current = container.current.filter(snapshot => snapshot.projectId !== projectId);
+    container.history = container.history.filter(snapshot => snapshot.projectId !== projectId);
+    writeFallback(container);
+  };
+  if (!getIndexedDB()) {
+    removeFromFallback();
+    return;
+  }
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction([CURRENT_STORE, HISTORY_STORE], "readwrite");
+    transaction.objectStore(CURRENT_STORE).delete(projectId);
+    const historyRows = transaction.objectStore(HISTORY_STORE).index("projectId").openCursor(projectId);
+    historyRows.onsuccess = () => {
+      const cursor = historyRows.result;
+      if (cursor) {
+        cursor.delete();
+        cursor.continue();
+      }
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("Project removal failed"));
+    transaction.onabort = () => reject(transaction.error ?? new Error("Project removal aborted"));
+  });
+  removeFromFallback();
+}
+
 export function createBuildingProjectBundle<T extends BuildingProjectLike, W>(project: T, workspace: W, exportedAt = new Date()): BuildingProjectBundle<T, W> {
   return { format: BUILDING_BUNDLE_FORMAT, schemaVersion: BUILDING_BUNDLE_SCHEMA_VERSION, exportedAt: exportedAt.toISOString(), project, workspace };
 }

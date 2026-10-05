@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Rotate3D } from "lucide-react";
 import { modelColor, modelSpec, type ModelSpec } from "@shared/model-catalog";
 import { cumulativeGridPositions } from "@shared/proportional-grid";
 import {
@@ -12,6 +13,9 @@ import {
   FOOTING_3D_HALF_X,
   FOOTING_3D_HALF_Y,
   FOOTING_3D_HEIGHT,
+  footingCenterOffset,
+  type FootingDirectionSelection,
+  type FootingLayoutMode,
 } from "@shared/footing-geometry";
 import {
   decayRotationVelocity,
@@ -27,6 +31,8 @@ type ElementItem = {
   y: number;
   x2?: number;
   y2?: number;
+  foundationMode?: FootingLayoutMode;
+  foundationDirection?: FootingDirectionSelection;
   xMid?: number;
   yMid?: number;
   stairGeometry?: {
@@ -87,6 +93,105 @@ type Props = {
   onStairBeamHover?: (beam: ElementItem | null) => void;
 };
 type Point = { x: number; y: number };
+const distanceBetween = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
+const clientToViewBox = (svg: SVGSVGElement, point: Point): Point => {
+  const rect = svg.getBoundingClientRect();
+  const scale = Math.max(Math.min(rect.width / 430, rect.height / 510), 0.001);
+  const offsetX = (rect.width - 430 * scale) / 2;
+  const offsetY = (rect.height - 510 * scale) / 2;
+  return { x: (point.x - rect.left - offsetX) / scale, y: (point.y - rect.top - offsetY) / scale };
+};
+type Vector3 = [number, number, number];
+type ViewOrientation = { yaw: number; pitch: number };
+type ViewCubeFace = {
+  key: string;
+  label: string;
+  normal: Vector3;
+  vertices: Vector3[];
+  fill: string;
+  target: ViewOrientation;
+};
+const VIEW_CUBE_FACES: ViewCubeFace[] = [
+  { key: "top", label: "Haut", normal: [0, 0, 1], vertices: [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], fill: "#f8fbfd", target: { yaw: 0, pitch: 88 } },
+  { key: "bottom", label: "Bas", normal: [0, 0, -1], vertices: [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]], fill: "#aebdc7", target: { yaw: 0, pitch: -88 } },
+  { key: "front", label: "Avant", normal: [0, 1, 0], vertices: [[-1, 1, -1], [1, 1, -1], [1, 1, 1], [-1, 1, 1]], fill: "#e8f0f5", target: { yaw: 0, pitch: 0 } },
+  { key: "back", label: "Arrière", normal: [0, -1, 0], vertices: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]], fill: "#c7d3dc", target: { yaw: 180, pitch: 0 } },
+  { key: "right", label: "Droite", normal: [1, 0, 0], vertices: [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]], fill: "#d9e4eb", target: { yaw: 90, pitch: 0 } },
+  { key: "left", label: "Gauche", normal: [-1, 0, 0], vertices: [[-1, 1, -1], [-1, -1, -1], [-1, -1, 1], [-1, 1, 1]], fill: "#cbd8e0", target: { yaw: -90, pitch: 0 } },
+];
+
+function BuildingOrientationCube({ rotation, onFaceSelect, onOrbit }: {
+  rotation: ViewOrientation;
+  onFaceSelect: (orientation: ViewOrientation) => void;
+  onOrbit: (orientation: ViewOrientation) => void;
+}) {
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; yaw: number; pitch: number } | null>(null);
+  const suppressClickRef = useRef(false);
+  const yaw = rotation.yaw * Math.PI / 180;
+  const pitch = Math.max(-88, Math.min(88, rotation.pitch)) * Math.PI / 180;
+  const camera = [Math.sin(yaw) * Math.cos(pitch), Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch)];
+  const projectVertex = ([x, y, z]: Vector3): Point => {
+    const rotatedX = x * Math.cos(yaw) - y * Math.sin(yaw);
+    const depth = x * Math.sin(yaw) + y * Math.cos(yaw);
+    const vertical = z * Math.cos(pitch) - depth * 0.42 * Math.sin(pitch);
+    return { x: 61 + rotatedX * 27, y: 60 - vertical * 27 };
+  };
+  const visibleFaces = VIEW_CUBE_FACES
+    .map(face => {
+      const facing = face.normal[0] * camera[0] + face.normal[1] * camera[1] + face.normal[2] * camera[2];
+      const points = face.vertices.map(projectVertex);
+      const center = points.reduce((sum, point) => ({ x: sum.x + point.x / points.length, y: sum.y + point.y / points.length }), { x: 0, y: 0 });
+      const depth = face.normal[0] * camera[0] + face.normal[1] * camera[1] + face.normal[2] * camera[2];
+      return { ...face, facing, points, center, depth };
+    })
+    .filter(face => face.facing > 0.015)
+    .sort((a, b) => a.depth - b.depth);
+  const beginCubeOrbit = (event: React.PointerEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    suppressClickRef.current = false;
+    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, yaw: rotation.yaw, pitch: rotation.pitch };
+  };
+  const moveCubeOrbit = (event: React.PointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (Math.hypot(dx, dy) > 3) suppressClickRef.current = true;
+    onOrbit({ yaw: drag.yaw + dx * 1.1, pitch: Math.max(-88, Math.min(88, drag.pitch + dy * 0.8)) });
+  };
+  const endCubeOrbit = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+  };
+  const selectFace = (face: ViewCubeFace) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    onFaceSelect(face.target);
+  };
+  return (
+    <div className="absolute right-1 top-1 z-10 select-none" role="group" aria-label="Cube d’orientation à six faces">
+      <svg viewBox="0 0 122 120" className={`h-[88px] w-[90px] touch-none ${dragRef.current ? "cursor-grabbing" : "cursor-grab"}`} aria-label="Cliquer une face pour orienter le modèle; glisser le cube pour le tourner" onPointerDown={beginCubeOrbit} onPointerMove={moveCubeOrbit} onPointerUp={endCubeOrbit} onPointerCancel={endCubeOrbit}>
+        <defs>
+          <filter id="view-cube-shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="2" floodColor="#466172" floodOpacity=".22" /></filter>
+          <linearGradient id="view-cube-top" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#ffffff" /><stop offset="1" stopColor="#e7eef3" /></linearGradient>
+        </defs>
+        <g filter="url(#view-cube-shadow)">
+          {visibleFaces.map(face => {
+            const points = face.points.map(point => `${point.x},${point.y}`).join(" ");
+            const edge = face.points[1];
+            const angle = Math.atan2(edge.y - face.points[0].y, edge.x - face.points[0].x) * 180 / Math.PI;
+            return <g key={face.key} className="cursor-pointer" onClick={() => selectFace(face)} role="button" tabIndex={0} aria-label={`Vue ${face.label}`} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectFace(face); } }}>
+              <polygon points={points} fill={face.key === "top" ? "url(#view-cube-top)" : face.fill} stroke="#788993" strokeWidth="1.15" strokeLinejoin="round" />
+              <text x={face.center.x} y={face.center.y + 3} textAnchor="middle" transform={`rotate(${angle} ${face.center.x} ${face.center.y})`} fill="#293d4c" fontSize="9" fontWeight="600" pointerEvents="none">{face.label}</text>
+            </g>;
+          })}
+        </g>
+      </svg>
+    </div>
+  );
+}
 
 const colorOf = (item: ElementItem) =>
   item.color ?? modelColor(item.type, item.section);
@@ -144,12 +249,14 @@ export default function Building3DView({
   onStairBeamSelect,
   onStairBeamHover,
 }: Props) {
-  const [rotation, setRotation] = useState({ yaw: -28, pitch: 0 });
+  const [rotation, setRotation] = useState({ yaw: 35, pitch: 30 });
   const [zoom, setZoom] = useState(1);
   const [navigationMode, setNavigationMode] = useState<"rotate" | "pan">(
     "rotate"
   );
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const activePointersRef = useRef(new Map<number, Point>());
+  const pinchRef = useRef<{ distance: number; zoom: number; center: Point; pan: Point } | null>(null);
   const dragRef = useRef<{
     pointerId: number;
     x: number;
@@ -244,6 +351,24 @@ export default function Building3DView({
   useEffect(() => () => stopInertia(), []);
   const beginRotate = (event: React.PointerEvent<SVGSVGElement>) => {
     stopInertia();
+    const pointers = activePointersRef.current;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (pointers.size >= 2) {
+      velocityRef.current = { yaw: 0, pitch: 0 };
+      dragRef.current = null;
+      const [first, second] = Array.from(pointers.values()).slice(0, 2);
+      const firstCenter = clientToViewBox(event.currentTarget, first);
+      const secondCenter = clientToViewBox(event.currentTarget, second);
+      pinchRef.current = {
+        distance: Math.max(distanceBetween(first, second), 1),
+        zoom,
+        center: { x: (firstCenter.x + secondCenter.x) / 2, y: (firstCenter.y + secondCenter.y) / 2 },
+        pan,
+      };
+      return;
+    }
+    pinchRef.current = null;
     dragRef.current = {
       pointerId: event.pointerId,
       x: event.clientX,
@@ -256,9 +381,26 @@ export default function Building3DView({
       panY: pan.y,
       mode: navigationMode,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
   };
   const rotate = (event: React.PointerEvent<SVGSVGElement>) => {
+    const pointers = activePointersRef.current;
+    if (pointers.has(event.pointerId)) pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const pinch = pinchRef.current;
+    if (pinch && pointers.size >= 2) {
+      const [first, second] = Array.from(pointers.values()).slice(0, 2);
+      const firstCenter = clientToViewBox(event.currentTarget, first);
+      const secondCenter = clientToViewBox(event.currentTarget, second);
+      const center = { x: (firstCenter.x + secondCenter.x) / 2, y: (firstCenter.y + secondCenter.y) / 2 };
+      const ratio = distanceBetween(first, second) / pinch.distance;
+      const nextZoom = Math.max(0.2, Math.min(8, pinch.zoom * ratio));
+      const scaleRatio = nextZoom / pinch.zoom;
+      setZoom(nextZoom);
+      setPan({
+        x: pinch.pan.x + (center.x - pinch.center.x) + (pinch.center.x - origin.x - pinch.pan.x) * (1 - scaleRatio),
+        y: pinch.pan.y + (center.y - pinch.center.y) + (pinch.center.y - origin.y - pinch.pan.y) * (1 - scaleRatio),
+      });
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const dx = event.clientX - drag.lastX;
@@ -282,9 +424,40 @@ export default function Building3DView({
     });
   };
   const endRotate = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
+    if (!activePointersRef.current.delete(event.pointerId)) return;
+    const wasPinching = pinchRef.current !== null;
+    if (activePointersRef.current.size >= 2) {
+      const [first, second] = Array.from(activePointersRef.current.values()).slice(0, 2);
+      const firstCenter = clientToViewBox(event.currentTarget, first);
+      const secondCenter = clientToViewBox(event.currentTarget, second);
+      pinchRef.current = {
+        distance: Math.max(distanceBetween(first, second), 1),
+        zoom,
+        center: { x: (firstCenter.x + secondCenter.x) / 2, y: (firstCenter.y + secondCenter.y) / 2 },
+        pan,
+      };
+      return;
+    }
+    pinchRef.current = null;
+    if (activePointersRef.current.size === 1) {
+      const [[pointerId, point]] = Array.from(activePointersRef.current.entries());
+      dragRef.current = {
+        pointerId,
+        x: point.x,
+        y: point.y,
+        lastX: point.x,
+        lastY: point.y,
+        yaw: rotation.yaw,
+        pitch: rotation.pitch,
+        panX: pan.x,
+        panY: pan.y,
+        mode: navigationMode,
+      };
+      return;
+    }
+    const drag = dragRef.current;
     dragRef.current = null;
-    startInertia();
+    if (drag?.mode === "rotate" && (!wasPinching || velocityRef.current.yaw !== 0 || velocityRef.current.pitch !== 0)) startInertia();
   };
   const defaultAxisSpacing = Math.max(Number(String(gridDistance).replace(",", ".")) || 4, 0.01);
   const axisSpacing = (distances: string[], index: number) => Math.max(Number(String(distances[index] ?? distances[index - 1] ?? defaultAxisSpacing).replace(",", ".")) || defaultAxisSpacing, 0.01);
@@ -428,7 +601,7 @@ export default function Building3DView({
               item.type === "Semelle"
                 ? 0
                 : item.type === "Poteau"
-                  ? 1
+                  ? 4
                   : item.type === "Poutre"
                     ? 2
                     : 3;
@@ -582,7 +755,7 @@ export default function Building3DView({
                         : [];
                       return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}><g opacity=".72" stroke="#a84d16" strokeWidth="1.15">{firstFlight}{renderedSecondFlight}{solidLanding(landingWorld, middleZ, "rest-landing")}{arrivalLandingWorld.length > 0 && solidLanding(arrivalLandingWorld, topZ, "arrival-landing")}</g><text x={(start.x + project(secondUpper.x, secondUpper.y, topZ).x) / 2 + 8} y={(start.y + project(secondUpper.x, secondUpper.y, topZ).y) / 2 - 8} className="fill-[#e87538] text-[9px] font-bold">{item.id}</text>{showLoadValues && stairLoad && <text x={start.x + 8} y={start.y - 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{stairLoad.areaKnM2?.toFixed(2)} kN/m²</text>}</g>;
                     }
-                    if (item.type === "Dalle") {
+                    if (item.type === "Dalle" || item.type === "Balcon") {
                       const dimensions = resolvedDimensions(item, modelCatalog);
                       const thickness = Math.max(0.04, firstSectionValue(dimensions, 0.20));
                       const x2 = item.x2 ?? item.x + 1;
@@ -694,7 +867,9 @@ export default function Building3DView({
                     const footingWidth = footingMatch ? sectionValueMeters(footingMatch[1], footingDimensions) : FOOTING_3D_HALF_X * 2;
                     const footingDepth = footingMatch ? sectionValueMeters(footingMatch[2], footingDimensions) : FOOTING_3D_HALF_Y * 2;
                     const footingHeight = footingMatch ? sectionValueMeters(footingMatch[3], footingDimensions) : FOOTING_3D_HEIGHT;
-                    const footingCenter = metricPoint(item.x, item.y);
+                    const footingOffset = footingCenterOffset(item.foundationMode, item.foundationDirection, footingWidth, footingDepth) ?? { xM: 0, yM: 0 };
+                    const columnAnchor = metricPoint(item.x, item.y);
+                    const footingCenter = { x: columnAnchor.x + footingOffset.xM, y: columnAnchor.y + footingOffset.yM };
                     const bottom = [
                       projectMetric(footingCenter.x - footingWidth / 2, footingCenter.y - footingDepth / 2, z),
                       projectMetric(footingCenter.x + footingWidth / 2, footingCenter.y - footingDepth / 2, z),
@@ -882,6 +1057,11 @@ export default function Building3DView({
           </g>
         )}
       </svg>
+      <BuildingOrientationCube
+        rotation={rotation}
+        onOrbit={orientation => { stopInertia(); setRotation(orientation); }}
+        onFaceSelect={orientation => { stopInertia(); setNavigationMode("rotate"); setRotation(orientation); }}
+      />
       {showAnalysisValues && Object.keys(analysisValues).length > 0 && (
         <div className="absolute left-2 top-2 max-w-[190px] rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-[9px] text-[#294b5a] shadow-sm">
           <div className="mb-1 font-bold text-[#27358f]">Valeurs d’analyse</div>
@@ -893,14 +1073,15 @@ export default function Building3DView({
           ))}
         </div>
       )}
-      <div className="absolute bottom-2 right-2 flex flex-col items-center gap-1">
+      <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
         <button
           onClick={() => {
             stopInertia();
             setNavigationMode("pan");
           }}
-          className={`grid h-7 w-7 place-items-center rounded-full bg-white text-sm shadow-md ${navigationMode === "pan" ? "ring-1 ring-[#e87538]" : ""}`}
+          className={`grid h-8 w-8 place-items-center rounded-full bg-white text-sm shadow-md ${navigationMode === "pan" ? "ring-1 ring-[#e87538]" : ""}`}
           aria-label="Activer la main de déplacement"
+          title="Déplacer la vue"
         >
           ✋
         </button>
@@ -909,24 +1090,12 @@ export default function Building3DView({
             stopInertia();
             setNavigationMode("rotate");
           }}
-          className={`grid h-7 w-7 place-items-center rounded-full bg-white text-sm shadow-md ${navigationMode === "rotate" ? "ring-1 ring-[#049b9b]" : ""}`}
-          aria-label="Activer la rotation 3D"
+          className={`flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[10px] font-semibold text-[#31566a] shadow-md ${navigationMode === "rotate" ? "ring-1 ring-[#049b9b]" : ""}`}
+          aria-label="Activer l’orbite 3D"
+          title="Faire orbiter la structure en glissant"
         >
-          ⌖
-        </button>
-        <button
-          onClick={() => setZoom(value => Math.min(1.55, value + 0.12))}
-          className="grid h-7 w-7 place-items-center rounded-full bg-white text-base leading-none shadow-md"
-          aria-label="Zoom avant"
-        >
-          +
-        </button>
-        <button
-          onClick={() => setZoom(value => Math.max(0.65, value - 0.12))}
-          className="grid h-7 w-7 place-items-center rounded-full bg-white text-base leading-none shadow-md"
-          aria-label="Zoom arrière"
-        >
-          −
+          <Rotate3D className="h-3.5 w-3.5" />
+          Orbite
         </button>
       </div>
     </div>

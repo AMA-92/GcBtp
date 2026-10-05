@@ -1,4 +1,5 @@
 type PlacementElement = { type: string; x: number; y: number; x2?: number; y2?: number };
+const isSlabElementType = (type: string) => type === "Dalle" || type === "Balcon";
 
 export function hasPostAt(elements: PlacementElement[], x: number, y: number) {
   return elements.some(item => item.type === "Poteau" && item.x === x && item.y === y);
@@ -38,10 +39,15 @@ const normalizedRectangle = (item: PlacementElement) => {
 
 export function hasSimilarElementAt(elements: PlacementElement[], candidate: PlacementElement) {
   return elements.some(item => {
+    if (isSlabElementType(item.type) && isSlabElementType(candidate.type)) {
+      const current = normalizedRectangle(item);
+      const next = normalizedRectangle(candidate);
+      return Math.max(current.x1, next.x1) < Math.min(current.x2, next.x2) && Math.max(current.y1, next.y1) < Math.min(current.y2, next.y2);
+    }
     if (item.type !== candidate.type) return false;
     if (candidate.type === "Poteau" || candidate.type === "Semelle") return item.x === candidate.x && item.y === candidate.y;
     if (candidate.type === "Poutre" || candidate.type === "Longrine de redressement") return normalizedSegment(item) === normalizedSegment(candidate);
-    if (candidate.type === "Dalle") {
+    if (candidate.type === "Dalle" || candidate.type === "Balcon") {
       const current = normalizedRectangle(item);
       const next = normalizedRectangle(candidate);
       return Math.max(current.x1, next.x1) < Math.min(current.x2, next.x2) && Math.max(current.y1, next.y1) < Math.min(current.y2, next.y2);

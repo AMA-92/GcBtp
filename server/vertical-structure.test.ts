@@ -37,4 +37,9 @@ describe("hiérarchie verticale de la structure", () => {
     expect(columnBaseElevation(levels, 1)).toBeCloseTo(postTopElevation(foundation, 0), 6);
     expect(columnBaseElevation(levels, 2)).toBeCloseTo(postTopElevation(rdc, 1), 6);
   });
+
+  it("place une longrine de fondation à la même cote que les pieds des poteaux", () => {
+    expect(elementElevation(foundation, 0, "Longrine de redressement")).toBeCloseTo(columnBaseElevation([foundation], 0), 6);
+    expect(elementElevation(rdc, 1, "Longrine de redressement")).toBeCloseTo(levelElevation(rdc, 1) - 0.35, 6);
+  });
 });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
@@ -26,13 +27,28 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { DSRCAD_COUNTRIES, DSRCAD_NORMS } from "@shared/dsrcad";
+import {
+  CONCRETE_CLASSES,
+  DEFAULT_PROJECT_MATERIALS,
+  getCountryProjectStandard,
+  getProjectMaterialSummary,
+  getProjectStandardId,
+  normalizeProjectMaterials,
+  PROJECT_COUNTRIES,
+  PROJECT_STANDARD_CATALOG,
+  REINFORCEMENT_STEEL_CATALOG,
+  STRUCTURAL_STEEL_CATALOG,
+  type ProjectMaterialSelection,
+  type ProjectStandard,
+  type ProjectStandardId,
+} from "@shared/project-catalogs";
 import {
   restoreBuildingDraft,
   serializeBuildingDraft,
   validateBuildingName,
 } from "@shared/building-flow";
 import { proposeSoil } from "@shared/site-soil";
+import { footingCenterOffset, normalizeFootingEccentricAxes, type FootingDirectionSelection, type FootingEccentricAxes, type FootingLayoutMode } from "@shared/footing-geometry";
 import {
   moveElement,
   removeElement,
@@ -40,6 +56,8 @@ import {
 } from "@shared/building-elements";
 import {
   defaultFloorConfig,
+  defaultBalconyFloorConfig,
+  isSlabElementType,
   normalizeFloorConfig,
   type FloorConfig,
 } from "@shared/floor-config";
@@ -91,7 +109,8 @@ import { createDefaultLoadProgram, evaluateLoadProgram, normalizeLoadProgram, va
 import { buildGravityMemberLoads, solveAnalyticalPlane, type FramePlane, type PlaneFrameResult } from "@shared/frame-solver-2d";
 import { solveGlobal3D, type Spatial3DStoryLateralLoad, type Spatial3DResult } from "@shared/frame-solver-3d";
 import { runProfessionalAnalysis } from "@shared/professional-analysis";
-import { analyzeSimplySupportedRectangularPlate, checkRectangularSurfaceEdgeSupports, meshRectangularSurface, type RectangularOpening, type SurfaceAnalysis } from "@shared/surface-analysis";
+import { analyzeCantileverRectangularPlate, analyzeOneWayOrthotropicRectangularPlate, analyzeSimplySupportedRectangularPlate, checkRectangularSurfaceEdgeSupports, meshRectangularSurface, SURFACE_ANALYSIS_SCHEMA_VERSION, type RectangularOpening, type RectangularSurfaceEdge, type SurfaceAnalysis } from "@shared/surface-analysis";
+import { resolveFloorPlateStiffness } from "@shared/plate-stiffness";
 import { deriveStoryMassesFromCumulativeLoads, generateClimateActions, parseClimateSpectrum, type ClimateActionInput, type ClimateActionsResult, type ClimateFieldSource } from "@shared/climate-actions";
 import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand } from "@shared/rc-design";
 import { mapFoundationReactions } from "@shared/foundation-reaction";
@@ -100,7 +119,11 @@ import ReinforcedConcretePanel from "@/components/ReinforcedConcretePanel";
 import FoundationReactionPanel, { type FoundationPanelEvaluation } from "@/components/FoundationReactionPanel";
 import { createStructuralPassport, createStructuralReport, renderStructuralPassport, renderStructuralReport } from "@shared/structural-report";
 import { loadReinforcementTemplate, saveReinforcementTemplate, type ReinforcementTemplate } from "@shared/reinforcement-report";
-import { createBuildingProjectBundle, loadBuildingProjectHistory, loadBuildingProjects, parseBuildingProjectBundle, saveBuildingProject, serializeBuildingProjectBundle, type BuildingProjectSnapshot } from "@shared/building-persistence";
+import { createBuildingProjectBundle, loadBuildingProjectHistory, loadBuildingProjects, parseBuildingProjectBundle, removeBuildingProject, saveBuildingProject, serializeBuildingProjectBundle, type BuildingProjectSnapshot } from "@shared/building-persistence";
+import { supabase } from "@/lib/supabase";
+import { deleteCloudBuildingProject, loadAccountBuildingProjectCache, loadCloudBuildingProjects, loadLegacyProjectsForAccount, removeAccountBuildingProjectCache, saveAccountBuildingProjectCache, saveCloudBuildingProject } from "@/lib/building-cloud";
+
+const scopedSessionKey = (key: string, accountId: string | null) => `${key}:account:${accountId ?? "local"}`;
 
 type Props = {
   threeD: boolean;
@@ -119,7 +142,7 @@ type Level = {
   elements: ElementItem[];
 };
 type GridPoint = { x: number; y: number };
-type SurfaceRunRow = { elementId: string; levelLabel: string; areaM2: number; openingCount: number; spanXM: number; spanYM: number; thicknessMm: number; uniformLoadKnM2: number; supportReactionKn: number; columnWidthMm: number; columnDepthMm: number; negativeMxKnMPerM: number; negativeMyKnMPerM: number; floorType: FloorConfig["type"]; analysis: SurfaceAnalysis; supportErrors: string[] };
+type SurfaceRunRow = { elementId: string; levelLabel: string; areaM2: number; openingCount: number; spanXM: number; spanYM: number; spanDirection: "X" | "Y"; thicknessMm: number; uniformLoadKnM2: number; columnWidthMm: number; columnDepthMm: number; negativeMxKnMPerM: number; negativeMyKnMPerM: number; floorType: FloorConfig["type"]; analysis: SurfaceAnalysis; supportErrors: string[] };
 type ClimateDraft = {
   schemaVersion: 1;
   sourceReference: string;
@@ -229,6 +252,13 @@ const remapStairGeometryLevels = (
 
 const numericGridDistance = (value: string | number | undefined, fallback = 4) =>
   Math.max(Number(String(value ?? fallback).replace(",", ".")) || fallback, 0.01);
+const metricGridAxisPositions = (xDistances: Array<string | number | undefined>, yDistances: Array<string | number | undefined>, xCount: number, yCount: number, gridDistance: string | number | undefined) => {
+  const fallback = numericGridDistance(gridDistance);
+  return {
+    xAxisPositionsM: cumulativeGridPositions(xDistances.map(value => numericGridDistance(value, fallback)), xCount),
+    yAxisPositionsM: cumulativeGridPositions(yDistances.map(value => numericGridDistance(value, fallback)), yCount),
+  };
+};
 const positionsToDistances = (positions: number[]) =>
   positions.slice(0, -1).map((position, index) =>
     Math.max(positions[index + 1] - position, 0.01).toFixed(2)
@@ -319,6 +349,8 @@ type ElementItem = {
   yMidM?: number;
   floorConfig?: FloorConfig;
   openings?: RectangularOpening[];
+  foundationMode?: FootingLayoutMode;
+  foundationDirection?: FootingDirectionSelection;
   stairGeometry?: StairGeometry;
   absoluteStairGeometry?: StairGeometry["absolute"];
 };
@@ -333,7 +365,18 @@ type Project = {
   norm: string;
   country: string;
   projectUsage?: ProjectUsage;
+  regulatoryCatalogId?: ProjectStandardId;
+  materials?: ProjectMaterialSelection;
   optimizationLockedElementIds?: string[];
+};
+type ProjectSettingsDraft = {
+  country: string;
+  city: string;
+  location: string;
+  structure: string;
+  norm: ProjectStandard;
+  regulatoryCatalogId: ProjectStandardId;
+  materials: ProjectMaterialSelection;
 };
 type ProjectUsage = "habitation" | "logement" | "bureau" | "commerce";
 const PROJECT_USAGE_OPTIONS: Array<{ id: ProjectUsage; label: string; load: number; stairLoad: number }> = [
@@ -398,6 +441,8 @@ export default function BuildingCreateFlow({
 }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selected, setSelected] = useState<Project | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [cloudAccountId, setCloudAccountId] = useState<string | null>(null);
   useEffect(() => {
     setOptimizationLockedElementIds(new Set(selected?.optimizationLockedElementIds ?? []));
   }, [selected?.id, selected?.optimizationLockedElementIds]);
@@ -406,6 +451,8 @@ export default function BuildingCreateFlow({
   const [autosaveRetry, setAutosaveRetry] = useState(0);
   const [conflictProjectId, setConflictProjectId] = useState<string | null>(null);
   const [projectHistory, setProjectHistory] = useState<BuildingProjectSnapshot<Project>[]>([]);
+  const [projectPendingDeletion, setProjectPendingDeletion] = useState<Project | null>(null);
+  const [projectDeletionInProgress, setProjectDeletionInProgress] = useState(false);
   const projectRevisions = useRef<Record<string, number>>({});
   const autosaveBlocked = useRef(new Set<string>());
   const autosaveInFlight = useRef(new Set<string>());
@@ -413,15 +460,96 @@ export default function BuildingCreateFlow({
   const projectContents = useRef<Record<string, string>>({});
   const workspaceByProject = useRef<Record<string, BuildingWorkspaceSnapshot>>({});
   const projectImportInput = useRef<HTMLInputElement>(null);
+  const activeAccountRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    let mounted = true;
+    const activateAccount = (accountId: string | null) => {
+      if (!mounted) return;
+      if (activeAccountRef.current !== accountId) {
+        const switchingExistingAccount = activeAccountRef.current !== undefined;
+        activeAccountRef.current = accountId;
+        setProjectsHydrated(false);
+        setProjects([]);
+        setSelected(null);
+        setConflictProjectId(null);
+        setProjectHistory([]);
+        setProjectPendingDeletion(null);
+        setProjectDeletionInProgress(false);
+        setPanel(null);
+        projectRevisions.current = {};
+        projectContents.current = {};
+        workspaceByProject.current = {};
+        autosaveBlocked.current.clear();
+        autosavePending.current.clear();
+        if (switchingExistingAccount) {
+          setXAxes(["1", "2", "3", "4"]);
+          setYAxes(["A", "B", "C", "D"]);
+          setZLevels(["Fondation -1.00 m", "RDC 0.00 m"]);
+          setXDistances(["4.00", "4.00", "4.00"]);
+          setYDistances(["4.00", "4.00", "4.00"]);
+          setXNumbering("numeric");
+          setYNumbering("alpha");
+          setGridDistance("4.00");
+          setLoads({ permanent: true, exploitation: true, wind: false, seismic: false });
+          setAnalyticalTolerance(String(DEFAULT_NODE_MERGE_TOLERANCE_M));
+          setCustomModels([]);
+          setLoadProgram(createDefaultLoadProgram(norm, "habitation"));
+          setClimateDraft(createClimateDraft());
+          setClimateLoadedProjectId(null);
+          setFloorConfig(defaultFloorConfig);
+          setProjectUsage("habitation");
+          setActiveLevelId("rdc");
+          setThreeD(false);
+          setShowLabels(true);
+          setGridOpacity("100");
+          setSnapToGrid(true);
+        }
+        setPersistenceStatus(accountId ? "Récupération des projets de votre compte…" : "Récupération locale…");
+      }
+      setCloudAccountId(accountId);
+      setAuthResolved(true);
+    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      activateAccount(session?.user.id ?? null);
+    });
+    void supabase.auth.getSession()
+      .then(({ data }) => activateAccount(data.session?.user.id ?? null))
+      .catch(() => activateAccount(null));
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+  useEffect(() => {
+    const retryWhenOnline = () => setAutosaveRetry(value => value + 1);
+    window.addEventListener("online", retryWhenOnline);
+    return () => window.removeEventListener("online", retryWhenOnline);
+  }, []);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectUsage, setProjectUsage] = useState<ProjectUsage>("habitation");
+  const [projectWizardStep, setProjectWizardStep] = useState<"identity" | "settings">("identity");
+  const [projectSettingsDraft, setProjectSettingsDraft] = useState<ProjectSettingsDraft>(() => {
+    const initialCity = getCitiesForCountry(country)[0]?.city ?? "";
+    const initialNorm = getCountryProjectStandard(country, initialCity);
+    return {
+      country,
+      city: initialCity,
+      location: "",
+      structure: "Béton armé",
+      norm: initialNorm,
+      regulatoryCatalogId: getProjectStandardId(initialNorm),
+      materials: { ...DEFAULT_PROJECT_MATERIALS },
+    };
+  });
   const [activeLevelId, setActiveLevelId] = useState("rdc");
   const [showMenu, setShowMenu] = useState(false);
   const [showPersistenceMenu, setShowPersistenceMenu] = useState(false);
   const [panel, setPanel] = useState<string | null>(null);
   const [modelType, setModelType] = useState("Poteau");
   const [modelSection, setModelSection] = useState("Pot_20x30");
+  const [foundationPlacementMode, setFoundationPlacementMode] = useState<FootingLayoutMode>("centered");
+  const [foundationPlacementDirection, setFoundationPlacementDirection] = useState<FootingEccentricAxes>({ x: "none", y: "none" });
   const [customModels, setCustomModels] = useState<ModelSpec[]>([]);
   const [xAxes, setXAxes] = useState(["1", "2", "3", "4"]);
   const [yAxes, setYAxes] = useState(["A", "B", "C", "D"]);
@@ -546,29 +674,29 @@ export default function BuildingCreateFlow({
   }, [analyticalModel, spatial3DResult, solverCombinationId, loadProgram.combinations, planeAnalysis]);
   const rcSlabDemands = useMemo<RCSlabDemand[]>(() => {
     if (!surfaceAnalysis?.combinationId || !surfaceAnalysis.combinationName) return [];
-    return surfaceAnalysis.rows.map(row => {
+    return surfaceAnalysis.rows.flatMap(row => {
       const plate = row.analysis.plate;
-      const mxKnMPerM = plate?.maximumMxKnMPerM ?? row.uniformLoadKnM2 * row.spanXM ** 2 / 8;
-      const myKnMPerM = plate?.maximumMyKnMPerM ?? row.uniformLoadKnM2 * row.spanYM ** 2 / 8;
-      return {
+      if (!plate) return [];
+      return [{
       id: row.elementId,
       combinationId: surfaceAnalysis.combinationId as string,
       combinationName: surfaceAnalysis.combinationName as string,
       spanXM: row.spanXM,
       spanYM: row.spanYM,
+      spanDirection: row.spanDirection,
+      boundaryMode: plate.boundary,
       thicknessMm: row.thicknessMm,
-      mxKnMPerM,
-      myKnMPerM,
-      serviceDeflectionMm: plate ? plate.maximumDeflectionM * 1000 : undefined,
+      mxKnMPerM: plate.maximumMxKnMPerM,
+      myKnMPerM: plate.maximumMyKnMPerM,
+      serviceDeflectionMm: plate.maximumDeflectionM * 1000,
       uniformLoadKnM2: row.uniformLoadKnM2,
-      supportReactionKn: row.supportReactionKn,
       columnWidthMm: row.columnWidthMm,
       columnDepthMm: row.columnDepthMm,
       negativeMxKnMPerM: row.negativeMxKnMPerM,
       negativeMyKnMPerM: row.negativeMyKnMPerM,
       openingAreaRatio: row.areaM2 > 0 ? (row.analysis.mesh?.openingAreaM2 ?? 0) / row.areaM2 : 0,
       floorType: row.floorType,
-      };
+      }];
     });
   }, [surfaceAnalysis]);
   const rcFoundationDemands = useMemo<RCFootingDemand[]>(() => {
@@ -621,8 +749,8 @@ export default function BuildingCreateFlow({
       warnings.push(...planeAnalysis.warnings);
       if (planeAnalysis.comparison && planeAnalysis.comparison.differencePercent > 1) warnings.push(`Écart d’équilibre global ${planeAnalysis.comparison.differencePercent.toFixed(2)} % ; revue nécessaire avant toute interprétation.`);
     }
-    if (!surfaceAnalysis?.rows.some(row => row.analysis.plate)) warnings.push("Efforts de dalle absents : lancer le maillage/analyse des dalles pleines à quatre bords simplement appuyés.");
-    else warnings.push(...(surfaceAnalysis?.errors ?? []));
+    if (!surfaceAnalysis?.rows.some(row => row.analysis.plate)) warnings.push("Efforts de surface absents : lancer le maillage/analyse des dalles pleines, corps creux ou balcons avec leurs appuis définis.");
+    warnings.push(...(surfaceAnalysis?.errors ?? []));
     return Array.from(new Set(warnings));
   }, [rcMemberExtraction, spatial3DResult, planeAnalysis, surfaceAnalysis]);
   const criticalColumn = analysisRows.filter(row => row.type === "Poteau").sort((a, b) => b.nu - a.nu)[0];
@@ -665,6 +793,9 @@ export default function BuildingCreateFlow({
     location || selected?.location || ""
   );
   const regulatoryProfile = getRegulatorySiteProfile(country, city);
+  const projectSetupProfile = getRegulatorySiteProfile(projectSettingsDraft.country, projectSettingsDraft.city);
+  const projectSetupMaterials = getProjectMaterialSummary(projectSettingsDraft.materials);
+  const selectedProjectMaterials = getProjectMaterialSummary(normalizeProjectMaterials(selected?.materials));
   const constructionCodeCompliance = useMemo(() => evaluateSenegalConstructionCode({
     country,
     buildingFloorsAboveGround: Math.max(0, (selected?.levels?.length ?? 1) - 1),
@@ -679,7 +810,7 @@ export default function BuildingCreateFlow({
   const floorStorageKey = selected ? `${selected.id}:${activeLevelId}` : "";
   const createWorkspaceSnapshot = (projectId = selected?.id): BuildingWorkspaceSnapshot => {
     let allFloorConfigs: Record<string, FloorConfig> = {};
-    try { allFloorConfigs = JSON.parse(sessionStorage.getItem("gcbtp-floor-configs") ?? "{}"); } catch { /* Use the in-memory active floor config. */ }
+    try { allFloorConfigs = JSON.parse(sessionStorage.getItem(scopedSessionKey("gcbtp-floor-configs", cloudAccountId)) ?? "{}"); } catch { /* Use the in-memory active floor config. */ }
     const floorConfigs = projectId
       ? Object.fromEntries(Object.entries(allFloorConfigs).filter(([key]) => key.startsWith(`${projectId}:`))) as Record<string, FloorConfig>
       : {};
@@ -728,27 +859,81 @@ export default function BuildingCreateFlow({
       });
     return fallback;
   };
+  const floorConfigForModel = (type: string, section: string, fallback = floorConfig): FloorConfig =>
+    type === "Balcon" ? defaultBalconyFloorConfig(fallback) : floorConfigForSection(section, fallback);
 
   useEffect(() => {
+    if (!authResolved) return;
     let cancelled = false;
+    setProjectsHydrated(false);
     void (async () => {
       let snapshots: BuildingProjectSnapshot<Project>[] = [];
-      try { snapshots = await loadBuildingProjects<Project>(); } catch { /* La migration legacy reste disponible. */ }
-      if (cancelled) return;
-      if (snapshots.length) {
-        const restored = snapshots.map(snapshot => ({
-          ...snapshot.project,
-          levels: renumberBuildingElements(snapshot.project.levels),
-        }));
-        projectRevisions.current = Object.fromEntries(snapshots.map(snapshot => [snapshot.projectId, snapshot.revision]));
-        workspaceByProject.current = Object.fromEntries(snapshots.filter(snapshot => snapshot.workspace && typeof snapshot.workspace === "object").map(snapshot => [snapshot.projectId, snapshot.workspace as BuildingWorkspaceSnapshot]));
-        projectContents.current = Object.fromEntries(restored.map(project => [project.id, JSON.stringify({ project, workspace: workspaceByProject.current[project.id] })]));
-        autosaveBlocked.current.clear();
-        setProjects(restored);
-        const latest = [...snapshots].sort((a, b) => b.savedAt.localeCompare(a.savedAt))[0];
-        if (latest) setSelectedProject(restored.find(project => project.id === latest.projectId) ?? restored[0]);
-        setPersistenceStatus("Projet récupéré depuis le stockage local durable");
+      let persistenceMessage = "";
+      if (cloudAccountId) {
+        try {
+          const remote = await loadCloudBuildingProjects<Project>(cloudAccountId);
+          if (cancelled) return;
+          const merged = new Map(remote.map(snapshot => [snapshot.projectId, snapshot]));
+          remote.forEach(snapshot => saveAccountBuildingProjectCache(cloudAccountId, snapshot));
+          const localCandidates = new Map<string, BuildingProjectSnapshot<Project>>();
+          [...loadAccountBuildingProjectCache<Project>(cloudAccountId), ...await loadLegacyProjectsForAccount<Project>(cloudAccountId)]
+            .forEach(snapshot => {
+              const existing = localCandidates.get(snapshot.projectId);
+              if (!existing || snapshot.savedAt > existing.savedAt) localCandidates.set(snapshot.projectId, snapshot);
+            });
+          let conflictingProjectId: string | null = null;
+          for (const local of localCandidates.values()) {
+            if (cancelled) return;
+            const current = merged.get(local.projectId);
+            const localContent = JSON.stringify({ project: local.project, workspace: local.workspace });
+            const currentContent = current ? JSON.stringify({ project: current.project, workspace: current.workspace }) : "";
+            if (current && (localContent === currentContent || local.savedAt <= current.savedAt)) continue;
+            const outcome = await saveCloudBuildingProject(cloudAccountId, local.project, current?.revision ?? 0, new Date(), local.workspace);
+            if (outcome.status === "saved") {
+              merged.set(local.projectId, outcome.snapshot);
+              saveAccountBuildingProjectCache(cloudAccountId, outcome.snapshot);
+            } else if (outcome.current) {
+              conflictingProjectId = local.projectId;
+              autosaveBlocked.current.add(local.projectId);
+              merged.set(local.projectId, { ...local, revision: outcome.current.revision });
+            }
+          }
+          snapshots = [...merged.values()].sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+          snapshots.forEach(snapshot => {
+            if (snapshot.projectId !== conflictingProjectId) saveAccountBuildingProjectCache(cloudAccountId, snapshot);
+          });
+          if (conflictingProjectId) {
+            setConflictProjectId(conflictingProjectId);
+            persistenceMessage = "Conflit de versions entre appareils · rechargez la version cloud ou restaurez une version locale";
+          } else {
+            persistenceMessage = "Projets synchronisés avec votre compte";
+          }
+        } catch {
+          if (cancelled) return;
+          snapshots = loadAccountBuildingProjectCache<Project>(cloudAccountId);
+          if (!snapshots.length) snapshots = await loadLegacyProjectsForAccount<Project>(cloudAccountId);
+          snapshots.forEach(snapshot => saveAccountBuildingProjectCache(cloudAccountId, snapshot));
+          persistenceMessage = snapshots.length
+            ? "Cloud indisponible · copie locale conservée pour ce compte"
+            : "Synchronisation cloud indisponible · vérifiez l’accès Supabase";
+        }
       } else {
+        try { snapshots = await loadBuildingProjects<Project>(); } catch { /* La migration legacy reste disponible. */ }
+        persistenceMessage = snapshots.length ? "Projet récupéré depuis le stockage local durable" : "Autosauvegarde locale activée";
+      }
+      if (cancelled) return;
+      projectRevisions.current = Object.fromEntries(snapshots.map(snapshot => [snapshot.projectId, snapshot.revision]));
+      workspaceByProject.current = Object.fromEntries(snapshots.filter(snapshot => snapshot.workspace && typeof snapshot.workspace === "object").map(snapshot => [snapshot.projectId, snapshot.workspace as BuildingWorkspaceSnapshot]));
+      autosaveBlocked.current = new Set(autosaveBlocked.current);
+      const restored = snapshots.map(snapshot => ({
+        ...snapshot.project,
+        levels: renumberBuildingElements(snapshot.project.levels),
+      }));
+      projectContents.current = Object.fromEntries(restored.map(project => [project.id, JSON.stringify({ project, workspace: workspaceByProject.current[project.id] })]));
+      setProjects(restored);
+      const latest = [...snapshots].sort((a, b) => b.savedAt.localeCompare(a.savedAt))[0];
+      if (latest) setSelectedProject(restored.find(project => project.id === latest.projectId) ?? restored[0]);
+      if (!snapshots.length && !cloudAccountId) {
         let legacy: ReturnType<typeof restoreBuildingDraft> = null;
         try { legacy = restoreBuildingDraft(sessionStorage.getItem("gcbtp-building")); } catch { /* Stockage indisponible. */ }
         if (legacy) {
@@ -764,29 +949,29 @@ export default function BuildingCreateFlow({
             country: legacy.country,
           };
           setProjects([migrated]);
-          setPersistenceStatus("Ancien brouillon récupéré · migration en cours");
-        } else {
-          setPersistenceStatus("Autosauvegarde locale activée");
+          persistenceMessage = "Ancien brouillon récupéré · migration en cours";
         }
       }
+      setPersistenceStatus(persistenceMessage);
       setProjectsHydrated(true);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [authResolved, cloudAccountId]);
 
   useEffect(() => {
-    if (!projectsHydrated) return;
+    if (!projectsHydrated || !authResolved || activeAccountRef.current !== cloudAccountId) return;
     const snapshots = projects.map(project => ({
       project,
       workspace: project.id === selected?.id ? createWorkspaceSnapshot(project.id) : workspaceByProject.current[project.id],
     }));
     const changed = snapshots.filter(snapshot => JSON.stringify(snapshot) !== projectContents.current[snapshot.project.id]);
     if (!changed.length) return;
-    setPersistenceStatus("Enregistrement automatique…");
+    setPersistenceStatus(cloudAccountId ? "Synchronisation avec votre compte…" : "Enregistrement sur cet appareil…");
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
           for (const { project, workspace } of changed) {
+            if (activeAccountRef.current !== cloudAccountId) return;
             if (autosaveBlocked.current.has(project.id)) continue;
             if (autosaveInFlight.current.has(project.id)) {
               autosavePending.current.add(project.id);
@@ -795,7 +980,19 @@ export default function BuildingCreateFlow({
             autosaveInFlight.current.add(project.id);
             const expectedRevision = projectRevisions.current[project.id] ?? 0;
             try {
-              const outcome = await saveBuildingProject(project, expectedRevision, new Date(), workspace);
+              if (cloudAccountId) {
+                saveAccountBuildingProjectCache(cloudAccountId, {
+                  projectId: project.id,
+                  revision: expectedRevision,
+                  savedAt: new Date().toISOString(),
+                  project,
+                  workspace,
+                });
+              }
+              const outcome = cloudAccountId
+                ? await saveCloudBuildingProject(cloudAccountId, project, expectedRevision, new Date(), workspace)
+                : await saveBuildingProject(project, expectedRevision, new Date(), workspace);
+              if (activeAccountRef.current !== cloudAccountId) return;
               if (outcome.status === "conflict") {
                 autosaveBlocked.current.add(project.id);
                 setConflictProjectId(project.id);
@@ -804,38 +1001,36 @@ export default function BuildingCreateFlow({
               }
               projectRevisions.current[project.id] = outcome.snapshot.revision;
               projectContents.current[project.id] = JSON.stringify({ project, workspace });
-              if (workspace) workspaceByProject.current[project.id] = workspace;
+              if (workspace) workspaceByProject.current[project.id] = workspace as BuildingWorkspaceSnapshot;
+              if (cloudAccountId) saveAccountBuildingProjectCache(cloudAccountId, outcome.snapshot);
             } finally {
               autosaveInFlight.current.delete(project.id);
               if (autosavePending.current.delete(project.id)) setAutosaveRetry(value => value + 1);
             }
           }
-          setPersistenceStatus(`Sauvegardé sur cet appareil · ${new Date().toLocaleTimeString()}`);
+          if (activeAccountRef.current !== cloudAccountId) return;
+          setPersistenceStatus(cloudAccountId
+            ? `Synchronisé avec votre compte · ${new Date().toLocaleTimeString()}`
+            : `Sauvegardé sur cet appareil · ${new Date().toLocaleTimeString()}`);
         } catch {
-          setPersistenceStatus("Échec de sauvegarde · exportez une copie de sécurité");
+          if (activeAccountRef.current !== cloudAccountId) return;
+          setPersistenceStatus(cloudAccountId
+            ? "Cloud indisponible · copie locale de ce compte conservée, synchronisation à réessayer"
+            : "Échec de sauvegarde · exportez une copie de sécurité");
         }
       })();
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [projects, projectsHydrated, selected, xAxes, yAxes, zLevels, gridDistance, loads, xNumbering, yNumbering, xDistances, yDistances, analyticalTolerance, customModels, floorConfig, loadProgram, climateDraft, threeD, showLabels, gridOpacity, snapToGrid, autosaveRetry]);
+  }, [projects, projectsHydrated, authResolved, cloudAccountId, selected, xAxes, yAxes, zLevels, gridDistance, loads, xNumbering, yNumbering, xDistances, yDistances, analyticalTolerance, customModels, floorConfig, loadProgram, climateDraft, threeD, showLabels, gridOpacity, snapToGrid, autosaveRetry]);
   useEffect(() => {
     setModelSection(optionsForType(modelType)[0] ?? "");
   }, [modelType, customModels]);
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem("gcbtp-custom-models");
-      if (raw) setCustomModels(JSON.parse(raw) as ModelSpec[]);
-    } catch {
-      sessionStorage.removeItem("gcbtp-custom-models");
-    }
-  }, []);
-  useEffect(() => {
-    sessionStorage.setItem("gcbtp-custom-models", JSON.stringify(customModels));
-  }, [customModels]);
-  useEffect(() => {
-    const view = sessionStorage.getItem("gcbtp-building-view");
+    if (!authResolved) return;
+    const view = sessionStorage.getItem(scopedSessionKey("gcbtp-building-view", cloudAccountId));
     if (view) setThreeD(view === "3d");
-    const visual = sessionStorage.getItem("gcbtp-building-visual");
+    const visualKey = scopedSessionKey("gcbtp-building-visual", cloudAccountId);
+    const visual = sessionStorage.getItem(visualKey);
     if (visual) {
       try {
         const data = JSON.parse(visual);
@@ -843,21 +1038,25 @@ export default function BuildingCreateFlow({
         setGridOpacity(data.gridOpacity ?? "100");
         setSnapToGrid(data.snapToGrid ?? true);
       } catch {
-        sessionStorage.removeItem("gcbtp-building-visual");
+        sessionStorage.removeItem(visualKey);
       }
     }
-  }, [setThreeD]);
+  }, [authResolved, cloudAccountId, setThreeD]);
   useEffect(() => {
-    sessionStorage.setItem("gcbtp-building-view", threeD ? "3d" : "2d");
-  }, [threeD]);
+    if (!authResolved) return;
+    sessionStorage.setItem(scopedSessionKey("gcbtp-building-view", cloudAccountId), threeD ? "3d" : "2d");
+  }, [threeD, authResolved, cloudAccountId]);
   useEffect(() => {
+    if (!authResolved) return;
     sessionStorage.setItem(
-      "gcbtp-building-visual",
+      scopedSessionKey("gcbtp-building-visual", cloudAccountId),
       JSON.stringify({ showLabels, gridOpacity, snapToGrid })
     );
-  }, [showLabels, gridOpacity, snapToGrid]);
+  }, [showLabels, gridOpacity, snapToGrid, authResolved, cloudAccountId]);
   useEffect(() => {
-    const raw = sessionStorage.getItem("gcbtp-building-config");
+    if (!authResolved) return;
+    const key = scopedSessionKey("gcbtp-building-config", cloudAccountId);
+    const raw = sessionStorage.getItem(key);
     if (raw) {
       try {
         const config = JSON.parse(raw);
@@ -872,12 +1071,14 @@ export default function BuildingCreateFlow({
         setXDistances(config.xDistances ?? ["4.00", "4.00", "4.00"]);
         setYDistances(config.yDistances ?? ["4.00", "4.00", "4.00"]);
       } catch {
-        sessionStorage.removeItem("gcbtp-building-config");
+        sessionStorage.removeItem(key);
       }
     }
-  }, []);
+  }, [authResolved, cloudAccountId]);
   useEffect(() => {
-    const raw = sessionStorage.getItem("gcbtp-building-config");
+    if (!authResolved) return;
+    const key = scopedSessionKey("gcbtp-building-config", cloudAccountId);
+    const raw = sessionStorage.getItem(key);
     if (raw) {
       try {
         const config = JSON.parse(raw);
@@ -889,13 +1090,14 @@ export default function BuildingCreateFlow({
         setAnalyticalTolerance(config.analyticalTolerance ?? String(DEFAULT_NODE_MERGE_TOLERANCE_M));
         setFloorConfig(normalizeFloorConfig(config.floorConfig));
       } catch {
-        sessionStorage.removeItem("gcbtp-building-config");
+        sessionStorage.removeItem(key);
       }
     }
-  }, []);
+  }, [authResolved, cloudAccountId]);
   useEffect(() => {
+    if (!authResolved) return;
     sessionStorage.setItem(
-      "gcbtp-building-config",
+      scopedSessionKey("gcbtp-building-config", cloudAccountId),
       JSON.stringify({
         xAxes,
         yAxes,
@@ -909,30 +1111,30 @@ export default function BuildingCreateFlow({
         analyticalTolerance,
       })
     );
-  }, [xAxes, yAxes, zLevels, gridDistance, loads, analyticalTolerance]);
+  }, [xAxes, yAxes, zLevels, gridDistance, loads, analyticalTolerance, authResolved, cloudAccountId]);
   useEffect(() => {
-    if (!floorStorageKey) return;
+    if (!authResolved || !floorStorageKey) return;
     try {
       const map = JSON.parse(
-        sessionStorage.getItem("gcbtp-floor-configs") ?? "{}"
+        sessionStorage.getItem(scopedSessionKey("gcbtp-floor-configs", cloudAccountId)) ?? "{}"
       );
       setFloorConfig(normalizeFloorConfig(map[floorStorageKey]));
     } catch {
       setFloorConfig(defaultFloorConfig);
     }
-  }, [floorStorageKey]);
+  }, [floorStorageKey, authResolved, cloudAccountId]);
   useEffect(() => {
-    if (!floorStorageKey) return;
+    if (!authResolved || !floorStorageKey) return;
     try {
       const map = JSON.parse(
-        sessionStorage.getItem("gcbtp-floor-configs") ?? "{}"
+        sessionStorage.getItem(scopedSessionKey("gcbtp-floor-configs", cloudAccountId)) ?? "{}"
       );
       map[floorStorageKey] = floorConfig;
-      sessionStorage.setItem("gcbtp-floor-configs", JSON.stringify(map));
+      sessionStorage.setItem(scopedSessionKey("gcbtp-floor-configs", cloudAccountId), JSON.stringify(map));
     } catch {
       /* sessionStorage indisponible */
     }
-  }, [floorStorageKey, floorConfig]);
+  }, [floorStorageKey, floorConfig, authResolved, cloudAccountId]);
 
   useEffect(() => {
     setBuildingCalculation(null);
@@ -956,8 +1158,8 @@ export default function BuildingCreateFlow({
   }, [loadProgram, surfaceMeshSizeM]);
 
   useEffect(() => {
-    if (!selected) return;
-    const key = `gcbtp-load-program:${selected.id}`;
+    if (!authResolved || !selected) return;
+    const key = scopedSessionKey(`gcbtp-load-program:${selected.id}`, cloudAccountId);
     try {
       const raw = sessionStorage.getItem(key);
       const restored = raw ? JSON.parse(raw) as LoadProgram : null;
@@ -965,35 +1167,35 @@ export default function BuildingCreateFlow({
     } catch {
       setLoadProgram(createDefaultLoadProgram(selected.norm || norm, selected.projectUsage ?? "habitation"));
     }
-  }, [selected?.id]);
+  }, [selected?.id, authResolved, cloudAccountId]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!authResolved || !selected) return;
     const storyCount = Math.max(1, selected.levels.filter(level => level.id !== "foundation").length);
     try {
-      const raw = sessionStorage.getItem(`gcbtp-climate:${selected.id}`);
+      const raw = sessionStorage.getItem(scopedSessionKey(`gcbtp-climate:${selected.id}`, cloudAccountId));
       setClimateDraft(normalizeClimateDraft(raw ? JSON.parse(raw) : null, storyCount));
     } catch {
       setClimateDraft(createClimateDraft(storyCount));
     }
     setClimateAnalysis(null);
     setClimateLoadedProjectId(selected.id);
-  }, [selected?.id]);
+  }, [selected?.id, authResolved, cloudAccountId]);
   useEffect(() => {
-    if (!selected || climateLoadedProjectId !== selected.id) return;
-    try { sessionStorage.setItem(`gcbtp-climate:${selected.id}`, JSON.stringify(climateDraft)); } catch { /* Le profil climatique reste disponible en mémoire. */ }
-  }, [selected?.id, climateLoadedProjectId, climateDraft]);
+    if (!authResolved || !selected || climateLoadedProjectId !== selected.id) return;
+    try { sessionStorage.setItem(scopedSessionKey(`gcbtp-climate:${selected.id}`, cloudAccountId), JSON.stringify(climateDraft)); } catch { /* Le profil climatique reste disponible en mémoire. */ }
+  }, [selected?.id, climateLoadedProjectId, climateDraft, authResolved, cloudAccountId]);
   useEffect(() => {
     setClimateAnalysis(null);
   }, [climateDraft]);
   useEffect(() => {
-    if (!selected) return;
+    if (!authResolved || !selected) return;
     try {
-      sessionStorage.setItem(`gcbtp-load-program:${selected.id}`, JSON.stringify(loadProgram));
+      sessionStorage.setItem(scopedSessionKey(`gcbtp-load-program:${selected.id}`, cloudAccountId), JSON.stringify(loadProgram));
     } catch {
       /* Le programme de charges reste utilisable même si le stockage local est indisponible. */
     }
-  }, [selected?.id, loadProgram]);
+  }, [selected?.id, loadProgram, authResolved, cloudAccountId]);
 
   const activeLevel = useMemo(
     () =>
@@ -1034,11 +1236,12 @@ export default function BuildingCreateFlow({
       }
       const floorConfigs = workspace.floorConfigs ?? {};
       try {
-        const allFloorConfigs = JSON.parse(sessionStorage.getItem("gcbtp-floor-configs") ?? "{}");
-        sessionStorage.setItem("gcbtp-floor-configs", JSON.stringify({ ...allFloorConfigs, ...floorConfigs }));
-        sessionStorage.setItem(`gcbtp-load-program:${normalized.id}`, JSON.stringify(restoredLoadProgram));
-        sessionStorage.setItem(`gcbtp-climate:${normalized.id}`, JSON.stringify(workspace.climateDraft));
-        sessionStorage.setItem("gcbtp-building-config", JSON.stringify(config));
+        const floorKey = scopedSessionKey("gcbtp-floor-configs", cloudAccountId);
+        const allFloorConfigs = JSON.parse(sessionStorage.getItem(floorKey) ?? "{}");
+        sessionStorage.setItem(floorKey, JSON.stringify({ ...allFloorConfigs, ...floorConfigs }));
+        sessionStorage.setItem(scopedSessionKey(`gcbtp-load-program:${normalized.id}`, cloudAccountId), JSON.stringify(restoredLoadProgram));
+        sessionStorage.setItem(scopedSessionKey(`gcbtp-climate:${normalized.id}`, cloudAccountId), JSON.stringify(workspace.climateDraft));
+        sessionStorage.setItem(scopedSessionKey("gcbtp-building-config", cloudAccountId), JSON.stringify(config));
       } catch { /* In-memory values are restored even when browser storage is blocked. */ }
       const targetLevelId = normalized.levels.find(level => level.id === "rdc")?.id ?? normalized.levels[0]?.id ?? "rdc";
       setFloorConfig(normalizeFloorConfig(floorConfigs[`${normalized.id}:${targetLevelId}`]));
@@ -1047,6 +1250,9 @@ export default function BuildingCreateFlow({
     setProjectUsage(normalized.projectUsage ?? "habitation");
     setNorm(normalized.norm);
     setCountry(normalized.country);
+    setCity(normalized.city ?? "");
+    setLocation(normalized.location ?? "");
+    setStructure(normalized.structure ?? "Béton armé");
     setProjects(previous =>
       previous.map(project =>
         project.id === normalized.id ? normalized : project
@@ -1058,6 +1264,24 @@ export default function BuildingCreateFlow({
         "rdc"
     );
   };
+  const openProjectDialog = () => {
+    const availableCities = getCitiesForCountry(country);
+    const initialCity = availableCities.some(item => item.city === city)
+      ? city
+      : availableCities[0]?.city ?? city;
+    const initialNorm = getCountryProjectStandard(country, initialCity);
+    setProjectSettingsDraft({
+      country,
+      city: initialCity,
+      location,
+      structure,
+      norm: initialNorm,
+      regulatoryCatalogId: getProjectStandardId(initialNorm),
+      materials: { ...DEFAULT_PROJECT_MATERIALS },
+    });
+    setProjectWizardStep("identity");
+    setDialogOpen(true);
+  };
   const createProject = () => {
     if (!validateBuildingName(projectName))
       return toast.error("Saisissez le nom du projet");
@@ -1067,18 +1291,27 @@ export default function BuildingCreateFlow({
       name: projectName.trim(),
       updatedAt: "À l’instant",
       levels: initialLevels(),
-      city: "",
-      location: "",
-      structure: "Béton armé",
-      norm,
-      country,
+      city: projectSettingsDraft.city.trim(),
+      location: projectSettingsDraft.location.trim(),
+      structure: projectSettingsDraft.structure,
+      norm: projectSettingsDraft.norm,
+      country: projectSettingsDraft.country,
       projectUsage,
+      regulatoryCatalogId: projectSettingsDraft.regulatoryCatalogId,
+      materials: { ...projectSettingsDraft.materials },
     };
     setProjects(prev => [project, ...prev]);
     setSelected(project);
+    setLoadProgram(createDefaultLoadProgram(project.norm, projectUsage));
     setFloorConfig(normalizeFloorConfig({ ...floorConfig, characteristicImposedLoad: selectedUsage.load.toFixed(2) }));
     setProjectName("");
     setDialogOpen(false);
+    setCity(project.city);
+    setLocation(project.location);
+    setStructure(project.structure);
+    setCountry(project.country);
+    setNorm(project.norm);
+    setProjectWizardStep("identity");
     toast.success("Projet créé");
   };
   const saveProject = () => {
@@ -1136,6 +1369,40 @@ export default function BuildingCreateFlow({
       toast.error("Historique indisponible sur ce navigateur.");
     }
   };
+  const deleteProjectFromHistory = async (project: Project) => {
+    if (projectDeletionInProgress) return;
+    autosaveBlocked.current.add(project.id);
+    let cloudRemoved = !cloudAccountId;
+    setProjectDeletionInProgress(true);
+    try {
+      const waitUntil = Date.now() + 10_000;
+      while (autosaveInFlight.current.has(project.id) && Date.now() < waitUntil)
+        await new Promise(resolve => window.setTimeout(resolve, 40));
+      if (autosaveInFlight.current.has(project.id)) throw new Error("La sauvegarde du projet ne s’est pas terminée. Réessayez dans quelques secondes.");
+      autosavePending.current.delete(project.id);
+      if (cloudAccountId) {
+        await deleteCloudBuildingProject(cloudAccountId, project.id);
+        cloudRemoved = true;
+        removeAccountBuildingProjectCache(cloudAccountId, project.id);
+      }
+      await removeBuildingProject(project.id);
+      if (cloudAccountId) removeAccountBuildingProjectCache(cloudAccountId, project.id);
+      delete projectRevisions.current[project.id];
+      delete projectContents.current[project.id];
+      delete workspaceByProject.current[project.id];
+      autosavePending.current.delete(project.id);
+      setProjects(previous => previous.filter(item => item.id !== project.id));
+      setProjectHistory(previous => previous.filter(snapshot => snapshot.projectId !== project.id));
+      setProjectPendingDeletion(null);
+      toast.success(`Projet « ${project.name} » supprimé de l’historique`);
+    } catch (error) {
+      if (!cloudRemoved) autosaveBlocked.current.delete(project.id);
+      console.error("Building project deletion failed", error);
+      toast.error(error instanceof Error ? `Suppression impossible : ${error.message}` : "La suppression du projet a échoué.");
+    } finally {
+      setProjectDeletionInProgress(false);
+    }
+  };
   const restoreProjectVersion = async (snapshot: BuildingProjectSnapshot<Project>) => {
     if (!selected) return;
     const projectId = selected.id;
@@ -1147,7 +1414,10 @@ export default function BuildingCreateFlow({
     autosaveInFlight.current.add(projectId);
     const workspace = snapshot.workspace as BuildingWorkspaceSnapshot | undefined;
     try {
-      const result = await saveBuildingProject(snapshot.project, projectRevisions.current[projectId] ?? 0, new Date(), workspace);
+      const expectedRevision = projectRevisions.current[projectId] ?? 0;
+      const result = cloudAccountId
+        ? await saveCloudBuildingProject(cloudAccountId, snapshot.project, expectedRevision, new Date(), workspace)
+        : await saveBuildingProject(snapshot.project, expectedRevision, new Date(), workspace);
       if (result.status === "conflict") {
         autosaveBlocked.current.add(projectId);
         setConflictProjectId(projectId);
@@ -1155,6 +1425,7 @@ export default function BuildingCreateFlow({
         return;
       }
       projectRevisions.current[projectId] = result.snapshot.revision;
+      if (cloudAccountId) saveAccountBuildingProjectCache(cloudAccountId, result.snapshot);
       autosaveBlocked.current.delete(projectId);
       if (workspace) workspaceByProject.current[projectId] = workspace;
       projectContents.current[projectId] = JSON.stringify({ project: snapshot.project, workspace });
@@ -1174,9 +1445,12 @@ export default function BuildingCreateFlow({
   const reloadLatestProjectVersion = async () => {
     if (!conflictProjectId) return;
     try {
-      const snapshots = await loadBuildingProjects<Project>();
+      const snapshots = cloudAccountId
+        ? await loadCloudBuildingProjects<Project>(cloudAccountId)
+        : await loadBuildingProjects<Project>();
       const latest = snapshots.find(snapshot => snapshot.projectId === conflictProjectId);
       if (!latest) throw new Error("Aucune version enregistrée n’a été trouvée.");
+      if (cloudAccountId) saveAccountBuildingProjectCache(cloudAccountId, latest);
       projectRevisions.current[latest.projectId] = latest.revision;
       const workspace = latest.workspace as BuildingWorkspaceSnapshot | undefined;
       if (workspace) workspaceByProject.current[latest.projectId] = workspace;
@@ -1198,6 +1472,7 @@ export default function BuildingCreateFlow({
       yDistancesM: yDistances.map(value => numericGridDistance(value, numericGridDistance(gridDistance))),
       nodeMergeToleranceM: numericGridDistance(analyticalTolerance, DEFAULT_NODE_MERGE_TOLERANCE_M),
       structure: selected.structure,
+      concreteClass: normalizeProjectMaterials(selected.materials).concreteClass,
       modelCatalog: [...MODEL_CATALOG, ...customModels],
     });
   };
@@ -1251,6 +1526,7 @@ export default function BuildingCreateFlow({
         ])
       ),
       gridDistance: Number(gridDistance.replace(",", ".")) || 4,
+      ...metricGridAxisPositions(xDistances, yDistances, xAxes.length, yAxes.length, gridDistance),
     });
     const summary = summarizeBuildingLoads(model);
     setBuildingLoadModel(model);
@@ -1287,8 +1563,8 @@ export default function BuildingCreateFlow({
     }
     setSelectedAnalysisRow(null);
     setPanel("Calculer la descente");
-    const message = `Calcul terminé : ${summary.floorCount} dalle(s), ${summary.foundationCount} fondation(s) chargée(s)`;
-    if (summary.floorCount === 0) toast.info(`${message}. Ajoutez les planchers porteurs pour inclure les charges d’exploitation et permanentes des niveaux.`);
+    const message = `Calcul terminé : ${summary.floorCount} surface(s) (dalles, balcons, escaliers), ${summary.foundationCount} fondation(s) chargée(s)`;
+    if (summary.floorCount === 0) toast.info(`${message}. Ajoutez les surfaces porteuses pour inclure les charges d’exploitation et permanentes des niveaux.`);
     else toast.success(message);
     setShowCalculationPreflight(false);
   };
@@ -1304,6 +1580,7 @@ export default function BuildingCreateFlow({
       levelOrder: selected.levels.map(level => level.id),
       levelHeights: Object.fromEntries(selected.levels.map(level => [level.id, Number(level.height ?? (level.id === "foundation" ? 1 : 3.2))])),
       gridDistance: Number(gridDistance.replace(",", ".")) || 4,
+      ...metricGridAxisPositions(xDistances, yDistances, xAxes.length, yAxes.length, gridDistance),
     });
     setBuildingLoadModel(model);
     setBuildingCalculation(summarizeBuildingLoads(model));
@@ -1365,14 +1642,14 @@ export default function BuildingCreateFlow({
     const gammaQ = patternCoefficient("case:Q", "Q");
     const xPositions = cumulativeGridPositions(xDistances.map(value => numericGridDistance(value, numericGridDistance(gridDistance))), xAxes.length);
     const yPositions = cumulativeGridPositions(yDistances.map(value => numericGridDistance(value, numericGridDistance(gridDistance))), yAxes.length);
-    const slabs = selected.levels.flatMap(level => level.elements.filter(item => item.type === "Dalle" && item.x2 !== undefined && item.y2 !== undefined).map(element => ({ level, element })));
+    const slabs = selected.levels.flatMap(level => level.elements.filter(item => isSlabElementType(item.type) && item.x2 !== undefined && item.y2 !== undefined).map(element => ({ level, element })));
     if (!slabs.length) {
-      setSurfaceAnalysis({ rows: [], errors: ["Aucune dalle rectangulaire ne peut être maillée dans ce projet."], warnings: [] });
-      toast.error("Aucune surface de dalle à analyser");
+      setSurfaceAnalysis({ rows: [], errors: ["Aucune dalle ou balcon rectangulaire ne peut être maillé dans ce projet."], warnings: [] });
+      toast.error("Aucune surface de dalle ou de balcon à analyser");
       return false;
     }
     const rows: SurfaceRunRow[] = slabs.map(({ level, element }) => {
-      const config = normalizeFloorConfig(element.floorConfig ?? defaultFloorConfig);
+      const config = normalizeFloorConfig(element.floorConfig ?? (element.type === "Balcon" ? defaultBalconyFloorConfig() : defaultFloorConfig));
       const x1M = indexToMetric(element.x, xPositions), y1M = indexToMetric(element.y, yPositions);
       const x2M = indexToMetric(element.x2 as number, xPositions), y2M = indexToMetric(element.y2 as number, yPositions);
       const thicknessParts = (config.thickness.match(/\d+(?:[.,]\d+)?/g) ?? []).map(value => Number(value.replace(",", ".")) / 100);
@@ -1397,33 +1674,53 @@ export default function BuildingCreateFlow({
         meshSizeM: Number(surfaceMeshSizeM.replace(",", ".")) || 0.75,
         openings: element.openings ?? [],
       };
-      const mesh = meshRectangularSurface(input);
       const supportCheck = checkRectangularSurfaceEdgeSupports({ x1: element.x, y1: element.y, x2: element.x2 as number, y2: element.y2 as number }, level.elements);
-      const supportErrors = supportCheck.missingEdges.map(edge => `Bord ${edge} sans poutre/voile continue sur ${element.id}.`);
+      const mesh = meshRectangularSurface(input);
+      const stiffness = resolveFloorPlateStiffness(config, input.elasticModulusKnM2, input.poissonRatio);
+      let supportErrors: string[] = [];
+      let spanDirection: "X" | "Y" = config.direction;
       let analysis: SurfaceAnalysis;
-      if (config.type !== "Dalle pleine") {
-        analysis = { mesh: mesh.mesh, plate: null, errors: mesh.errors, warnings: [...mesh.warnings, "Le solveur de plaque ne dimensionne que les dalles pleines ; ce plancher à corps creux est correctement conservé pour la répartition tributaire des charges."] };
-      } else if (supportErrors.length) {
-        analysis = { mesh: mesh.mesh, plate: null, errors: [...mesh.errors, ...supportErrors], warnings: mesh.warnings };
+      if (element.type === "Balcon") {
+        const configuredEdge = config.balconySupportEdge ?? "auto";
+        const fixedEdge: RectangularSurfaceEdge | undefined = configuredEdge === "auto"
+          ? supportCheck.supportedEdges.length === 1 ? supportCheck.supportedEdges[0] : undefined
+          : configuredEdge;
+        if (fixedEdge) spanDirection = fixedEdge === "left" || fixedEdge === "right" ? "X" : "Y";
+        if (!fixedEdge) supportErrors = [supportCheck.supportedEdges.length > 1
+          ? `Plusieurs rives sont portées sur ${element.id} : choisissez explicitement le bord d’encastrement du balcon.`
+          : `Aucune rive d’encastrement unique détectée sur ${element.id} : ajoutez une poutre/voile continue ou choisissez la rive réelle.`];
+        else if (!supportCheck.supportedEdges.includes(fixedEdge)) supportErrors = [`La rive ${fixedEdge} choisie comme encastrement de ${element.id} n’est pas portée par une poutre/voile continue.`];
+        analysis = supportErrors.length
+          ? { mesh: mesh.mesh, plate: null, errors: [...mesh.errors, ...supportErrors], warnings: mesh.warnings }
+          : analyzeCantileverRectangularPlate(input, stiffness, fixedEdge as RectangularSurfaceEdge);
+      } else if (config.type === "Dalle pleine") {
+        supportErrors = supportCheck.missingEdges.map(edge => `Bord ${edge} sans poutre/voile continue sur ${element.id}.`);
+        analysis = supportErrors.length
+          ? { mesh: mesh.mesh, plate: null, errors: [...mesh.errors, ...supportErrors], warnings: mesh.warnings }
+          : analyzeSimplySupportedRectangularPlate(input);
       } else {
-        analysis = analyzeSimplySupportedRectangularPlate(input);
+        const bearingEdges = config.direction === "X" ? ["left", "right"] as const : ["bottom", "top"] as const;
+        supportErrors = bearingEdges.filter(edge => !supportCheck.supportedEdges.includes(edge)).map(edge => `Rive d’appui ${edge} sans poutre/voile continue sur ${element.id} (sens de portée ${config.direction}).`);
+        analysis = supportErrors.length
+          ? { mesh: mesh.mesh, plate: null, errors: [...mesh.errors, ...supportErrors], warnings: mesh.warnings }
+          : analyzeOneWayOrthotropicRectangularPlate(input, stiffness, config.direction);
       }
       const areaM2 = analysis.mesh?.netAreaM2 ?? Math.abs(x2M - x1M) * Math.abs(y2M - y1M);
       const column = level.elements.find(candidate => candidate.type === "Poteau" && [element.x, element.x2].includes(candidate.x) && [element.y, element.y2].includes(candidate.y));
       const dimensions = (column?.section ?? "300x300").match(/\d+(?:[.,]\d+)?/g)?.map(value => Number(value.replace(",", "."))) ?? [300, 300];
-      return { elementId: element.id, levelLabel: level.label, areaM2, openingCount: (element.openings ?? []).length, spanXM: Math.abs(x2M - x1M), spanYM: Math.abs(y2M - y1M), thicknessMm: input.thicknessM * 1000, uniformLoadKnM2, supportReactionKn: uniformLoadKnM2 * areaM2 / 4, columnWidthMm: dimensions[0] ?? 300, columnDepthMm: dimensions[1] ?? dimensions[0] ?? 300, negativeMxKnMPerM: 0, negativeMyKnMPerM: 0, floorType: config.type, analysis, supportErrors };
+      return { elementId: element.id, levelLabel: level.label, areaM2, openingCount: (element.openings ?? []).length, spanXM: Math.abs(x2M - x1M), spanYM: Math.abs(y2M - y1M), spanDirection, thicknessMm: input.thicknessM * 1000, uniformLoadKnM2, columnWidthMm: dimensions[0] ?? 300, columnDepthMm: dimensions[1] ?? dimensions[0] ?? 300, negativeMxKnMPerM: Math.max(0, ...(analysis.plate?.nodeResults.map(result => -result.mxKnMPerM) ?? [])), negativeMyKnMPerM: Math.max(0, ...(analysis.plate?.nodeResults.map(result => -result.myKnMPerM) ?? [])), floorType: config.type, analysis, supportErrors };
     });
     const errors = rows.flatMap(row => row.analysis.errors.map(message => `${row.elementId} · ${message}`));
     const warnings = rows.flatMap(row => row.analysis.warnings.map(message => `${row.elementId} · ${message}`));
     setSurfaceAnalysis({ rows, errors, warnings, combinationId: combination.id, combinationName: combination.name });
-    if (rows.some(row => row.analysis.plate)) toast.success(`Maillage et analyse de ${rows.filter(row => row.analysis.plate).length} dalle(s) terminés`);
-    else if (!errors.length && rows.length) toast.success(`Zones de charges de ${rows.length} plancher(s) calculées ; le dimensionnement de plaque reste réservé aux dalles pleines.`);
-    else toast.error(`Aucune dalle calculée : ${errors[0] ?? "géométrie ou appuis incompatibles"}`);
+    if (rows.some(row => row.analysis.plate)) toast.success(`Maillage et analyse de ${rows.filter(row => row.analysis.plate).length} surface(s) terminés`);
+    else if (!errors.length && rows.length) toast.success(`Maillage et zones de charges de ${rows.length} surface(s) calculés.`);
+    else toast.error(`Aucune surface calculée : ${errors[0] ?? "géométrie ou appuis incompatibles"}`);
     return errors.length === 0 && rows.length > 0;
   };
   const downloadSurfaceAnalysis = () => {
     if (!surfaceAnalysis) return;
-    const blob = new Blob([JSON.stringify({ schemaVersion: 1, units: { length: "m", force: "kN", momentPerLength: "kN·m/m" }, combinationId: solverCombinationId, results: surfaceAnalysis }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ schemaVersion: SURFACE_ANALYSIS_SCHEMA_VERSION, units: { length: "m", force: "kN", momentPerLength: "kN·m/m" }, combinationId: solverCombinationId, results: surfaceAnalysis }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1772,11 +2069,13 @@ export default function BuildingCreateFlow({
       y2M: end ? (yMeters[end.y] ?? end.y * (Number(gridDistance) || 4)) : undefined,
       xMidM: landing ? (xMeters[landing.x] ?? landing.x * (Number(gridDistance) || 4)) : undefined,
       yMidM: landing ? (yMeters[landing.y] ?? landing.y * (Number(gridDistance) || 4)) : undefined,
+      foundationMode: modelType === "Semelle" ? foundationPlacementMode : undefined,
+      foundationDirection: modelType === "Semelle" && foundationPlacementMode === "eccentric" ? foundationPlacementDirection ?? undefined : undefined,
       stairGeometry,
       absoluteStairGeometry,
       floorConfig:
-        modelType === "Dalle" || modelType === "Escaliers"
-          ? (floorOverride ?? (modelType === "Escaliers" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: usageProfile(projectUsage).stairLoad.toFixed(2), stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60", stairFinishLoad: "0.00" }) : floorConfig))
+        isSlabElementType(modelType) || modelType === "Escaliers"
+          ? (floorOverride ?? (modelType === "Escaliers" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: usageProfile(projectUsage).stairLoad.toFixed(2), stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60", stairFinishLoad: "0.00" }) : modelType === "Balcon" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine", thickness: floorConfig.type === "Dalle pleine" ? floorConfig.thickness : "20 cm" }) : floorConfig))
           : undefined,
     };
     if (hasSimilarElementAt(placementLevel.elements, nextElement)) {
@@ -1802,13 +2101,17 @@ export default function BuildingCreateFlow({
   };
   const handlePointPlacement = (point: GridPoint) => {
     if (!isGridIntersection(point, xAxes.length, yAxes.length)) return;
+    if (modelType === "Semelle" && foundationPlacementMode === "eccentric" && footingCenterOffset("eccentric", foundationPlacementDirection, 1, 1) === null) {
+      toast.info("Choisissez au moins une direction de décalage (X ou Y) avant la pose.");
+      return;
+    }
     setPanel(null);
     if (modelType === "Escaliers") {
       return handleStairPoint(point);
     }
     const isBeam = modelType === "Poutre" || modelType === "Voile" || modelType === "Longrine de redressement";
     const isTieBeam = modelType === "Longrine de redressement";
-    const isSlab = modelType === "Dalle";
+    const isSlab = isSlabElementType(modelType);
     const foundationLevelOnly = Boolean(activeLevel && (activeLevel.id === "foundation" || /^basement-/i.test(activeLevel.id) || /fondation|sous-sol/i.test(activeLevel.label)));
     if (isTieBeam && !foundationLevelOnly) {
       toast.info("Les longrines de redressement se posent uniquement aux fondations et sous-sols.");
@@ -1993,7 +2296,7 @@ export default function BuildingCreateFlow({
   };
   const beginGridPan = (event: React.PointerEvent<SVGSVGElement>) => {
     const pointTarget = (event.target as Element).closest("[data-grid-point]");
-    if (pointTarget && (modelType === "Poutre" || modelType === "Voile" || modelType === "Longrine de redressement" || modelType === "Dalle")) {
+    if (pointTarget && (modelType === "Poutre" || modelType === "Voile" || modelType === "Longrine de redressement" || isSlabElementType(modelType))) {
       event.currentTarget.setPointerCapture(event.pointerId);
       beamTraceRef.current = true;
       return;
@@ -2013,7 +2316,7 @@ export default function BuildingCreateFlow({
   };
   const moveGridPan = (event: React.PointerEvent<SVGSVGElement>) => {
     const point = pointerToGrid(event);
-    if ((modelType === "Dalle" || modelType === "Escaliers") && point && placementStart) {
+    if ((isSlabElementType(modelType) || modelType === "Escaliers") && point && placementStart) {
       const x = Math.min(placementStart.x, point.x);
       const y = Math.min(placementStart.y, point.y);
       const x2 = Math.max(placementStart.x, point.x);
@@ -2099,7 +2402,7 @@ export default function BuildingCreateFlow({
     setDragState(null);
     setDraggedElement(null);
     setHoverPoint(null);
-    if (modelType !== "Dalle" && modelType !== "Escaliers") setFloorPreview(null);
+    if (!isSlabElementType(modelType) && modelType !== "Escaliers") setFloorPreview(null);
   };
   const cancelGridInteraction = (event: React.PointerEvent<SVGSVGElement>) => {
     beamTraceRef.current = false;
@@ -2227,18 +2530,18 @@ export default function BuildingCreateFlow({
     setEditY(String(item.y));
     setEditSurfaceOpenings((item.openings ?? []).map(opening => `${opening.x1M};${opening.y1M};${opening.x2M};${opening.y2M}`).join("\n"));
     setTargetLevelId(levelId);
-    if (item.type === "Dalle")
-      setFloorConfig(
-        normalizeFloorConfig(
-          item.floorConfig ?? floorConfigForSection(item.section)
-        )
-      );
+    if (isSlabElementType(item.type))
+      setFloorConfig(item.type === "Balcon"
+        ? normalizeFloorConfig(item.floorConfig ? { ...item.floorConfig, type: "Dalle pleine" } : defaultBalconyFloorConfig())
+        : normalizeFloorConfig(item.floorConfig ?? floorConfigForSection(item.section)));
     setElementSelectionMode(true);
     setPanel("Éditer l’élément");
   };
   const saveElementEdit = () => {
     if (!selected || !editingElement || !editingLevelId) return;
-    const parsedOpenings = editType === "Dalle" ? parseSurfaceOpeningLines(editSurfaceOpenings) : { openings: [] as RectangularOpening[], error: null as string | null };
+    if (editType === "Semelle" && editingElement.foundationMode === "eccentric" && footingCenterOffset("eccentric", editingElement.foundationDirection, 1, 1) === null)
+      return toast.error("Choisissez au moins une direction de décalage (X ou Y) avant d’enregistrer la semelle.");
+    const parsedOpenings = isSlabElementType(editType) ? parseSurfaceOpeningLines(editSurfaceOpenings) : { openings: [] as RectangularOpening[], error: null as string | null };
     if (parsedOpenings.error) return toast.error(parsedOpenings.error);
     const updated = {
       ...editingElement,
@@ -2250,11 +2553,13 @@ export default function BuildingCreateFlow({
       ),
       x: Number(editX) || 0,
       y: Number(editY) || 0,
+      foundationMode: editType === "Semelle" ? editingElement.foundationMode ?? "centered" : undefined,
+      foundationDirection: editType === "Semelle" && editingElement.foundationMode === "eccentric" ? editingElement.foundationDirection : undefined,
       floorConfig:
-        editType === "Dalle"
-          ? floorConfigForSection(editSection, floorConfig)
+        isSlabElementType(editType)
+          ? editType === "Balcon" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine" }) : floorConfigForSection(editSection, floorConfig)
           : undefined,
-      openings: editType === "Dalle" ? parsedOpenings.openings : undefined,
+      openings: isSlabElementType(editType) ? parsedOpenings.openings : undefined,
     };
     const sourceLevel = selected.levels.find(
       level => level.id === editingLevelId
@@ -2430,7 +2735,7 @@ export default function BuildingCreateFlow({
                     strokeWidth="3"
                   />
                 )}
-                {(item.type === "Dalle" || item.type === "Escaliers") && (
+                {(isSlabElementType(item.type) || item.type === "Escaliers") && (
                   <rect
                     x={Math.min(x, x2)}
                     y={Math.min(y, y2)}
@@ -2467,6 +2772,13 @@ export default function BuildingCreateFlow({
     }
   };
 
+  if (!authResolved || !projectsHydrated)
+    return (
+      <div className="grid min-h-[240px] place-items-center rounded-xl bg-white p-6 text-center text-[12px] text-[#647780]">
+        Chargement sécurisé des projets de votre compte…
+      </div>
+    );
+
   if (!selected)
     return (
       <div className="pb-4">
@@ -2481,35 +2793,39 @@ export default function BuildingCreateFlow({
         {projects.length ? (
           <div className="space-y-3">
             {projects.map(project => (
-              <button
-                key={project.id}
-                onClick={() => setSelectedProject(project)}
-                className="w-full rounded-[14px] bg-white p-4 text-left shadow-[0_2px_8px_rgba(0,0,0,.05)]"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#dff5f4] text-[#049b9b]">
-                      <Building2 className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="text-[14px] font-bold">
-                        {project.name}
+              <div key={project.id} className="flex items-center rounded-[14px] bg-white shadow-[0_2px_8px_rgba(0,0,0,.05)]">
+                <button
+                  type="button"
+                  onClick={() => setSelectedProject(project)}
+                  className="min-w-0 flex-1 rounded-l-[14px] p-4 text-left"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#dff5f4] text-[#049b9b]">
+                        <Building2 className="h-5 w-5" />
                       </div>
-                      <div className="mt-1 text-[10px] text-[#858585]">
-                        Non calculé · {project.levels.length} niveaux ·{" "}
-                        {project.levels.reduce(
-                          (sum, level) => sum + level.elements.length,
-                          0
-                        )}{" "}
-                        éléments
+                      <div className="min-w-0">
+                        <div className="truncate text-[14px] font-bold">{project.name}</div>
+                        <div className="mt-1 text-[10px] text-[#858585]">
+                          Non calculé · {project.levels.length} niveaux · {project.levels.reduce((sum, level) => sum + level.elements.length, 0)} éléments
+                        </div>
                       </div>
                     </div>
+                    <Badge className="shrink-0 bg-[#fff1e9] text-[#e87538] hover:bg-[#fff1e9]">{project.updatedAt}</Badge>
                   </div>
-                  <Badge className="bg-[#fff1e9] text-[#e87538] hover:bg-[#fff1e9]">
-                    {project.updatedAt}
-                  </Badge>
-                </div>
-              </button>
+                </button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="mr-2 h-9 w-9 shrink-0 text-[#a56a63] hover:bg-[#fff0ed] hover:text-[#c0392b]"
+                  aria-label={`Supprimer le projet ${project.name}`}
+                  title="Supprimer le projet"
+                  onClick={() => setProjectPendingDeletion(project)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             ))}
           </div>
         ) : (
@@ -2520,54 +2836,202 @@ export default function BuildingCreateFlow({
           </div>
         )}
         <Button
-          onClick={() => setDialogOpen(true)}
+          onClick={openProjectDialog}
           className="mt-6 w-full rounded-xl bg-[#6247a8] text-white hover:bg-[#513a91]"
         >
           <Plus className="mr-2 h-4 w-4" />
           Nouveau projet
         </Button>
-        {dialogOpen && (
-          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/45 px-3 pb-24">
-            <Card className="w-full max-w-[430px] rounded-[18px] border-0 bg-white">
-              <CardHeader>
-                <CardTitle className="text-[18px]">Nouveau projet</CardTitle>
-                <p className="text-[11px] text-[#858585]">
-                  Saisissez le nom du projet bâtiment.
-                </p>
-              </CardHeader>
-              <CardContent>
-                <Label className="text-[11px]">Nom du projet</Label>
-                <Input
-                  autoFocus
-                  className="mt-2 h-11"
-                  placeholder="Ex : Villa R+2"
-                  value={projectName}
-                  onChange={event => setProjectName(event.target.value)}
-                  onKeyDown={event => event.key === "Enter" && createProject()}
-                />
-                <Label className="mt-4 block text-[11px]">Usage principal du projet</Label>
-                <select
-                  className="mt-2 h-11 w-full rounded-md border border-[#e2e8eb] bg-white px-3 text-[12px]"
-                  value={projectUsage}
-                  onChange={event => setProjectUsage(event.target.value as ProjectUsage)}
+        {projectPendingDeletion && (
+          <AlertDialog open onOpenChange={open => { if (!open && !projectDeletionInProgress) setProjectPendingDeletion(null); }}>
+            <AlertDialogContent className="max-w-[400px] rounded-2xl">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Supprimer ce projet ?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  « {projectPendingDeletion.name} » et ses versions enregistrées seront retirés de l’historique sur cet appareil{cloudAccountId ? " et du compte synchronisé" : ""}. Cette action ne peut pas être annulée.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={projectDeletionInProgress}>Annuler</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={projectDeletionInProgress}
+                  className="bg-[#c0392b] text-white hover:bg-[#a93226]"
+                  onClick={event => { event.preventDefault(); void deleteProjectFromHistory(projectPendingDeletion); }}
                 >
-                  {PROJECT_USAGE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label} · Qk {option.load.toFixed(2)} kN/m²</option>)}
-                </select>
-                <p className="mt-2 text-[10px] leading-4 text-[#78888d]">Cette valeur sera utilisée par défaut pour les planchers et les charges d’exploitation du projet. Elle reste modifiable dans la configuration du plancher.</p>
-                <div className="mt-4 flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setDialogOpen(false)}
-                  >
-                    Annuler
-                  </Button>
-                  <Button
-                    onClick={createProject}
-                    className="bg-[#6247a8] text-white"
-                  >
-                    Créer
-                  </Button>
+                  {projectDeletionInProgress ? "Suppression…" : "Supprimer le projet"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+        {dialogOpen && (
+          <div className="fixed inset-0 z-[80] flex items-end justify-center overflow-y-auto bg-black/45 px-3 py-6 pb-24 sm:items-center sm:pb-6">
+            <Card className="max-h-[min(88vh,860px)] w-full max-w-[520px] overflow-y-auto rounded-[18px] border-0 bg-white">
+              <CardHeader className="sticky top-0 z-10 border-b bg-white">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-[18px]">{projectWizardStep === "identity" ? "Nouveau projet" : "Paramètres du projet"}</CardTitle>
+                    <p className="mt-1 text-[11px] text-[#858585]">
+                      {projectWizardStep === "identity" ? "Définissez le projet avant d’ouvrir son bâtiment." : "Renseignez le site, le référentiel et les matériaux prévus."}
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="icon" aria-label="Fermer" onClick={() => setDialogOpen(false)}><X className="h-4 w-4" /></Button>
                 </div>
+              </CardHeader>
+              <CardContent className="space-y-4 p-4">
+                {projectWizardStep === "identity" ? (
+                  <>
+                    <div>
+                      <Label className="text-[11px]">Nom du projet</Label>
+                      <Input
+                        autoFocus
+                        className="mt-2 h-11"
+                        placeholder="Ex : Villa R+2"
+                        value={projectName}
+                        onChange={event => setProjectName(event.target.value)}
+                        onKeyDown={event => event.key === "Enter" && createProject()}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px]">Usage principal du projet</Label>
+                      <select
+                        className="mt-2 h-11 w-full rounded-md border border-[#e2e8eb] bg-white px-3 text-[12px]"
+                        value={projectUsage}
+                        onChange={event => setProjectUsage(event.target.value as ProjectUsage)}
+                      >
+                        {PROJECT_USAGE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label} · Qk {option.load.toFixed(2)} kN/m²</option>)}
+                      </select>
+                      <p className="mt-2 text-[10px] leading-4 text-[#78888d]">Cette valeur sera utilisée par défaut pour les planchers et les charges d’exploitation. Elle reste modifiable dans la configuration du plancher.</p>
+                    </div>
+                    <div className="grid gap-2 pt-1 sm:grid-cols-2">
+                      <Button type="button" variant="outline" className="h-11" onClick={() => setProjectWizardStep("settings")}>
+                        <Settings2 className="mr-2 h-4 w-4" />Paramètres du projet
+                      </Button>
+                      <Button type="button" onClick={createProject} className="h-11 bg-[#6247a8] text-white">
+                        <Building2 className="mr-2 h-4 w-4" />Créer le projet
+                      </Button>
+                    </div>
+                    <Button type="button" variant="ghost" className="w-full text-[11px]" onClick={() => setDialogOpen(false)}>Annuler</Button>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <Label className="text-[11px]">Pays</Label>
+                      <select
+                        className="mt-1.5 h-10 w-full rounded-md border border-[#e2e8eb] bg-white px-3 text-[12px]"
+                        value={projectSettingsDraft.country}
+                        onChange={event => {
+                          const nextCountry = event.target.value;
+                          const nextCity = getCitiesForCountry(nextCountry)[0]?.city ?? "";
+                          const nextNorm = getCountryProjectStandard(nextCountry, nextCity);
+                          setProjectSettingsDraft(current => ({
+                            ...current,
+                            country: nextCountry,
+                            city: nextCity,
+                            norm: nextNorm,
+                            regulatoryCatalogId: getProjectStandardId(nextNorm),
+                          }));
+                        }}
+                      >
+                        {PROJECT_COUNTRIES.map(item => <option key={item} value={item}>{item}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-[11px]">Ville / commune</Label>
+                      <Input
+                        className="mt-1.5 h-10"
+                        list="gcbtp-project-city-options"
+                        placeholder="Saisir ou choisir une ville"
+                        value={projectSettingsDraft.city}
+                        onChange={event => setProjectSettingsDraft(current => ({ ...current, city: event.target.value }))}
+                      />
+                      <datalist id="gcbtp-project-city-options">
+                        {getCitiesForCountry(projectSettingsDraft.country).map(item => <option key={item.city} value={item.city} />)}
+                      </datalist>
+                    </div>
+                    <div>
+                      <Label className="text-[11px]">Emplacement / adresse du projet</Label>
+                      <Input
+                        className="mt-1.5 h-10"
+                        placeholder="Quartier, parcelle ou adresse"
+                        value={projectSettingsDraft.location}
+                        onChange={event => setProjectSettingsDraft(current => ({ ...current, location: event.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px]">Catalogue de calcul / norme</Label>
+                      <select
+                        className="mt-1.5 h-10 w-full rounded-md border border-[#e2e8eb] bg-white px-3 text-[12px]"
+                        value={projectSettingsDraft.norm}
+                        onChange={event => {
+                          const nextNorm = event.target.value as ProjectStandard;
+                          setProjectSettingsDraft(current => ({ ...current, norm: nextNorm, regulatoryCatalogId: getProjectStandardId(nextNorm) }));
+                        }}
+                      >
+                        {PROJECT_STANDARD_CATALOG.map(item => <option key={item.id} value={item.norm}>{item.label}</option>)}
+                      </select>
+                      <div className="mt-2 rounded-lg border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] leading-4 text-[#245e60]">
+                        <b>Présélection automatique pour {projectSettingsDraft.country} : {getCountryProjectStandard(projectSettingsDraft.country, projectSettingsDraft.city)}</b>
+                        <div className="mt-1">Référentiel pays : {projectSetupProfile.rule.label} · statut : {projectSetupProfile.rule.status === "national" ? "national" : projectSetupProfile.rule.status === "adopted" ? "adopté / proposé" : projectSetupProfile.rule.status === "adapted" ? "adapté / à confirmer" : "à confirmer"}.</div>
+                        <div className="mt-1">{projectSetupProfile.rule.note}</div>
+                        <div className="mt-1 font-medium">Vous pouvez choisir un autre catalogue ; une proposition ou un profil à confirmer ne remplace pas la vérification du référentiel contractuel par le bureau d’études.</div>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-[11px]">Nature de la structure</Label>
+                      <select
+                        className="mt-1.5 h-10 w-full rounded-md border border-[#e2e8eb] bg-white px-3 text-[12px]"
+                        value={projectSettingsDraft.structure}
+                        onChange={event => setProjectSettingsDraft(current => ({ ...current, structure: event.target.value }))}
+                      >
+                        <option>Béton armé</option><option>Acier</option><option>Maçonnerie porteuse</option><option>Mixte</option>
+                      </select>
+                    </div>
+                    <div className="rounded-xl border border-[#e3e9ed] p-3">
+                      <div className="mb-3 text-[12px] font-semibold text-[#20323d]">Catalogue matériaux du projet</div>
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-[10px]">Béton</Label>
+                          <select
+                            className="mt-1 w-full rounded-md border border-[#e2e8eb] bg-white px-3 py-2 text-[11px]"
+                            value={projectSettingsDraft.materials.concreteClass}
+                            onChange={event => setProjectSettingsDraft(current => ({ ...current, materials: { ...current.materials, concreteClass: event.target.value as ProjectMaterialSelection["concreteClass"] } }))}
+                          >
+                            {CONCRETE_CLASSES.map(item => <option key={item.concreteClass} value={item.concreteClass}>{item.concreteClass} · fck catalogue {item.fck} MPa</option>)}
+                          </select>
+                          <p className="mt-1 text-[9px] text-[#78888d]">Ecm {Math.round(projectSetupMaterials.concrete.Ecm / 1_000_000)} GPa · masse volumique {projectSetupMaterials.concrete.density} kN/m³ · données réutilisées par le modèle analytique.</p>
+                        </div>
+                        <div>
+                          <Label className="text-[10px]">Acier d’armature</Label>
+                          <select
+                            className="mt-1 w-full rounded-md border border-[#e2e8eb] bg-white px-3 py-2 text-[11px]"
+                            value={projectSettingsDraft.materials.reinforcementSteel}
+                            onChange={event => setProjectSettingsDraft(current => ({ ...current, materials: { ...current.materials, reinforcementSteel: event.target.value as ProjectMaterialSelection["reinforcementSteel"] } }))}
+                          >
+                            {REINFORCEMENT_STEEL_CATALOG.map(item => <option key={item.id} value={item.id}>{item.label} · fyk nominal {item.fykMpa} MPa</option>)}
+                          </select>
+                          <p className="mt-1 text-[9px] text-[#78888d]">{projectSetupMaterials.rebar.note}</p>
+                        </div>
+                        <div>
+                          <Label className="text-[10px]">Acier de construction</Label>
+                          <select
+                            className="mt-1 w-full rounded-md border border-[#e2e8eb] bg-white px-3 py-2 text-[11px]"
+                            value={projectSettingsDraft.materials.structuralSteel}
+                            onChange={event => setProjectSettingsDraft(current => ({ ...current, materials: { ...current.materials, structuralSteel: event.target.value as ProjectMaterialSelection["structuralSteel"] } }))}
+                          >
+                            {STRUCTURAL_STEEL_CATALOG.map(item => <option key={item.id} value={item.id}>{item.label} · fy nominal {item.fyMpa} MPa</option>)}
+                          </select>
+                          <p className="mt-1 text-[9px] text-[#78888d]">Valeur catalogue nominale ; les certificats fournisseur, nuances réellement livrées et règles de calcul restent à confirmer.</p>
+                        </div>
+                      </div>
+                      <p className="mt-3 rounded bg-[#fff9ed] p-2 text-[9px] leading-4 text-[#78602c]">Les propriétés catalogue servent de base au modèle et sont conservées avec le projet. Pour la maçonnerie, granulats, ciment et autres produits locaux, saisir/valider les caractéristiques du fournisseur ou du laboratoire ; aucune donnée fabricant non vérifiée n’est préremplie.</p>
+                    </div>
+                    <div className="grid gap-2 pt-1 sm:grid-cols-2">
+                      <Button type="button" variant="outline" className="h-11" onClick={() => setProjectWizardStep("identity")}><ChevronLeft className="mr-2 h-4 w-4" />Retour au projet</Button>
+                      <Button type="button" className="h-11 bg-[#6247a8] text-white" onClick={() => setProjectWizardStep("identity")}><Save className="mr-2 h-4 w-4" />Valider les paramètres</Button>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -2883,7 +3347,7 @@ export default function BuildingCreateFlow({
                     modelType === "Poutre" ||
                     modelType === "Voile" ||
                     modelType === "Longrine de redressement" ||
-                    (modelType === "Dalle" || modelType === "Escaliers")
+                    (isSlabElementType(modelType) || modelType === "Escaliers")
                   )
                     return;
                   (
@@ -2922,7 +3386,7 @@ export default function BuildingCreateFlow({
                     strokeLinecap="butt"
                   />
                 )}
-                {(item.type === "Dalle" || item.type === "Escaliers") && (
+                {(isSlabElementType(item.type) || item.type === "Escaliers") && (
                   <>
                     <rect
                       x={left}
@@ -2982,6 +3446,11 @@ export default function BuildingCreateFlow({
                   const values = sectionNumbers(item);
                   const footingWidthMeters = sectionMeters(values[0] ?? 1, dimensions);
                   const footingDepthMeters = sectionMeters(values[1] ?? values[0] ?? 1, dimensions);
+                  const footingOffset = footingCenterOffset(item.foundationMode, item.foundationDirection, footingWidthMeters, footingDepthMeters) ?? { xM: 0, yM: 0 };
+                  const footingCenter = metricGridPoint({
+                    x: (item.xM ?? indexToMetric(item.x, currentXMeters)) + footingOffset.xM,
+                    y: (item.yM ?? indexToMetric(item.y, currentYMeters)) + footingOffset.yM,
+                  });
                   const xInterval = item.x < xAxes.length - 1 ? item.x : Math.max(item.x - 1, 0);
                   const yInterval = item.y < yAxes.length - 1 ? item.y : Math.max(item.y - 1, 0);
                   const xScale = gridSpanX(xInterval, Math.min(xInterval + 1, xAxes.length - 1)) / Math.max(axisDistance(xDistances, xInterval), 0.01);
@@ -2990,8 +3459,8 @@ export default function BuildingCreateFlow({
                   const footingDepthPixels = Math.max(10, footingDepthMeters * yScale);
                   return <g>
                     <rect
-                      x={start.x - footingWidthPixels / 2}
-                      y={start.y - footingDepthPixels / 2}
+                      x={footingCenter.x - footingWidthPixels / 2}
+                      y={footingCenter.y - footingDepthPixels / 2}
                       width={footingWidthPixels}
                       height={footingDepthPixels}
                       fill="transparent"
@@ -3000,19 +3469,19 @@ export default function BuildingCreateFlow({
                       rx="1"
                     />
                     <line
-                      x1={start.x - footingWidthPixels / 2}
-                      y1={start.y - footingDepthPixels / 2}
-                      x2={start.x + footingWidthPixels / 2}
-                      y2={start.y + footingDepthPixels / 2}
+                      x1={footingCenter.x - footingWidthPixels / 2}
+                      y1={footingCenter.y - footingDepthPixels / 2}
+                      x2={footingCenter.x + footingWidthPixels / 2}
+                      y2={footingCenter.y + footingDepthPixels / 2}
                       stroke={elementColor(item)}
                       strokeWidth="1.5"
                       opacity=".8"
                     />
                     <line
-                      x1={start.x + footingWidthPixels / 2}
-                      y1={start.y - footingDepthPixels / 2}
-                      x2={start.x - footingWidthPixels / 2}
-                      y2={start.y + footingDepthPixels / 2}
+                      x1={footingCenter.x + footingWidthPixels / 2}
+                      y1={footingCenter.y - footingDepthPixels / 2}
+                      x2={footingCenter.x - footingWidthPixels / 2}
+                      y2={footingCenter.y + footingDepthPixels / 2}
                       stroke={elementColor(item)}
                       strokeWidth="1.5"
                       opacity=".8"
@@ -3034,7 +3503,7 @@ export default function BuildingCreateFlow({
                     {item.id}
                   </text>
                 )}
-                {showLabels && (item.type === "Dalle" || item.type === "Escaliers") && (
+                {showLabels && (isSlabElementType(item.type) || item.type === "Escaliers") && (
                   <text
                     x={left + width / 2}
                     y={top + height / 2 + 3}
@@ -3053,7 +3522,7 @@ export default function BuildingCreateFlow({
                   item.type !== "Poutre" &&
                   item.type !== "Voile" &&
                   item.type !== "Longrine de redressement" &&
-                  item.type !== "Dalle" && item.type !== "Escaliers" && (
+                  !isSlabElementType(item.type) && item.type !== "Escaliers" && (
                     <text
                       x={start.x + 8}
                       y={start.y - 8}
@@ -3112,7 +3581,7 @@ export default function BuildingCreateFlow({
                 )}
             </g>
           )}
-          {floorPreview && modelType === "Dalle" && (
+          {floorPreview && isSlabElementType(modelType) && (
             <g pointerEvents="none" opacity="0.75">
               <rect
                 x={gridPoint(floorPreview.x, floorPreview.y).x}
@@ -3154,7 +3623,7 @@ export default function BuildingCreateFlow({
                 y={gridPoint(floorPreview.x, floorPreview.y).y - 8}
                 className="fill-[#087f7f] text-[9px] font-bold"
               >
-                {floorConfig.type === "Dalle pleine" ? "Dalle pleine · deux sens" : `Dalle détectée · portée ${floorPreview.direction}`}
+                {floorConfig.type === "Dalle pleine" ? `${modelType === "Balcon" ? "Balcon plein" : "Dalle pleine"} · deux sens` : `Dalle détectée · portée ${floorPreview.direction}`}
               </text>
             </g>
           )}
@@ -3253,7 +3722,7 @@ export default function BuildingCreateFlow({
             <p className="text-[10px] text-[#858585]">
               Bâtiment — Descente de charges
             </p>
-            <p className={`max-w-[160px] truncate text-[9px] ${/échec|conflit/i.test(persistenceStatus) ? "text-[#b45309]" : "text-[#16805b]"}`} aria-live="polite">
+            <p className={`max-w-[160px] truncate text-[9px] ${/échec|conflit|indisponible|migration|non synchronisé/i.test(persistenceStatus) ? "text-[#b45309]" : "text-[#16805b]"}`} aria-live="polite">
               {persistenceStatus}
             </p>
           </div>
@@ -3447,9 +3916,11 @@ export default function BuildingCreateFlow({
               const nextSection = optionsForType(type)[0] ?? "";
               setModelType(type);
               setModelSection(nextSection);
+              setFoundationPlacementMode("centered");
+              setFoundationPlacementDirection({ x: "none", y: "none" });
               setElementSelectionMode(false);
-              if (type === "Dalle")
-                setFloorConfig(floorConfigForSection(nextSection));
+              if (isSlabElementType(type))
+                setFloorConfig(floorConfigForModel(type, nextSection));
               setPlacementStart(null);
               setHoverPoint(null);
               setStairLandingPoint(null);
@@ -3469,8 +3940,8 @@ export default function BuildingCreateFlow({
               const nextSection = event.target.value;
               setModelSection(nextSection);
               setElementSelectionMode(false);
-              if (modelType === "Dalle")
-                setFloorConfig(floorConfigForSection(nextSection));
+              if (isSlabElementType(modelType))
+                setFloorConfig(floorConfigForModel(modelType, nextSection));
               setPlacementStart(null);
               setHoverPoint(null);
               setStairLandingPoint(null);
@@ -3484,6 +3955,30 @@ export default function BuildingCreateFlow({
             ))}
           </select>
         </div>
+        {modelType === "Semelle" && (
+          <div className="mt-2 rounded-md border border-[#e2e8eb] bg-[#f8fafb] p-2">
+            <div className="mb-1 text-[9px] font-bold uppercase tracking-wide text-[#68767d]">Implantation de la semelle</div>
+            <div className="grid grid-cols-2 gap-1" role="group" aria-label="Mode de semelle">
+              {([{ value: "centered", label: "Centrée" }, { value: "eccentric", label: "Excentrée" }] as const).map(option => (
+                <button key={option.value} type="button" aria-pressed={foundationPlacementMode === option.value} onClick={() => { setFoundationPlacementMode(option.value); if (option.value === "centered") setFoundationPlacementDirection({ x: "none", y: "none" }); }} className={`h-8 rounded border text-[10px] font-semibold ${foundationPlacementMode === option.value ? "border-[#27358f] bg-[#27358f] text-white" : "border-[#d5dfe3] bg-white text-[#52656b]"}`}>{option.label}</button>
+              ))}
+            </div>
+            {foundationPlacementMode === "eccentric" && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="block text-[9px] font-semibold text-[#52656b]">Décalage horizontal
+                  <select aria-label="Décalage horizontal de la semelle" className="mt-1 h-8 w-full rounded border border-[#d5dfe3] bg-white px-2 text-[10px]" value={foundationPlacementDirection.x} onChange={event => setFoundationPlacementDirection(current => ({ ...current, x: event.target.value as FootingEccentricAxes["x"] }))}>
+                    <option value="none">Aucun</option><option value="left">Gauche</option><option value="right">Droite</option>
+                  </select>
+                </label>
+                <label className="block text-[9px] font-semibold text-[#52656b]">Décalage vertical
+                  <select aria-label="Décalage vertical de la semelle" className="mt-1 h-8 w-full rounded border border-[#d5dfe3] bg-white px-2 text-[10px]" value={foundationPlacementDirection.y} onChange={event => setFoundationPlacementDirection(current => ({ ...current, y: event.target.value as FootingEccentricAxes["y"] }))}>
+                    <option value="none">Aucun</option><option value="top">Haut</option><option value="bottom">Bas</option>
+                  </select>
+                </label>
+              </div>
+            )}
+          </div>
+        )}
         <Button
           variant="outline"
           className={`mt-2 w-full ${elementSelectionMode ? "border-[#e87538] bg-[#fff4ed] text-[#c85f2b]" : "border-[#dfe7ea] text-[#52656b]"}`}
@@ -3515,7 +4010,9 @@ export default function BuildingCreateFlow({
               onClick={() => {
                 setModelType(model.type);
                 setModelSection(model.name);
-                if (model.type === "Dalle") setFloorConfig(floorConfigForSection(model.name));
+                setFoundationPlacementMode("centered");
+                setFoundationPlacementDirection({ x: "none", y: "none" });
+                if (isSlabElementType(model.type)) setFloorConfig(floorConfigForModel(model.type, model.name));
               }}
             >
               <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: model.color }} />
@@ -3525,13 +4022,13 @@ export default function BuildingCreateFlow({
         </div>
         <p className="mt-2 text-[9px] text-[#7a898e]">Les sections sont utilisées par le modèle analytique pour déduire les dimensions, aires et inerties. Les propriétés de matériau restent à confirmer selon le béton et la norme du projet.</p>
       </details>
-      {modelType === "Dalle" && (
+      {isSlabElementType(modelType) && (
         <Button
           variant="outline"
           className="mt-2 w-full border-[#049b9b] text-[#087f7f]"
           onClick={() => setPanel("Configuration du plancher")}
         >
-          Configurer le plancher · {floorConfig.type} · {floorConfig.thickness}
+          {modelType === "Balcon" ? "Configurer le balcon" : "Configurer le plancher"} · {floorConfig.type} · {floorConfig.thickness}
         </Button>
       )}
       {modelType === "Escaliers" && (
@@ -3558,6 +4055,8 @@ export default function BuildingCreateFlow({
               <FloorConfigPanel
                 value={floorConfig}
                 onChange={setFloorConfig}
+                fixedType={modelType === "Balcon" ? "Dalle pleine" : undefined}
+                panelLabel={modelType === "Balcon" ? "balcon" : "plancher"}
                 onClose={() => {
                   setPanel(null);
                   toast.success("Configuration du plancher enregistrée");
@@ -3782,9 +4281,11 @@ export default function BuildingCreateFlow({
                 onSelect={model => {
                   setModelType(model.type);
                   setModelSection(model.name);
+                  setFoundationPlacementMode("centered");
+                  setFoundationPlacementDirection({ x: "none", y: "none" });
                   setElementSelectionMode(false);
-                  if (model.type === "Dalle")
-                    setFloorConfig(floorConfigForSection(model.name));
+                  if (isSlabElementType(model.type))
+                    setFloorConfig(floorConfigForModel(model.type, model.name));
                   setPanel(null);
                   toast.success(`${model.name} sélectionné`);
                 }}
@@ -3799,10 +4300,11 @@ export default function BuildingCreateFlow({
                       className="h-10 w-full rounded border bg-white px-2 text-[11px]"
                       value={editType}
                       onChange={event => {
-                        setEditType(event.target.value);
-                        setEditSection(
-                          optionsForType(event.target.value)[0] ?? ""
-                        );
+                        const nextType = event.target.value;
+                        const nextSection = optionsForType(nextType)[0] ?? "";
+                        setEditType(nextType);
+                        setEditSection(nextSection);
+                        if (isSlabElementType(nextType)) setFloorConfig(floorConfigForModel(nextType, nextSection));
                       }}
                     >
                       {modelTypes.map(type => (
@@ -3822,6 +4324,28 @@ export default function BuildingCreateFlow({
                       ))}
                     </select>
                   </div>
+                  {editType === "Semelle" && (
+                    <div className="space-y-2 rounded-lg border border-[#e2e8eb] bg-[#f8fafb] p-2">
+                      <Label>Implantation de la semelle</Label>
+                      <div className="grid grid-cols-2 gap-1" role="group" aria-label="Mode de semelle existante">
+                        {([{ value: "centered", label: "Centrée" }, { value: "eccentric", label: "Excentrée" }] as const).map(option => (
+                          <button key={option.value} type="button" aria-pressed={(editingElement?.foundationMode ?? "centered") === option.value} onClick={() => setEditingElement(current => current ? { ...current, foundationMode: option.value, foundationDirection: option.value === "centered" ? undefined : current.foundationDirection ?? { x: "none", y: "none" } } : current)} className={`h-8 rounded border text-[10px] font-semibold ${(editingElement?.foundationMode ?? "centered") === option.value ? "border-[#27358f] bg-[#27358f] text-white" : "border-[#d5dfe3] bg-white text-[#52656b]"}`}>{option.label}</button>
+                        ))}
+                      </div>
+                      {editingElement?.foundationMode === "eccentric" && <div className="grid grid-cols-2 gap-2">
+                        <label className="block text-[9px] font-semibold text-[#52656b]">Décalage horizontal
+                          <select aria-label="Décalage horizontal de la semelle existante" className="mt-1 h-8 w-full rounded border border-[#d5dfe3] bg-white px-2 text-[10px]" value={normalizeFootingEccentricAxes(editingElement.foundationDirection).x} onChange={event => setEditingElement(current => current ? { ...current, foundationDirection: { ...normalizeFootingEccentricAxes(current.foundationDirection), x: event.target.value as FootingEccentricAxes["x"] } } : current)}>
+                            <option value="none">Aucun</option><option value="left">Gauche</option><option value="right">Droite</option>
+                          </select>
+                        </label>
+                        <label className="block text-[9px] font-semibold text-[#52656b]">Décalage vertical
+                          <select aria-label="Décalage vertical de la semelle existante" className="mt-1 h-8 w-full rounded border border-[#d5dfe3] bg-white px-2 text-[10px]" value={normalizeFootingEccentricAxes(editingElement.foundationDirection).y} onChange={event => setEditingElement(current => current ? { ...current, foundationDirection: { ...normalizeFootingEccentricAxes(current.foundationDirection), y: event.target.value as FootingEccentricAxes["y"] } } : current)}>
+                            <option value="none">Aucun</option><option value="top">Haut</option><option value="bottom">Bas</option>
+                          </select>
+                        </label>
+                      </div>}
+                    </div>
+                  )}
                   <div>
                     <Label>Couleur de l’élément</Label>
                     <div className="mt-1 flex flex-wrap gap-1.5">
@@ -3858,7 +4382,7 @@ export default function BuildingCreateFlow({
                       />
                     </div>
                   </div>
-                  {editType === "Dalle" && (
+                  {isSlabElementType(editType) && (
                     <div className="space-y-1 rounded-lg border border-[#d7e2ec] bg-[#f6f9fc] p-2">
                       <Label>Trémies rectangulaires (m)</Label>
                       <textarea
@@ -3868,7 +4392,18 @@ export default function BuildingCreateFlow({
                         placeholder="x1;y1;x2;y2 — une ouverture par ligne"
                         className="min-h-16 w-full rounded border bg-white p-2 text-[10px]"
                       />
-                      <p className="text-[9px] text-[#68767d]">Coordonnées locales depuis le coin inférieur gauche de la dalle, en mètres; laisser vide si aucune trémie. Exemple : 1;1;2;2.</p>
+                      <p className="text-[9px] text-[#68767d]">Coordonnées locales depuis le coin inférieur gauche de la surface, en mètres; laisser vide si aucune trémie. Exemple : 1;1;2;2.</p>
+                    </div>
+                  )}
+                  {editType === "Balcon" && (
+                    <div className="space-y-2 rounded-lg border border-[#bfe4e2] bg-[#f0faf9] p-2">
+                      <div className="text-[10px] font-bold text-[#087f7f]">Charges caractéristiques du balcon · kN/m²</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div><Label>G permanente</Label><Input inputMode="decimal" aria-label="G permanente balcon" value={floorConfig.characteristicPermanentLoad ?? "6.00"} onChange={event => setFloorConfig(current => ({ ...current, characteristicPermanentLoad: event.target.value }))} /></div>
+                        <div><Label>Q exploitation</Label><Input inputMode="decimal" aria-label="Q exploitation balcon" value={floorConfig.characteristicImposedLoad ?? "3.50"} onChange={event => setFloorConfig(current => ({ ...current, characteristicImposedLoad: event.target.value }))} /></div>
+                      </div>
+                      <div><Label>Bord d’encastrement</Label><select aria-label="Bord d’encastrement balcon" className="h-9 w-full rounded border bg-white px-2 text-[10px]" value={floorConfig.balconySupportEdge ?? "auto"} onChange={event => setFloorConfig(current => ({ ...current, balconySupportEdge: event.target.value as NonNullable<FloorConfig["balconySupportEdge"]> }))}><option value="auto">Auto · détection sur poutre/voile</option><option value="left">Gauche</option><option value="right">Droite</option><option value="bottom">Bas</option><option value="top">Haut</option></select></div>
+                      <p className="text-[9px] text-[#476276]">Q par défaut repris du profil Balcon du catalogue des charges. À confirmer selon la norme du projet; garde-corps, rives et charges ponctuelles à ajouter séparément.</p>
                     </div>
                   )}
                   <div>
@@ -3936,7 +4471,7 @@ export default function BuildingCreateFlow({
                           <b>{item.id}</b> · {item.type}
                           <br />
                           <span className="text-[#7b878b]">{item.section}</span>
-                          {item.type === "Dalle" && item.floorConfig && (
+                          {isSlabElementType(item.type) && item.floorConfig && (
                             <>
                               <br />
                               <span className="text-[#087f7f]">
@@ -4015,7 +4550,7 @@ export default function BuildingCreateFlow({
                     <span className="text-[10px] font-semibold text-[#27358f]">{duplicateIds.length} sélectionné(s)</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5 rounded-lg border border-[#dfe6ea] bg-[#f8fafb] p-2">
-                    {["Semelle", "Semelle excentrée", "Longrine de redressement", "Voile", "Poteau", "Poutre", "Dalle", "Escaliers"].map(type => {
+                    {["Semelle", "Semelle excentrée", "Longrine de redressement", "Voile", "Poteau", "Poutre", "Dalle", "Balcon", "Escaliers"].map(type => {
                       const count = activeLevel?.elements.filter(item => item.type === type).length ?? 0;
                       if (!count) return null;
                       const groupIds = activeLevel?.elements.filter(item => item.type === type).map(item => item.id) ?? [];
@@ -4070,46 +4605,42 @@ export default function BuildingCreateFlow({
                         const nextCountry = event.target.value;
                         const nextCity =
                           getCitiesForCountry(nextCountry)[0]?.city ?? "";
-                        const nextProfile = getRegulatorySiteProfile(
-                          nextCountry,
-                          nextCity
-                        );
+                        const nextNorm = getCountryProjectStandard(nextCountry, nextCity);
                         setCountry(nextCountry);
                         setCity(nextCity);
-                        setNorm(nextProfile.preferredNorm);
+                        setNorm(nextNorm);
                         updateSelected({
                           country: nextCountry,
                           city: nextCity,
-                          norm: nextProfile.preferredNorm,
+                          norm: nextNorm,
+                          regulatoryCatalogId: getProjectStandardId(nextNorm),
                         });
                         toast.success(
                           `Profil ${nextCountry} activé automatiquement`
                         );
                       }}
                     >
-                      {DSRCAD_COUNTRIES.map(item => (
+                      {PROJECT_COUNTRIES.map(item => (
                         <option key={item}>{item}</option>
                       ))}
                     </select>
                   </div>
                   <div>
-                    <Label>Ville principale</Label>
-                    <select
+                    <Label>Ville / commune</Label>
+                    <Input
                       className="mt-1 h-10 w-full rounded border bg-white px-2 text-[11px]"
+                      list="gcbtp-existing-project-city-options"
                       value={city}
                       onChange={event => {
                         const nextCity = event.target.value;
                         setCity(nextCity);
                         updateSelected({ city: nextCity });
                       }}
-                    >
-                      <option value="">Sélectionner une ville</option>
-                      {getCitiesForCountry(country).map(item => (
-                        <option key={item.city} value={item.city}>
-                          {item.city}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Saisir ou choisir une ville"
+                    />
+                    <datalist id="gcbtp-existing-project-city-options">
+                      {getCitiesForCountry(country).map(item => <option key={item.city} value={item.city} />)}
+                    </datalist>
                   </div>
                   <div>
                     <Label>Emplacement</Label>
@@ -4144,13 +4675,45 @@ export default function BuildingCreateFlow({
                       className="h-10 w-full rounded border bg-white px-2 text-[11px]"
                       value={norm}
                       onChange={event => {
-                        setNorm(event.target.value);
-                        updateSelected({ norm: event.target.value });
+                        const nextNorm = event.target.value as ProjectStandard;
+                        setNorm(nextNorm);
+                        updateSelected({ norm: nextNorm, regulatoryCatalogId: getProjectStandardId(nextNorm) });
                       }}
                     >
-                      {DSRCAD_NORMS.map(item => (
-                        <option key={item}>{item}</option>
+                      {PROJECT_STANDARD_CATALOG.map(item => (
+                        <option key={item.id} value={item.norm}>{item.label}</option>
                       ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Classe de béton du catalogue</Label>
+                    <select
+                      className="h-10 w-full rounded border bg-white px-2 text-[11px]"
+                      value={selectedProjectMaterials.concrete.concreteClass}
+                      onChange={event => updateSelected({ materials: { ...normalizeProjectMaterials(selected.materials), concreteClass: event.target.value as ProjectMaterialSelection["concreteClass"] } })}
+                    >
+                      {CONCRETE_CLASSES.map(item => <option key={item.concreteClass} value={item.concreteClass}>{item.concreteClass} · fck {item.fck} MPa</option>)}
+                    </select>
+                    <p className="mt-1 text-[9px] text-[#77888d]">Cette classe alimente aussi les propriétés de béton du modèle analytique.</p>
+                  </div>
+                  <div>
+                    <Label>Acier d’armature</Label>
+                    <select
+                      className="h-10 w-full rounded border bg-white px-2 text-[11px]"
+                      value={normalizeProjectMaterials(selected.materials).reinforcementSteel}
+                      onChange={event => updateSelected({ materials: { ...normalizeProjectMaterials(selected.materials), reinforcementSteel: event.target.value as ProjectMaterialSelection["reinforcementSteel"] } })}
+                    >
+                      {REINFORCEMENT_STEEL_CATALOG.map(item => <option key={item.id} value={item.id}>{item.label} · fyk {item.fykMpa} MPa nominal</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Acier de construction</Label>
+                    <select
+                      className="h-10 w-full rounded border bg-white px-2 text-[11px]"
+                      value={normalizeProjectMaterials(selected.materials).structuralSteel}
+                      onChange={event => updateSelected({ materials: { ...normalizeProjectMaterials(selected.materials), structuralSteel: event.target.value as ProjectMaterialSelection["structuralSteel"] } })}
+                    >
+                      {STRUCTURAL_STEEL_CATALOG.map(item => <option key={item.id} value={item.id}>{item.label} · fy {item.fyMpa} MPa nominal</option>)}
                     </select>
                   </div>
                   <div>
@@ -4171,7 +4734,7 @@ export default function BuildingCreateFlow({
                       Profil automatique activé : {regulatoryProfile.country}
                     </b>
                     <br />
-                    Norme proposée : {regulatoryProfile.preferredNorm}
+                    Norme proposée : {getCountryProjectStandard(country, city)}
                     <br />
                     {regulatoryProfile.constructionContext}
                     <br />
@@ -4441,7 +5004,7 @@ export default function BuildingCreateFlow({
                         </label>
                         <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>Mailler / analyser</Button>
                       </div>
-                      <div className="rounded bg-white p-2 text-[9px] text-[#647087]">Le maillage calcule les zones rectangulaires et leurs charges pour tous les planchers. Le solveur de plaque v1 dimensionne uniquement les dalles pleines homogènes, simplement appuyées sur quatre bords ; les planchers à corps creux restent calculés par répartition tributaire vers les poutres. Les trémies, appuis continus, voiles, diaphragmes et couplage global avec les poutres ne sont pas dimensionnés par ce solveur.</div>
+                      <div className="rounded bg-white p-2 text-[9px] text-[#647087]">Le maillage triangulaire est commun aux surfaces. Les dalles pleines sont résolues sur quatre appuis simples, les corps creux par une plaque orthotrope portée dans le sens des nervures, et les balcons par un encastrement idéal sur la rive choisie/détectée avec trois rives libres. Les trémies, diaphragmes et couplage avec les poutres réelles ne sont pas encore modélisés par le solveur de plaque.</div>
                       {surfaceAnalysis && (
                         <div className="space-y-2">
                           {surfaceAnalysis.errors.length === 0 && <div className="rounded bg-white p-2">Toutes les surfaces traitées sans erreur de maillage ni d’équilibre global.</div>}
@@ -4451,6 +5014,7 @@ export default function BuildingCreateFlow({
                               <SurfaceMeshPreview analysis={row.analysis} />
                               {row.analysis.mesh && <div>{row.analysis.mesh.nodes.length} nœuds · {row.analysis.mesh.triangles.length} triangles · aspect max {row.analysis.mesh.maximumAspectRatio.toFixed(2)} · charge nette {row.analysis.mesh.totalUniformLoadKn.toFixed(2)} kN</div>}
                               {row.analysis.plate && <>
+                                <div className="font-semibold">{row.analysis.plate.boundary === "cantilever-fixed-edge" ? "Balcon en porte-à-faux" : row.analysis.plate.boundary === "one-way-simply-supported" ? "Plancher orthotrope à portée unidirectionnelle" : "Dalle pleine · quatre bords simplement appuyés"} · rives de réaction : {row.analysis.plate.edgeReactions.filter(edge => edge.totalKn > 0).map(edge => edge.edge).join(", ")}</div>
                                 <div className="grid grid-cols-2 gap-1 rounded bg-[#eef9f6] p-2 font-semibold">
                                   <span>Flèche max {(row.analysis.plate.maximumDeflectionM * 1000).toFixed(2)} mm</span>
                                   <span>Max |Mx| {row.analysis.plate.maximumMxKnMPerM.toFixed(2)} kN·m/m</span>
@@ -4473,6 +5037,8 @@ export default function BuildingCreateFlow({
                     <ReinforcedConcretePanel
                       projectId={selected.id}
                       projectNorm={selected.norm ?? norm}
+                      projectConcreteFckMpa={selectedProjectMaterials.concrete.fck}
+                      projectRebarFykMpa={selectedProjectMaterials.rebar.fykMpa}
                       members={rcMemberExtraction.demands}
                       slabs={rcSlabDemands}
                       foundations={rcFoundationDemands}
@@ -4502,7 +5068,8 @@ export default function BuildingCreateFlow({
                         Calcul terminé sur la structure modélisée
                       </div>
                       <div className="grid grid-cols-2 gap-1">
-                        <span>Dalles : {buildingCalculation.floorCount}</span>
+                        <span>Surfaces (dalles, balcons, escaliers) : {buildingCalculation.floorCount}</span>
+                        <span>Balcons : {selected?.levels.flatMap(level => level.elements).filter(item => item.type === "Balcon").length ?? 0}</span>
                         <span>Poutres : {buildingCalculation.beamCount}</span>
                         <span>
                           Appuis poteaux : {buildingCalculation.columnCount}
@@ -4621,7 +5188,8 @@ export default function BuildingCreateFlow({
                       const floorLoads = summarizeFloorLoads(
                         activeLevel?.elements ?? [],
                         gridDistance,
-                        floorConfig
+                        floorConfig,
+                        metricGridAxisPositions(xDistances, yDistances, xAxes.length, yAxes.length, gridDistance)
                       );
                       const loadElements = selected.levels.flatMap(level =>
                         level.elements.map(element => ({
@@ -4644,6 +5212,7 @@ export default function BuildingCreateFlow({
                           ),
                           gridDistance:
                             Number(gridDistance.replace(",", ".")) || 4,
+                          ...metricGridAxisPositions(xDistances, yDistances, xAxes.length, yAxes.length, gridDistance),
                         }
                       );
                       const buildingSummary =
@@ -4658,7 +5227,7 @@ export default function BuildingCreateFlow({
                       const propagationNote = [
                         "",
                         "Propagation sur éléments réels",
-                        `Dalles : ${buildingSummary.floorCount} · Poutres : ${buildingSummary.beamCount} · Appuis poteaux : ${buildingSummary.columnCount} · Fondations chargées : ${buildingSummary.foundationCount}`,
+                        `Surfaces (dalles, balcons, escaliers) : ${buildingSummary.floorCount} · Balcons : ${selected.levels.flatMap(level => level.elements).filter(item => item.type === "Balcon").length} · Poutres : ${buildingSummary.beamCount} · Appuis poteaux : ${buildingSummary.columnCount} · Fondations chargées : ${buildingSummary.foundationCount}`,
                         `Charges transmises aux fondations : Gk ${buildingSummary.totalGk.toFixed(2)} kN · Qk ${buildingSummary.totalQk.toFixed(2)} kN`,
                         ...(buildingSummary.warnings.length
                           ? ["Avertissements :", ...buildingSummary.warnings]
@@ -4837,7 +5406,7 @@ export default function BuildingCreateFlow({
                 <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">1. Maillage des dalles</b><span className="text-[10px] font-bold">{meshPrerequisiteReady ? "OK" : "À faire"}</span></div>
                 <p className="mt-1 text-[10px] text-[#68767d]">Le maillage calcule les triangles, l’aire nette et les charges. L’aperçu 3D affichera ensuite les lignes du maillage.</p>
                 <Button type="button" className="mt-3 h-9 w-full bg-[#087f7f] text-[10px] text-white" disabled={!analyticalModel} onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>{meshPrerequisiteReady ? "Refaire le maillage" : "Faire le maillage"}</Button>
-                {surfaceAnalysis && <div className="mt-2 text-[9px] text-[#536b70]">{surfaceAnalysis.rows.length} dalle(s) · {surfaceAnalysis.errors.length} erreur(s) · charge nette {surfaceAnalysis.rows.reduce((sum, row) => sum + (row.analysis.mesh?.totalUniformLoadKn ?? 0), 0).toFixed(2)} kN</div>}
+                {surfaceAnalysis && <div className="mt-2 text-[9px] text-[#536b70]">{surfaceAnalysis.rows.length} surface(s) · {surfaceAnalysis.errors.length} erreur(s) · charge nette {surfaceAnalysis.rows.reduce((sum, row) => sum + (row.analysis.mesh?.totalUniformLoadKn ?? 0), 0).toFixed(2)} kN</div>}
               </div>
               <div className="rounded-xl border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] text-[#245e60]"><b>2. Recalcul</b><p className="mt-1">Les cas de charges actifs et leurs combinaisons seront repris automatiquement au recalcul.</p><div className="mt-2 rounded bg-white p-2">Gk : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b></div></div>
             </div>

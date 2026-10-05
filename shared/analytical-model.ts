@@ -1,6 +1,8 @@
 import { cumulativeGridPositions } from "./proportional-grid";
 import { resolveConcreteMaterial } from "./model-catalog";
+import { isSlabElementType } from "./floor-config";
 import { columnBaseElevation, elementElevation, levelElevation, postTopElevation } from "./vertical-structure";
+import { footingCenterOffset, type FootingDirectionSelection, type FootingLayoutMode } from "./footing-geometry";
 
 export const ANALYTICAL_SCHEMA_VERSION = 2 as const;
 export const ANALYTICAL_UNITS = { length: "m", force: "kN", stress: "kN/m²", moment: "kN·m" } as const;
@@ -22,6 +24,8 @@ export type AnalyticalPrecheck = { ok: boolean; errors: AnalyticalDiagnostic[]; 
 
 export type AnalyticalGraphicElement = {
   id: string; type: string; section?: string; x: number; y: number; x2?: number; y2?: number; xM?: number; yM?: number; x2M?: number; y2M?: number; xMidM?: number; yMidM?: number;
+  foundationMode?: FootingLayoutMode;
+  foundationDirection?: FootingDirectionSelection;
   absoluteStairGeometry?: {
     flight1?: { lowerA: {x:number;y:number}; lowerB: {x:number;y:number}; upperA: {x:number;y:number}; upperB: {x:number;y:number}; lowerLevelId: string; upperLevelId: string };
     flight2?: { lowerA: {x:number;y:number}; lowerB: {x:number;y:number}; upperA: {x:number;y:number}; upperB: {x:number;y:number}; lowerLevelId: string; upperLevelId: string };
@@ -177,7 +181,7 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
         continue;
       }
       addFrame(element, [xM,yM,elementElevation(level,index,element.type)], [x2M,y2M,elementElevation(level,index,element.type)]);
-    } else if (element.type === "Dalle") {
+    } else if (isSlabElementType(element.type)) {
       if (element.x2 === undefined || element.y2 === undefined || Math.abs(x2-x) < 1e-8 || Math.abs(y2-y) < 1e-8) {
         diagnostics.push({ severity: "error", code: "slab-invalid-contour", message: `Dalle ${element.id} n’a pas un contour rectangulaire valide.`, elementIds: [element.id], levelId: element.levelId });
         continue;
@@ -195,9 +199,13 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
       const dims = parseDimensions(element.section,input.modelCatalog);
       const width = dims[0] ?? 1;
       const depth = dims[1] ?? width;
+      const offset = footingCenterOffset(element.foundationMode, element.foundationDirection, width, depth);
+      if (element.foundationMode === "eccentric" && !offset) {
+        diagnostics.push({ severity: "error", code: "footing-eccentric-direction-missing", message: `Semelle ${element.id} : choisissez une direction de décalage avant le calcul.`, elementIds: [element.id], levelId: element.levelId });
+      }
       const z = elementElevation(level,index,element.type);
       const halfX = width/2, halfY = depth/2;
-      const centerX = xM, centerY = yM;
+      const centerX = xM + (offset?.xM ?? 0), centerY = yM + (offset?.yM ?? 0);
       const xA = centerX-halfX, xB = centerX+halfX;
       const yA = centerY-halfY, yB = centerY+halfY;
       addSurface(element,"footing",[[xA,yA,z],[xB,yA,z],[xB,yB,z],[xA,yB,z]]);
@@ -339,8 +347,8 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
     // inférieurs ; ils ne constituent pas de nouveaux appuis au sol.
     if (index !== supportLevelIndex) continue;
     const footing = footings.find(candidate => {
-      const dx = coordinateAt(candidate.x,xPositions)-coordinateAt(column.x,xPositions);
-      const dy = coordinateAt(candidate.y,yPositions)-coordinateAt(column.y,yPositions);
+      const dx = coordinateAt(candidate.x,xPositions) - coordinateAt(column.x,xPositions);
+      const dy = coordinateAt(candidate.y,yPositions) - coordinateAt(column.y,yPositions);
       return Math.hypot(dx,dy) <= tolerance;
     });
     const baseNode = nodes.find(node => node.sourceElementIds.includes(column.id) && Math.abs(node.x-coordinateAt(column.x,xPositions))<=tolerance && Math.abs(node.y-coordinateAt(column.y,yPositions))<=tolerance && Math.abs(node.z-columnBaseElevation(levels,index))<=tolerance);
@@ -393,7 +401,7 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
   if (elements.length && nodes.length && supports.length === 0) diagnostics.push({ severity: "error", code: "no-structural-supports", message: "Aucun appui fixe relié à une semelle n’a pu être établi.", elementIds: [] });
   if (elements.length === 0) diagnostics.push({ severity: "error", code: "empty-model", message: "Le modèle ne contient aucun élément structurel à analyser.", elementIds: [] });
   const unresolvedIds = new Set([...frames.map(frame=>frame.sourceElementId),...surfaces.map(surface=>surface.sourceElementId)].map(id => id.split(":")[0]));
-  for (const element of elements) if (!["Poteau","Poutre","Longrine de redressement","Dalle","Voile","Semelle","Escaliers"].includes(element.type) || (!unresolvedIds.has(element.id) && element.type !== "Poteau")) diagnostics.push({ severity: "warning", code: "element-not-analytical", message: `L’élément ${element.id} (${element.type}) n’a pas d’équivalent analytique généré.`, elementIds: [element.id], levelId: element.levelId });
+  for (const element of elements) if (!["Poteau","Poutre","Longrine de redressement","Dalle","Balcon","Voile","Semelle","Escaliers"].includes(element.type) || (!unresolvedIds.has(element.id) && element.type !== "Poteau")) diagnostics.push({ severity: "warning", code: "element-not-analytical", message: `L’élément ${element.id} (${element.type}) n’a pas d’équivalent analytique généré.`, elementIds: [element.id], levelId: element.levelId });
 
   const model: AnalyticalModel = {
     schemaVersion: ANALYTICAL_SCHEMA_VERSION,

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { FLOOR_PRESETS, defaultFloorConfig, normalizeFloorConfig, restoreFloorConfig, serializeFloorConfig } from "../shared/floor-config";
+import { FLOOR_PRESETS, defaultBalconyFloorConfig, defaultFloorConfig, normalizeFloorConfig, restoreFloorConfig, serializeFloorConfig } from "../shared/floor-config";
 import { floorNoteSummary, validateFloorConfig } from "../shared/floor-validation";
 import { summarizeFloorLoads } from "../shared/floor-load";
 import { elementLoadSummary } from "../shared/element-loads";
 import { buildLoadDescentReport } from "../shared/load-report";
+import { IMPOSED_LOAD_PROFILES } from "../shared/load-catalog";
 
 describe("configuration des planchers", () => {
   it("propose les variantes corps creux et dalle pleine", () => {
@@ -32,6 +33,7 @@ describe("configuration des planchers", () => {
     expect(validateFloorConfig(invalid).length).toBeGreaterThan(0);
     const tooLarge = normalizeFloorConfig({ type: "Dalle pleine", thickness: "80 cm", span: "5" });
     expect(validateFloorConfig(tooLarge).some(error => error.includes("3 et 60"))).toBe(true);
+    expect(validateFloorConfig(normalizeFloorConfig({ type: "Corps creux", ribWidth: "12", ribSpacing: "10" })).some(error => error.includes("entraxe des nervures"))).toBe(true);
   });
 
   it("produit un résumé traçable pour la note", () => {
@@ -46,6 +48,14 @@ describe("configuration des planchers", () => {
     expect(loads.slabCount).toBe(1);
     expect(loads.maxSpan).toBe(5.5);
     expect(loads.designLoad).toBeGreaterThan(loads.permanent);
+  });
+
+  it("compte la surface et les charges d’un balcon dans le bilan des planchers", () => {
+    const config = defaultBalconyFloorConfig();
+    const loads = summarizeFloorLoads([{ type: "Balcon", section: "Balcon BA 20 cm", x: 0, y: 0, x2: 2, y2: 1 }], "4", defaultFloorConfig);
+    const catalogLoad = IMPOSED_LOAD_PROFILES.find(profile => profile.id === "balcony")!.defaultValue;
+    expect(config).toMatchObject({ type: "Dalle pleine", characteristicPermanentLoad: "6.00", characteristicImposedLoad: catalogLoad.toFixed(2) });
+    expect(loads).toMatchObject({ slabCount: 0, balconyCount: 1, floorCount: 1, surface: 32, permanent: 192, live: 112 });
   });
 
   it("calcule un détail de charge pour chaque famille d’élément", () => {

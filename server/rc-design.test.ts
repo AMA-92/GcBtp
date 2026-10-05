@@ -89,6 +89,25 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(design.checks.find(item => item.id === "slab-deflection")?.status).toBe("satisfaisant");
   });
 
+  it("does not treat a cantilever balcony edge reaction as a point column reaction", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(), members: [],
+      slabs: [{ id: "BAL1", combinationId: "comb:uls", combinationName: "ELU balcon", spanXM: 3, spanYM: 1.5, spanDirection: "X", boundaryMode: "cantilever-fixed-edge", thicknessMm: 200, mxKnMPerM: 30, myKnMPerM: 8, negativeMxKnMPerM: 30, negativeMyKnMPerM: 4, serviceDeflectionMm: 12, uniformLoadKnM2: 8, floorType: "Dalle pleine" }],
+    });
+    const design = result.elements[0];
+    expect(design.checks.find(item => item.id === "slab-punching")?.status).not.toBe("satisfaisant");
+    expect(design.limitations.some(item => item.includes("réaction calculée est linéique"))).toBe(true);
+  });
+
+  it("documents the orthotropic equivalent assumptions for a solved hollow-core slab", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(), members: [],
+      slabs: [{ id: "HC1", combinationId: "comb:uls", combinationName: "ELU plancher", spanXM: 5, spanYM: 3, spanDirection: "X", boundaryMode: "one-way-simply-supported", floorType: "Corps creux", thicknessMm: 200, mxKnMPerM: 20, myKnMPerM: 3, negativeMxKnMPerM: 0, negativeMyKnMPerM: 0, serviceDeflectionMm: 15, uniformLoadKnM2: 7 }],
+    });
+    expect(result.elements[0].limitations.some(item => item.includes("plaque orthotrope"))).toBe(true);
+    expect(result.elements[0].checks.find(item => item.id === "slab-punching")?.status).not.toBe("satisfaisant");
+  });
+
   it("refuses to design from missing solver demands and incomplete material data", () => {
     const result = designReinforcedConcrete({ basis: basis(), members: [], slabs: [] });
     expect(result.elements).toEqual([]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeSimplySupportedRectangularPlate, checkRectangularSurfaceEdgeSupports, meshRectangularSurface, type SurfacePanelInput } from "@shared/surface-analysis";
+import { analyzeCantileverRectangularPlate, analyzeOneWayOrthotropicRectangularPlate, analyzeSimplySupportedRectangularPlate, checkRectangularSurfaceEdgeSupports, meshRectangularSurface, SURFACE_ANALYSIS_SCHEMA_VERSION, type SurfacePanelInput } from "@shared/surface-analysis";
 
 const panel = (overrides: Partial<SurfacePanelInput> = {}): SurfacePanelInput => ({
   id: "slab-1",
@@ -16,6 +16,10 @@ const panel = (overrides: Partial<SurfacePanelInput> = {}): SurfacePanelInput =>
 });
 
 describe("priority 4 — surface mesh and plate analysis", () => {
+  it("versions the output schema for the additional plate boundary models", () => {
+    expect(SURFACE_ANALYSIS_SCHEMA_VERSION).toBe(2);
+  });
+
   it("creates a triangular mesh that exactly conserves a plain rectangular panel area", () => {
     const result = meshRectangularSurface(panel());
     expect(result.errors).toEqual([]);
@@ -58,6 +62,42 @@ describe("priority 4 — surface mesh and plate analysis", () => {
     const missing = checkRectangularSurfaceEdgeSupports(panelGrid, members.slice(1));
     expect(missing.supported).toBe(false);
     expect(missing.missingEdges).toContain("bottom");
+    expect(missing.supportedEdges).toEqual(["left", "right", "top"]);
+  });
+
+  it("solves a cantilever balcony with a fixed root edge and three free edges", () => {
+    const nu = 0.2;
+    const d = (30_000_000 * 0.2 ** 3) / (12 * (1 - nu ** 2));
+    const result = analyzeCantileverRectangularPlate(panel({ meshSizeM: 0.4 }), { D11: d, D22: d, D12: nu * d, D66: ((1 - nu) * d) / 2 }, "left");
+    expect(result.errors).toEqual([]);
+    expect(result.plate?.boundary).toBe("cantilever-fixed-edge");
+    expect(result.plate?.maximumDeflectionM).toBeGreaterThan(0);
+    const fixedNodes = result.mesh!.nodes.filter(node => Math.abs(node.xM) < 1e-9);
+    expect(fixedNodes.length).toBeGreaterThan(0);
+    for (const node of fixedNodes) expect(result.plate!.nodeResults.find(item => item.nodeId === node.id)?.deflectionM).toBeCloseTo(0, 10);
+    expect(result.plate!.edgeReactions.find(item => item.edge === "left")?.totalKn).toBeCloseTo(result.plate!.totalLoadKn);
+    expect(result.plate!.edgeReactions.filter(item => item.edge !== "left").every(item => item.totalKn === 0)).toBe(true);
+    expect(result.plate!.equilibriumResidualKn).toBeCloseTo(0, 10);
+  });
+
+  it("solves an orthotropic hollow-core slab on its two bearing edges and evaluates the triangular mesh nodes", () => {
+    const stiffness = { D11: 8000, D22: 160, D12: 200, D66: 300 };
+    const result = analyzeOneWayOrthotropicRectangularPlate(panel({ x2M: 5, y2M: 3, meshSizeM: 0.5 }), stiffness, "X");
+    expect(result.errors).toEqual([]);
+    expect(result.plate?.boundary).toBe("one-way-simply-supported");
+    expect(result.plate?.maximumDeflectionM).toBeGreaterThan(0);
+    expect(result.plate?.nodeResults).toHaveLength(result.mesh?.nodes.length);
+    expect(result.plate?.edgeReactions.find(item => item.edge === "left")?.totalKn).toBeCloseTo(0.5 * result.plate!.totalLoadKn);
+    expect(result.plate?.edgeReactions.find(item => item.edge === "right")?.totalKn).toBeCloseTo(0.5 * result.plate!.totalLoadKn);
+    expect(result.plate?.edgeReactions.find(item => item.edge === "top")?.totalKn).toBe(0);
+    expect(result.plate?.equilibriumResidualKn).toBeCloseTo(0, 10);
+
+    const rotated = analyzeOneWayOrthotropicRectangularPlate(panel({ x2M: 3, y2M: 5, meshSizeM: 0.5 }), { D11: 160, D22: 8000, D12: 200, D66: 300 }, "Y");
+    expect(rotated.errors).toEqual([]);
+    expect(rotated.plate?.maximumDeflectionM).toBeCloseTo(result.plate!.maximumDeflectionM, 8);
+    expect(rotated.plate?.maximumMxKnMPerM).toBeCloseTo(result.plate!.maximumMyKnMPerM, 8);
+    expect(rotated.plate?.maximumMyKnMPerM).toBeCloseTo(result.plate!.maximumMxKnMPerM, 8);
+    expect(rotated.plate?.edgeReactions.find(item => item.edge === "bottom")?.totalKn).toBeCloseTo(0.5 * rotated.plate!.totalLoadKn);
   });
 
   it("matches the simply-supported square-plate Navier deflection benchmark", () => {

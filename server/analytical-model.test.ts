@@ -38,12 +38,73 @@ describe("priority 1 — analytical model", () => {
     expect(precheck.errors.map(item=>item.code)).toContain("unsupported-frame-component");
   });
 
+  it("connecte les longrines de fondation aux appuis des poteaux via les semelles", () => {
+    const levels: AnalyticalGraphicLevel[] = [{
+      id: "foundation", label: "Fondation", elevation: "-1.00", height: "1.00",
+      elements: [
+        footing("F1", 0), footing("F2", 1),
+        column("C1", 0), column("C2", 1),
+        { id: "LO1", type: "Longrine de redressement", section: "Longrine_20x40", x: 0, y: 0, x2: 1, y2: 0 },
+      ],
+    }];
+    const { model, precheck } = buildAnalyticalModel(input(levels));
+    const tieBeam = model.frames.find(frame => frame.sourceElementId === "LO1")!;
+    const firstColumn = model.frames.find(frame => frame.sourceElementId === "C1")!;
+    const secondColumn = model.frames.find(frame => frame.sourceElementId === "C2")!;
+    expect(tieBeam.startNodeId).toBe(firstColumn.startNodeId);
+    expect(tieBeam.endNodeId).toBe(secondColumn.startNodeId);
+    expect(precheck.errors).toEqual([]);
+    expect(precheck.ok).toBe(true);
+  });
+
   it("requires a real footing under each column before inferring a fixed support", () => {
     const levels = supportedPortal().map(level => ({ ...level, elements: level.elements.filter(element => element.type !== "Semelle") }));
     const { model, precheck } = buildAnalyticalModel(input(levels));
     expect(model.supports).toHaveLength(0);
     expect(precheck.ok).toBe(false);
     expect(precheck.errors.filter(item=>item.code === "column-without-footing")).toHaveLength(2);
+  });
+
+  it("décale uniquement la base vers le côté choisi et garde le support au poteau", () => {
+    const levels = supportedPortal().map(level => level.id === "foundation"
+      ? { ...level, elements: level.elements.map(element => element.id === "F1" ? { ...element, foundationMode: "eccentric" as const, foundationDirection: "left" as const } : element) }
+      : level);
+    const { model, precheck } = buildAnalyticalModel(input(levels));
+    const footing = model.surfaces.find(surface => surface.sourceElementId === "F1")!;
+    const footingPoints = footing.nodeIds.map(id => model.nodes.find(node => node.id === id)!);
+    expect(Math.min(...footingPoints.map(node => node.x))).toBeCloseTo(-5 / 6);
+    expect(Math.max(...footingPoints.map(node => node.x))).toBeCloseTo(1 / 6);
+    const support = model.supports.find(item => item.sourceElementId === "F1")!;
+    const supportNode = model.nodes.find(node => node.id === support.nodeId)!;
+    expect(supportNode.x).toBeCloseTo(0);
+    expect(supportNode.y).toBeCloseTo(0);
+    expect(precheck.errors.map(error => error.code)).not.toContain("footing-eccentric-direction-missing");
+  });
+
+  it("décale une semelle de coin sur X et Y sans déplacer le support du poteau", () => {
+    const levels = supportedPortal().map(level => level.id === "foundation"
+      ? { ...level, elements: level.elements.map(element => element.id === "F1" ? { ...element, foundationMode: "eccentric" as const, foundationDirection: { x: "right", y: "bottom" } as const } : element) }
+      : level);
+    const { model, precheck } = buildAnalyticalModel(input(levels));
+    const footingSurface = model.surfaces.find(surface => surface.sourceElementId === "F1")!;
+    const points = footingSurface.nodeIds.map(id => model.nodes.find(node => node.id === id)!);
+    expect(Math.min(...points.map(node => node.x))).toBeCloseTo(-1 / 6);
+    expect(Math.max(...points.map(node => node.x))).toBeCloseTo(5 / 6);
+    expect(Math.min(...points.map(node => node.y))).toBeCloseTo(-1 / 6);
+    expect(Math.max(...points.map(node => node.y))).toBeCloseTo(5 / 6);
+    const support = model.supports.find(item => item.sourceElementId === "F1")!;
+    const supportNode = model.nodes.find(node => node.id === support.nodeId)!;
+    expect(supportNode.x).toBeCloseTo(0);
+    expect(supportNode.y).toBeCloseTo(0);
+    expect(precheck.errors.map(error => error.code)).not.toContain("footing-eccentric-direction-missing");
+  });
+
+  it("bloque le calcul d’une semelle excentrée sans direction explicite", () => {
+    const levels = supportedPortal().map(level => level.id === "foundation"
+      ? { ...level, elements: level.elements.map(element => element.id === "F1" ? { ...element, foundationMode: "eccentric" as const } : element) }
+      : level);
+    const { precheck } = buildAnalyticalModel(input(levels));
+    expect(precheck.errors.map(error => error.code)).toContain("footing-eccentric-direction-missing");
   });
 
   it("merges coincident 3D member endpoints within the configured tolerance", () => {
@@ -66,6 +127,14 @@ describe("priority 1 — analytical model", () => {
     expect(precheck.errors).toEqual([]);
     expect(slab.nodeIds).toContain(beam.startNodeId);
     expect(slab.nodeIds).toContain(beam.endNodeId);
+  });
+
+  it("inclut un balcon comme surface de dalle dans le modèle analytique", () => {
+    const levels = supportedPortal().map(level => level.id === "rdc"
+      ? { ...level, elements: [...level.elements, { id: "BAL1", type: "Balcon", section: "Balcon BA 20 cm", x: 0, y: 0, x2: 1, y2: 1 }] }
+      : level);
+    const { model } = buildAnalyticalModel(input(levels));
+    expect(model.surfaces.find(surface => surface.sourceElementId === "BAL1")).toMatchObject({ sourceType: "Balcon", kind: "slab" });
   });
 
   it("ne répète pas un sommet dans les surfaces de paliers d’escalier", () => {

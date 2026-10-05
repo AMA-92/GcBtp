@@ -33,6 +33,14 @@ it("calculates the solid 20 cm slab profile separately", () => {
     expect(result.qk).toBeCloseTo(24, 6);
 });
 
+it("applies the balcony load profile to a full-slab balcony", () => {
+  const result = elementLoadSummary({ type: "Balcon", section: "Balcon BA 20 cm", x: 0, y: 0, x2: 1, y2: 1 }, "4.00", defaultFloorConfig);
+  expect(result.surface).toBeCloseTo(16, 6);
+  expect(result.gk).toBeCloseTo(96, 6);
+  expect(result.qk).toBeCloseTo(56, 6);
+  expect(result.label).toContain("Balcon · dalle pleine");
+});
+
 it("calculates stair slab loads with the dedicated reinforced-concrete profile", () => {
   const result = elementLoadSummary(
     { type: "Escaliers", section: "Escalier BA 18 cm", x: 0, y: 0, x2: 1, y2: 1 },

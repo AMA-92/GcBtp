@@ -1,13 +1,14 @@
-export type ModelFamily = "Poteau (Rect)" | "Poteau (Cir)" | "Poutre" | "Semelle" | "Voile" | "Longrine de redressement" | "Plancher (Corps Creux)" | "Plancher (Dalle BA)" | "Escaliers";
+export type ModelFamily = "Poteau (Rect)" | "Poteau (Cir)" | "Poutre" | "Semelle" | "Voile" | "Longrine de redressement" | "Plancher (Corps Creux)" | "Plancher (Dalle BA)" | "Balcon" | "Escaliers";
 export type ModelSpec = { family: ModelFamily; type: string; name: string; dimensions: string; color: string };
 export type ConcreteMaterialProperties = { concreteClass: "C25/30" | "C30/37" | "C35/45"; fck: number; fcd: number; fctm: number; Ecm: number; poissonRatio: number; density: number; cover: number };
-const CONCRETE_CATALOG: Record<ConcreteMaterialProperties["concreteClass"], ConcreteMaterialProperties> = {
+export type ConcreteMaterialClass = ConcreteMaterialProperties["concreteClass"];
+export const CONCRETE_MATERIAL_CATALOG: Record<ConcreteMaterialClass, ConcreteMaterialProperties> = {
   "C25/30": { concreteClass: "C25/30", fck: 25, fcd: 14.17, fctm: 2.56, Ecm: 31_476_000, poissonRatio: 0.20, density: 25, cover: 30 },
   "C30/37": { concreteClass: "C30/37", fck: 30, fcd: 17.00, fctm: 2.90, Ecm: 32_837_000, poissonRatio: 0.20, density: 25, cover: 30 },
   "C35/45": { concreteClass: "C35/45", fck: 35, fcd: 19.83, fctm: 3.21, Ecm: 34_077_000, poissonRatio: 0.20, density: 25, cover: 35 },
 };
 export function resolveConcreteMaterial(concreteClass = "C25/30"): ConcreteMaterialProperties {
-  return { ...(CONCRETE_CATALOG[concreteClass as ConcreteMaterialProperties["concreteClass"]] ?? CONCRETE_CATALOG["C25/30"]) };
+  return { ...(CONCRETE_MATERIAL_CATALOG[concreteClass as ConcreteMaterialClass] ?? CONCRETE_MATERIAL_CATALOG["C25/30"]) };
 }
 
 export const MODEL_CATALOG: ModelSpec[] = [
@@ -21,6 +22,7 @@ export const MODEL_CATALOG: ModelSpec[] = [
   { family: "Semelle", type: "Semelle", name: "S1", dimensions: "1.00 × 1.00 × 0.30 m", color: "#7620a8" },
   { family: "Plancher (Corps Creux)", type: "Dalle", name: "Pl_16+4", dimensions: "0.16 × 0.04 × 3.00 × 1.50 m", color: "#0e8d96" },
   { family: "Plancher (Dalle BA)", type: "Dalle", name: "Pl_E20", dimensions: "0.20 × 3.00 × 1.50 m", color: "#d92b2b" },
+  { family: "Balcon", type: "Balcon", name: "Balcon BA 20 cm", dimensions: "0.20 × 3.00 × 1.50 m", color: "#148477" },
   { family: "Escaliers", type: "Escaliers", name: "Escalier BA 15 cm", dimensions: "0.15 × 3.00 × 1.20 m", color: "#e87538" },
 ];
 
