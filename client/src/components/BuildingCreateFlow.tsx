@@ -627,8 +627,8 @@ export default function BuildingCreateFlow({
   }, [rcMemberExtraction, spatial3DResult, planeAnalysis, surfaceAnalysis]);
   const criticalColumn = analysisRows.filter(row => row.type === "Poteau").sort((a, b) => b.nu - a.nu)[0];
   const criticalFoundation = analysisRows.filter(row => row.type === "Semelle").sort((a, b) => b.nu - a.nu)[0];
-  const criticalByType = Array.from(new Set(analysisRows.map(row => row.type))).map(type => analysisRows.filter(row => row.type === type).sort((a, b) => b.nu - a.nu)[0]).filter(Boolean);
-  const criticalElementKeys = criticalByType.map(row => `${row!.levelId}:${row!.id}`);
+  const criticalColumnKey = criticalColumn ? `${criticalColumn.levelId}:${criticalColumn.id}` : null;
+  const criticalElementKeys = criticalColumnKey ? [criticalColumnKey] : [];
   const loadVisuals = useMemo(() => {
     const visuals: Record<string, { gk: number; qk: number; nu: number; lineKnM?: number; areaKnM2?: number; critical?: boolean }> = {};
     for (const row of analysisRows) visuals[`${row.levelId}:${row.id}`] = { gk: row.gk, qk: row.qk, nu: row.nu, critical: criticalElementKeys.includes(`${row.levelId}:${row.id}`) };
@@ -2314,10 +2314,10 @@ export default function BuildingCreateFlow({
   }) : null;
   const analysisScaleColors = Object.fromEntries(
     analysisRows
-      .filter(row => ["Poteau", "Poutre", "Dalle", "Escaliers", "Semelle"].includes(row.type))
+      .filter(row => row.type === "Poteau")
       .map(row => [
         `${row.levelId}:${row.id}`,
-        criticalElementKeys.includes(`${row.levelId}:${row.id}`) ? "#ff1717" : loadScale.colorFor({ id: row.id, levelId: row.levelId, type: row.type, nu: row.nu }),
+        `${row.levelId}:${row.id}` === criticalColumnKey ? "#ff1717" : colorForModel(row.type, row.section ?? ""),
       ])
   );
   const stairNodePoints = (activeLevel?.elements ?? [])

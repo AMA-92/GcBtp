@@ -610,8 +610,8 @@ export default function Building3DView({
                       }) : null;
                       return (
                         <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>
-                          {faces.map((face, index) => <polygon key={`slab-face-${index}`} points={polygon(face)} fill={color} fillOpacity={index === 0 ? ".42" : ".28"} stroke={selectedElementKey === `${level.id}:${item.id}` ? "#e87538" : color} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 3 : 1.3} />)}
-                          {meshed && <g stroke="#087f7f" strokeWidth="0.8" strokeDasharray="2 2" opacity="0.9">{meshLines}</g>}
+                          {faces.map((face, index) => <polygon key={`slab-face-${index}`} points={polygon(face)} fill="#9ca3af" fillOpacity={index === 0 ? ".52" : ".36"} stroke={selectedElementKey === `${level.id}:${item.id}` ? "#e87538" : "#6b7280"} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 3 : 1.1} />)}
+                          {meshed && <g stroke="#111111" strokeWidth="0.75" strokeDasharray="2 2" opacity="0.95">{meshLines}</g>}
                           {loadedLines && <g stroke="#ff1717" strokeWidth="1.4" strokeDasharray="3 2" opacity="0.9">{loadedLines}</g>}
                           {meshed && <text x={top[0].x + 5} y={top[0].y - 5} className="fill-[#087f7f] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>MAILLÉ</text>}
                           {showLoadValues && load && <text x={top[0].x + 5} y={top[0].y + 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{load.areaKnM2?.toFixed(2)} kN/m²</text>}
@@ -650,10 +650,10 @@ export default function Building3DView({
                       const beamTop = [projectMetric(a.x + nx, a.y + ny, z + beamHeight), projectMetric(b.x + nx, b.y + ny, z + beamHeight), projectMetric(b.x - nx, b.y - ny, z + beamHeight), projectMetric(a.x - nx, a.y - ny, z + beamHeight)];
                       const beamStroke = selectedElementKey === `${level.id}:${item.id}` ? "#e87538" : color;
                       const load = loadVisuals[analysisKey];
-                      const arrows = load?.lineKnM && load.lineKnM > 0 ? [0.2, 0.4, 0.6, 0.8].map((ratio, index) => {
+                      const arrows = load?.lineKnM && load.lineKnM > 0 ? [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((ratio, index) => {
                         const x = a.x + (b.x - a.x) * ratio, y = a.y + (b.y - a.y) * ratio;
-                        const base = projectMetric(x, y, z + beamHeight + 0.32), tip = projectMetric(x, y, z + beamHeight + 0.03);
-                        return <g key={`beam-load-arrow-${index}`}><line x1={base.x} y1={base.y} x2={tip.x} y2={tip.y} stroke="#ff1717" strokeWidth="2" /><path d={`M ${tip.x - 3} ${tip.y - 5} L ${tip.x} ${tip.y} L ${tip.x + 3} ${tip.y - 5}`} fill="none" stroke="#ff1717" strokeWidth="2" /></g>;
+                        const base = projectMetric(x, y, z + beamHeight + 0.36), tip = projectMetric(x, y, z + beamHeight + 0.025);
+                        return <g key={`beam-load-arrow-${index}`}><line x1={base.x} y1={base.y} x2={tip.x} y2={tip.y} stroke="#e11d48" strokeWidth="0.9" strokeLinecap="round" /><path d={`M ${tip.x - 2.5} ${tip.y - 4} L ${tip.x} ${tip.y} L ${tip.x + 2.5} ${tip.y - 4}`} fill="none" stroke="#e11d48" strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round" /></g>;
                       }) : null;
                       return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>{[beamTop, beamBottom, [beamBottom[0], beamBottom[1], beamTop[1], beamTop[0]], [beamBottom[1], beamBottom[2], beamTop[2], beamTop[1]], [beamBottom[2], beamBottom[3], beamTop[3], beamTop[2]], [beamBottom[3], beamBottom[0], beamTop[0], beamTop[3]]].map((face, index) => <polygon key={`beam-face-${index}`} points={polygon(face)} fill={color} fillOpacity={index === 0 ? ".88" : ".76"} stroke={beamStroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 1.8 : 1} />)}{arrows && <g>{arrows}</g>}{showLoadValues && load && <text x={(beamTop[0].x + beamTop[2].x) / 2} y={(beamTop[0].y + beamTop[2].y) / 2 - 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{load.lineKnM?.toFixed(2)} kN/m</text>}</g>;
                     }
