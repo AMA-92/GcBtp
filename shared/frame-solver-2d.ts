@@ -200,7 +200,7 @@ export function prepareAnalyticalPlane(model:AnalyticalModel,plane:FramePlane,no
     elements.push({id:frame.id,i:frame.startNodeId,j:frame.endNodeId,elasticModulusKnM2:material.elasticModulusKnM2,areaM2:section.areaM2,inertiaM4:plane==="XZ"?section.inertiaY4M4:section.inertiaZ4M4});
   }
   const supports:PlaneSupport[]=model.supports.filter(support=>selectedSupportNodeIds.has(support.nodeId)).map(support=>({nodeId:support.nodeId,restrained:[support.restrainedDofs.includes("ux"),support.restrainedDofs.includes("uz"),support.restrainedDofs.includes("ry")],springs:[support.stiffness?.ux ?? 0,support.stiffness?.uz ?? 0,support.stiffness?.ry ?? 0] }));
-  if (model.materials.some(item=>item.provenance==="provisional-default")) warnings.push("Les propriétés de matériau proviennent de valeurs génériques provisoires ; confirmer les matériaux réels.");
+  if (model.materials.some(item=>item.provenance==="provisional-default" || item.provenance==="model-catalog")) warnings.push("Les propriétés de matériau proviennent de valeurs génériques provisoires ou du catalogue ; confirmer les matériaux réels.");
   if (model.sections.some(item=>item.provenance==="unresolved")) warnings.push("Au moins une section analytique est non résolue ; renseigner ses propriétés avant interprétation.");
   if (errors.length) return {problem:null,errors,warnings};
   return {problem:{plane,nodes:Array.from(nodeMap.values()),elements,supports,nodalLoads,memberLoads},errors,warnings};

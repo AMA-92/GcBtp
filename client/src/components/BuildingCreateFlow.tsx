@@ -502,6 +502,9 @@ export default function BuildingCreateFlow({
   const [analyticalModel, setAnalyticalModel] = useState<AnalyticalModel | null>(null);
   const [analyticalPrecheck, setAnalyticalPrecheck] = useState<AnalyticalPrecheck | null>(null);
   const [buildingLoadModel, setBuildingLoadModel] = useState<ReturnType<typeof buildBuildingLoadModel> | null>(null);
+  const [showCalculationPreflight, setShowCalculationPreflight] = useState(false);
+  const [meshPrerequisiteReady, setMeshPrerequisiteReady] = useState(false);
+  const [loadCasesPrerequisiteReady, setLoadCasesPrerequisiteReady] = useState(false);
   const [analysisPlane, setAnalysisPlane] = useState<FramePlane>("XZ");
   const [solverCombinationId, setSolverCombinationId] = useState("comb:uls-gravity");
   const [planeAnalysis, setPlaneAnalysis] = useState<{ result: PlaneFrameResult | null; errors: string[]; warnings: string[]; combinationId?: string; combinationName?: string; memberLoads: ReturnType<typeof buildGravityMemberLoads>["memberLoads"]; comparison?: { expectedReactionKn: number; solverReactionKn: number; differencePercent: number } } | null>(null);
@@ -520,6 +523,7 @@ export default function BuildingCreateFlow({
   >(null);
   const [showAnalysisValues, setShowAnalysisValues] = useState(false);
   const [showAnalysisMoments, setShowAnalysisMoments] = useState(false);
+  const [showLoadValues, setShowLoadValues] = useState(false);
   const dragSnapshot = useRef<Project | null>(null);
   const beamTraceRef = useRef(false);
   const analysisRows = buildingCalculation?.rows ?? [];
@@ -623,7 +627,33 @@ export default function BuildingCreateFlow({
   }, [rcMemberExtraction, spatial3DResult, planeAnalysis, surfaceAnalysis]);
   const criticalColumn = analysisRows.filter(row => row.type === "Poteau").sort((a, b) => b.nu - a.nu)[0];
   const criticalFoundation = analysisRows.filter(row => row.type === "Semelle").sort((a, b) => b.nu - a.nu)[0];
-  const criticalElementKeys = [criticalColumn, criticalFoundation].filter(Boolean).map(row => `${row!.levelId}:${row!.id}`);
+  const criticalByType = Array.from(new Set(analysisRows.map(row => row.type))).map(type => analysisRows.filter(row => row.type === type).sort((a, b) => b.nu - a.nu)[0]).filter(Boolean);
+  const criticalElementKeys = criticalByType.map(row => `${row!.levelId}:${row!.id}`);
+  const loadVisuals = useMemo(() => {
+    const visuals: Record<string, { gk: number; qk: number; nu: number; lineKnM?: number; areaKnM2?: number; critical?: boolean }> = {};
+    for (const row of analysisRows) visuals[`${row.levelId}:${row.id}`] = { gk: row.gk, qk: row.qk, nu: row.nu, critical: criticalElementKeys.includes(`${row.levelId}:${row.id}`) };
+    const combination = loadProgram.combinations.find(item => item.id === solverCombinationId) ?? loadProgram.combinations.find(item => item.enabled);
+    const gammaG = combination?.caseFactors["case:G"] ?? 1;
+    const gammaQ = combination?.caseFactors["case:Q"] ?? 1;
+    const elementLevel = new Map((selected?.levels ?? []).flatMap(level => level.elements.map(element => [element.id, level.id] as const)));
+    for (const [beamId, load] of Object.entries(buildingLoadModel?.propagation.beams ?? {})) {
+      const element = selected?.levels.flatMap(level => level.elements).find(item => item.id === beamId);
+      const lengthM = element?.x2 !== undefined && element.y2 !== undefined ? Math.max(Math.hypot(element.x2 - element.x, element.y2 - element.y) * (Number(gridDistance.replace(",", ".")) || 4), 0.1) : 0.1;
+      const levelId = elementLevel.get(beamId);
+      if (!levelId) continue;
+      const key = `${levelId}:${beamId}`;
+      const current = visuals[key] ?? { gk: load.gk, qk: load.qk, nu: gammaG * load.gk + gammaQ * load.qk };
+      visuals[key] = { ...current, gk: load.gk, qk: load.qk, nu: gammaG * load.gk + gammaQ * load.qk, lineKnM: Math.max(0, (gammaG * load.gk + gammaQ * load.qk) / lengthM) };
+    }
+    for (const row of surfaceAnalysis?.rows ?? []) {
+      const levelId = elementLevel.get(row.elementId);
+      if (!levelId) continue;
+      const key = `${levelId}:${row.elementId}`;
+      const current = visuals[key] ?? { gk: 0, qk: 0, nu: row.uniformLoadKnM2 };
+      visuals[key] = { ...current, areaKnM2: row.uniformLoadKnM2, nu: Math.max(current.nu, row.uniformLoadKnM2) };
+    }
+    return visuals;
+  }, [analysisRows, buildingLoadModel, gridDistance, loadProgram.combinations, selected, solverCombinationId, surfaceAnalysis, criticalElementKeys]);
   const loadScale = createLoadScale(
     analysisRows
       .filter(row => row.type === "Poteau" || row.type === "Semelle")
@@ -913,12 +943,16 @@ export default function BuildingCreateFlow({
     setSurfaceAnalysis(null);
     setClimateAnalysis(null);
     setRcDesignResult(null);
+    setShowCalculationPreflight(false);
+    setMeshPrerequisiteReady(false);
+    setLoadCasesPrerequisiteReady(false);
   }, [selected?.levels, selected?.structure, xDistances, yDistances, floorConfig, analyticalTolerance, customModels]);
 
   useEffect(() => {
     setPlaneAnalysis(null);
     setSurfaceAnalysis(null);
     setRcDesignResult(null);
+    setLoadCasesPrerequisiteReady(false);
   }, [loadProgram, surfaceMeshSizeM]);
 
   useEffect(() => {
@@ -1184,7 +1218,12 @@ export default function BuildingCreateFlow({
     link.click();
     URL.revokeObjectURL(url);
   };
-  const runBuildingCalculation = () => {
+  const executeBuildingCalculation = () => {
+    if (!meshPrerequisiteReady || !loadCasesPrerequisiteReady) {
+      toast.error("Le maillage des dalles et la validation des cas de chargement sont obligatoires avant le calcul.");
+      setShowCalculationPreflight(true);
+      return;
+    }
     if (!selected) return;
     setLastStructuralReport("");
     try { sessionStorage.removeItem("gcbtp-last-structural-report"); } catch { /* L’invalidation reste effective en mémoire. */ }
@@ -1251,11 +1290,32 @@ export default function BuildingCreateFlow({
     const message = `Calcul terminé : ${summary.floorCount} dalle(s), ${summary.foundationCount} fondation(s) chargée(s)`;
     if (summary.floorCount === 0) toast.info(`${message}. Ajoutez les planchers porteurs pour inclure les charges d’exploitation et permanentes des niveaux.`);
     else toast.success(message);
+    setShowCalculationPreflight(false);
+  };
+  const openCalculationPreflight = () => {
+    if (!selected) return;
+    setLastStructuralReport("");
+    const analytical = buildCurrentAnalytical();
+    if (!analytical) return;
+    setAnalyticalModel(analytical.model);
+    setAnalyticalPrecheck(analytical.precheck);
+    const loadElements = selected.levels.flatMap(level => level.elements.map(element => ({ ...element, levelId: level.id })));
+    const model = buildBuildingLoadModel(loadElements, {
+      levelOrder: selected.levels.map(level => level.id),
+      levelHeights: Object.fromEntries(selected.levels.map(level => [level.id, Number(level.height ?? (level.id === "foundation" ? 1 : 3.2))])),
+      gridDistance: Number(gridDistance.replace(",", ".")) || 4,
+    });
+    setBuildingLoadModel(model);
+    setBuildingCalculation(summarizeBuildingLoads(model));
+    setMeshPrerequisiteReady(false);
+    setLoadCasesPrerequisiteReady(false);
+    setShowCalculationPreflight(true);
+    setPanel("Calculer la descente");
   };
   useEffect(() => {
     if (!optimizationRecalcRequested || !selected) return;
     setOptimizationRecalcRequested(false);
-    runBuildingCalculation();
+    executeBuildingCalculation();
   }, [optimizationRecalcRequested, selected]);
   const runPlanarAnalysis = () => {
     if (!analyticalModel || !buildingLoadModel || !buildingCalculation) return;
@@ -1286,12 +1346,12 @@ export default function BuildingCreateFlow({
     else toast.error(`Analyse statique 2D impossible : ${solved.errors[0] ?? "erreur numérique"}`);
   };
   const runSurfaceAnalysis = () => {
-    if (!selected) return;
+    if (!selected) return false;
     setRcDesignResult(null);
     const combination = loadProgram.combinations.find(item => item.id === solverCombinationId);
     if (!combination) {
       setSurfaceAnalysis({ rows: [], errors: ["Combinaison sélectionnée absente du programme de charges."], warnings: [] });
-      return;
+      return false;
     }
     const patternCoefficient = (caseId: string, patternId: string) => {
       const actionCase = loadProgram.cases.find(item => item.id === caseId);
@@ -1307,7 +1367,7 @@ export default function BuildingCreateFlow({
     if (!slabs.length) {
       setSurfaceAnalysis({ rows: [], errors: ["Aucune dalle rectangulaire ne peut être maillée dans ce projet."], warnings: [] });
       toast.error("Aucune surface de dalle à analyser");
-      return;
+      return false;
     }
     const rows: SurfaceRunRow[] = slabs.map(({ level, element }) => {
       const config = normalizeFloorConfig(element.floorConfig ?? defaultFloorConfig);
@@ -1357,6 +1417,7 @@ export default function BuildingCreateFlow({
     if (rows.some(row => row.analysis.plate)) toast.success(`Maillage et analyse de ${rows.filter(row => row.analysis.plate).length} dalle(s) terminés`);
     else if (!errors.length && rows.length) toast.success(`Zones de charges de ${rows.length} plancher(s) calculées ; le dimensionnement de plaque reste réservé aux dalles pleines.`);
     else toast.error(`Aucune dalle calculée : ${errors[0] ?? "géométrie ou appuis incompatibles"}`);
+    return errors.length === 0 && rows.length > 0;
   };
   const downloadSurfaceAnalysis = () => {
     if (!surfaceAnalysis) return;
@@ -2253,10 +2314,10 @@ export default function BuildingCreateFlow({
   }) : null;
   const analysisScaleColors = Object.fromEntries(
     analysisRows
-      .filter(row => row.type === "Poteau" || row.type === "Semelle")
+      .filter(row => ["Poteau", "Poutre", "Dalle", "Escaliers", "Semelle"].includes(row.type))
       .map(row => [
         `${row.levelId}:${row.id}`,
-        loadScale.colorFor({ id: row.id, levelId: row.levelId, type: row.type, nu: row.nu }),
+        criticalElementKeys.includes(`${row.levelId}:${row.id}`) ? "#ff1717" : loadScale.colorFor({ id: row.id, levelId: row.levelId, type: row.type, nu: row.nu }),
       ])
   );
   const stairNodePoints = (activeLevel?.elements ?? [])
@@ -2292,6 +2353,10 @@ export default function BuildingCreateFlow({
       analysisScaleColors={analysisScaleColors}
       showAnalysisValues={showAnalysisValues}
       showAnalysisMoments={showAnalysisMoments}
+      loadVisuals={loadVisuals}
+      showLoadValues={showLoadValues}
+      meshedSurfaceIds={surfaceAnalysis?.rows.filter(row => Boolean(row.analysis.mesh)).map(row => row.elementId) ?? []}
+      meshSizeM={Number(surfaceMeshSizeM.replace(",", ".")) || 0.75}
       stairPlacementActive={false}
       stairPlacementStart={placementStart}
       stairLandingPoint={stairLandingPoint}
@@ -3329,6 +3394,7 @@ export default function BuildingCreateFlow({
           {threeD && <div className="mt-1.5 flex gap-2 overflow-x-auto">
             <button type="button" onClick={() => setShowAnalysisValues(value => !value)} className={`whitespace-nowrap rounded-md px-2 py-1 ${showAnalysisValues ? "bg-[#049b9b] text-white" : "bg-[#eef5f6] text-[#45616b]"}`}>Valeurs G/Q/Nu/Nser</button>
             <button type="button" onClick={() => setShowAnalysisMoments(value => !value)} className={`whitespace-nowrap rounded-md px-2 py-1 ${showAnalysisMoments ? "bg-[#27358f] text-white" : "bg-[#eef0f8] text-[#45616b]"}`}>Moments M</button>
+            <button type="button" onClick={() => setShowLoadValues(value => !value)} className={`whitespace-nowrap rounded-md px-2 py-1 ${showLoadValues ? "bg-[#ff1717] text-white" : "bg-[#fff0f0] text-[#9a2f2f]"}`}>Charges 3D</button>
           </div>}
         </div>
       )}
@@ -3354,7 +3420,7 @@ export default function BuildingCreateFlow({
         </Button>
         <Button
           className="h-10 bg-[#27358f] text-white hover:bg-[#1f2b78]"
-          onClick={runBuildingCalculation}
+          onClick={openCalculationPreflight}
         >
           Lancer les calculs
         </Button>
@@ -4371,7 +4437,7 @@ export default function BuildingCreateFlow({
                         <label className="flex items-center gap-2">Taille cible de maille (m)
                           <Input aria-label="Taille de maille des surfaces en mètres" inputMode="decimal" value={surfaceMeshSizeM} onChange={event => setSurfaceMeshSizeM(event.target.value)} className="h-8 w-24 bg-white text-[10px]" />
                         </label>
-                        <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={runSurfaceAnalysis}>Mailler / analyser</Button>
+                        <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>Mailler / analyser</Button>
                       </div>
                       <div className="rounded bg-white p-2 text-[9px] text-[#647087]">Le maillage calcule les zones rectangulaires et leurs charges pour tous les planchers. Le solveur de plaque v1 dimensionne uniquement les dalles pleines homogènes, simplement appuyées sur quatre bords ; les planchers à corps creux restent calculés par répartition tributaire vers les poutres. Les trémies, appuis continus, voiles, diaphragmes et couplage global avec les poutres ne sont pas dimensionnés par ce solveur.</div>
                       {surfaceAnalysis && (
@@ -4754,6 +4820,33 @@ export default function BuildingCreateFlow({
                 </CardContent>
               </Card>
             )}
+          </div>
+        </div>
+      )}
+      {showCalculationPreflight && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-[#102f45]/45 p-4" role="dialog" aria-modal="true" aria-labelledby="calculation-preflight-title">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-2xl border border-[#cbdde1] bg-[#f8fbfc] p-4 shadow-2xl">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div><h2 id="calculation-preflight-title" className="text-base font-bold text-[#173b50]">Préparer le lancement des calculs</h2><p className="mt-1 text-[11px] text-[#63777f]">Deux étapes sont obligatoires : mailler les dalles et appliquer les cas de chargement actifs.</p></div>
+              <button type="button" className="grid h-8 w-8 place-items-center rounded-full bg-white text-[#718083]" onClick={() => setShowCalculationPreflight(false)} aria-label="Fermer"><X className="h-4 w-4" /></button>
+            </div>
+            {analyticalPrecheck && !analyticalPrecheck.ok && <div className="mb-3 space-y-1 rounded-lg border border-[#efc4b9] bg-[#fff1ed] p-3 text-[10px] text-[#914d3d]"><b>Le modèle analytique doit être corrigé avant le calcul.</b>{analyticalPrecheck.errors.map((item, index) => <div key={`${item.code}-${index}`}>· {item.message}</div>)}</div>}
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className={`rounded-xl border p-3 ${meshPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : "border-[#dce7eb] bg-white"}`}>
+                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">1. Maillage des dalles</b><span className="text-[10px] font-bold">{meshPrerequisiteReady ? "OK" : "À faire"}</span></div>
+                <p className="mt-1 text-[10px] text-[#68767d]">Le maillage calcule les triangles, l’aire nette et les charges. L’aperçu 3D affichera ensuite les lignes du maillage.</p>
+                <Button type="button" className="mt-3 h-9 w-full bg-[#087f7f] text-[10px] text-white" disabled={!analyticalPrecheck?.ok} onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>{meshPrerequisiteReady ? "Recalculer le maillage" : "Mailler les dalles"}</Button>
+                {surfaceAnalysis && <div className="mt-2 text-[9px] text-[#536b70]">{surfaceAnalysis.rows.length} dalle(s) · {surfaceAnalysis.errors.length} erreur(s) · charge nette {surfaceAnalysis.rows.reduce((sum, row) => sum + (row.analysis.mesh?.totalUniformLoadKn ?? 0), 0).toFixed(2)} kN</div>}
+              </div>
+              <div className={`rounded-xl border p-3 ${loadCasesPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : "border-[#dce7eb] bg-white"}`}>
+                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">2. Cas de chargement</b><span className="text-[10px] font-bold">{loadCasesPrerequisiteReady ? "OK" : "À appliquer"}</span></div>
+                <p className="mt-1 text-[10px] text-[#68767d]">Les cas actifs seront transmis aux combinaisons. Le poids propre G est calculé depuis la géométrie et ne reste plus à zéro.</p>
+                <div className="mt-2 rounded bg-[#f7fafb] p-2 text-[9px] text-[#536b70]">Gk calculé : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk calculé : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b> · {loadProgram.cases.filter(item => item.enabled).length} cas actifs · {loadProgram.combinations.filter(item => item.enabled).length} combinaisons actives</div>
+                <Button type="button" className="mt-3 h-9 w-full bg-[#27358f] text-[10px] text-white" disabled={loadProgramDiagnostics.some(item => item.severity === "error") || !loadProgram.combinations.some(item => item.enabled)} onClick={() => setLoadCasesPrerequisiteReady(true)}>{loadCasesPrerequisiteReady ? "Cas appliqués" : "Appliquer les cas actifs"}</Button>
+                {loadProgramDiagnostics.filter(item => item.severity === "error").map((item, index) => <div key={`${item.code}-${index}`} className="mt-1 text-[9px] text-[#914d3d]">{item.message}</div>)}
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce7eb] bg-white p-3"><span className="text-[10px] text-[#68767d]">{meshPrerequisiteReady && loadCasesPrerequisiteReady ? "Les deux prérequis sont validés." : "Validez les deux étapes pour continuer."}</span><Button type="button" className="h-9 bg-[#102f45] px-4 text-[10px] text-white" disabled={!analyticalPrecheck?.ok || !meshPrerequisiteReady || !loadCasesPrerequisiteReady} onClick={executeBuildingCalculation}>Lancer les calculs maintenant</Button></div>
           </div>
         </div>
       )}
