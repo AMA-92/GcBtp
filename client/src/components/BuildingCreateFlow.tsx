@@ -2769,6 +2769,7 @@ export default function BuildingCreateFlow({
       stairPlacementStage={stairPlacementStage}
       onStairBeamSelect={handleStairBeamSelect}
       onStairBeamHover={handleStairBeamHover}
+      reinforcementDesign={rcDesignResult}
       onElementSelect={(levelId, item) => {
         setActiveLevelId(levelId);
         setSelected3DElementKey(`${levelId}:${item.id}`);

@@ -91,4 +91,26 @@ describe("priority 1 — 3D frame solver", () => {
     expect(result.result).not.toBeNull();
     expect(result.warnings.some(warning => warning.includes("degré(s) de liberté sans raideur active"))).toBe(false);
   });
+
+  it("captures the interior span moment of a simply supported beam under distributed gravity load", () => {
+    const beamModel = model({
+      nodes: [
+        { id: "A", x: 0, y: 0, z: 0, levelIds: ["rdc"], sourceElementIds: ["B"] },
+        { id: "B", x: 5, y: 0, z: 0, levelIds: ["rdc"], sourceElementIds: ["B"] },
+      ],
+      frames: [{ id: "F:B", sourceElementId: "B", sourceType: "Poutre", startNodeId: "A", endNodeId: "B", sectionId: "S", materialId: "M", levelId: "rdc", releases: { start: ["ry"], end: ["ry"] }, eccentricityM: { start: [0,0,0], end: [0,0,0] } }],
+      supports: [
+        { id: "SUP:A", sourceElementId: "B", nodeId: "A", kind: "test", role: "beam-support", restrainedDofs: ["ux","uy","uz","rx","rz"], selectionReason: "test", status: "declared" },
+        { id: "SUP:B", sourceElementId: "B", nodeId: "B", kind: "test", role: "beam-support", restrainedDofs: ["uy","uz","rx","rz"], selectionReason: "test", status: "declared" },
+      ],
+      sourceElementIds: ["B"],
+    });
+    const loadModel = { ...emptyLoads, propagation: { ...emptyLoads.propagation, beams: { B: { gk: 50, qk: 0, sources: ["test"] } } } } as any;
+    const result = solveGlobal3D(beamModel, loadModel, combo, program, { pDelta: false, rigidDiaphragm: false });
+    expect(result.errors).toEqual([]);
+    expect(result.result).not.toBeNull();
+    const solved = result.result!.elements[0];
+    expect(Math.max(Math.abs(solved.momentYEnvelope.minKnM), Math.abs(solved.momentYEnvelope.maxKnM))).toBeCloseTo(1.35 * 10 * 25 / 8, 6);
+    expect(solved.localDistributedLoad.qzKnM).toBeCloseTo(-1.35 * 10, 6);
+  });
 });

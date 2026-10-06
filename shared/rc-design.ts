@@ -222,18 +222,21 @@ export function deriveRCMemberDemandsFromSpatial(input: {
     const start = input.model.nodes.find(node => node.id === frame.startNodeId);
     const end = input.model.nodes.find(node => node.id === frame.endNodeId);
     const lengthM = start && end ? Math.hypot(end.x - start.x, end.y - start.y, end.z - start.z) : solved.lengthM;
-    const momentsX = [solved.startGlobal.mxKnM, solved.endGlobal.mxKnM];
-    const momentsY = [solved.startGlobal.myKnM, solved.endGlobal.myKnM];
-    const positiveMoment = Math.max(0, ...momentsX.map(Math.abs), ...momentsY.map(Math.abs));
+    const momentsLocalY = [solved.momentYEnvelope.minKnM, solved.momentYEnvelope.maxKnM];
+    const momentsLocalZ = [solved.momentZEnvelope.minKnM, solved.momentZEnvelope.maxKnM];
+    const positiveMoment = Math.max(0, ...momentsLocalY);
+    const negativeMoment = Math.max(0, ...momentsLocalY.map(value => -value));
+    const governingMoment = positiveMoment >= negativeMoment ? positiveMoment : -negativeMoment;
     const common = {
       id: frame.sourceElementId, combinationId: input.combinationId, combinationName: input.combinationName,
       sectionWidthMm: section.dimensionsM[0] * 1000, sectionDepthMm: section.dimensionsM[1] * 1000, lengthMm: lengthM * 1000,
       axialKn: Math.max(Math.abs(solved.start.axialKn), Math.abs(solved.end.axialKn)),
-      shearKn: solved.maxAbsShearKn, momentKnM: positiveMoment,
-      momentXKnM: Math.max(...momentsX.map(Math.abs)), momentYKnM: Math.max(...momentsY.map(Math.abs)),
+      shearKn: solved.maxAbsShearKn, momentKnM: governingMoment,
+      momentXKnM: Math.max(...momentsLocalZ.map(Math.abs)),
+      momentYKnM: Math.max(...momentsLocalY.map(Math.abs)),
       memberSubtype: (frame.sourceType === "Longrine de redressement" ? "tie-beam" : frame.sourceType === "Poutre" ? "beam" : undefined) as "beam" | "tie-beam" | undefined,
       positiveMomentKnM: frame.sourceType === "Poutre" ? positiveMoment : undefined,
-      negativeMomentKnM: frame.sourceType === "Poutre" ? positiveMoment : undefined,
+      negativeMomentKnM: frame.sourceType === "Poutre" ? negativeMoment : undefined,
     };
     demands.push({ ...common, type: frame.sourceType === "Poteau" ? "column" : "beam" });
   }
@@ -421,12 +424,31 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const fyd = basis.fykMpa / basis.gammaS;
   const requiredSteel = Math.max(minSteel, Math.max(0, Math.abs(demand.axialKn) * 1000 - 0.8 * areaGross * fcd) / Math.max(fyd - 0.8 * fcd, 1e-9));
   const diameters = basis.availableBarDiametersMm.filter(positive);
-  const preferredDiameter = Math.max(8, Math.min(...diameters));
+  const longitudinalDiameters = diameters.filter(diameter => diameter >= 10);
+  if (!longitudinalDiameters.length) {
+    const message = "Aucun diamètre longitudinal disponible n’est supérieur ou égal à 10 mm ; le dimensionnement du poteau est bloqué, sans proposition d’armatures principales.";
+    const tieDiameter = Math.max(6, Math.min(...diameters));
+    const tieCount = Math.ceil(demand.lengthMm / basis.maxLinkSpacingMm) + 1;
+    const tieLengthM = (2 * (Math.max(0, width - 2 * basis.coverMm) + Math.max(0, height - 2 * basis.coverMm)) + 200) / 1000;
+    return {
+      elementId: demand.id,
+      type: "column",
+      combinationId,
+      combinationName,
+      checks: [emptyCheck("column-longitudinal-diameter", "Diamètre longitudinal admissible", "mm", combinationId, combinationName, message)],
+      reinforcement: [proposal(`${demand.id}:ties`, "Cadres · HA " + tieDiameter + " / " + (demand.lengthMm / Math.max(1, tieCount - 1)).toFixed(0) + " mm · crochets 2×100 mm", tieDiameter, tieCount, 0, tieLengthM)],
+      limitations: [...limitations, message],
+    };
+  }
+  const preferredDiameter = Math.min(...longitudinalDiameters);
   const override = overrides[`${demand.id}:longitudinal`];
+  const overrideDiameterAdmissible = !!override && longitudinalDiameters.includes(override.diameterMm);
+  const effectiveOverride = overrideDiameterAdmissible ? override : undefined;
+  const ignoredLongitudinalOverride = !!override && !overrideDiameterAdmissible;
   const minimumCount = 4;
-  let count = override && positive(override.diameterMm) && Number.isInteger(override.count) && override.count >= minimumCount ? override.count : Math.max(minimumCount, Math.ceil(requiredSteel / barArea(preferredDiameter)));
+  let count = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count >= minimumCount ? effectiveOverride.count : Math.max(minimumCount, Math.ceil(requiredSteel / barArea(preferredDiameter)));
   if (count % 2 !== 0) count++;
-  const diameter = override?.diameterMm ?? preferredDiameter;
+  const diameter = effectiveOverride?.diameterMm ?? preferredDiameter;
   const asProvided = count * barArea(diameter);
   const concreteArea = Math.max(0, areaGross - asProvided);
   const axialResistance = (0.8 * concreteArea * fcd + asProvided * fyd) / 1000;
@@ -457,6 +479,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     check("column-slenderness", "Élancement géométrique", slenderness, basis.maxColumnSlenderness, "—", "λ = L0/i ; seuil déclaré, second ordre non calculé", combinationId, combinationName),
     emptyCheck("column-ties", "Cadres, confinement et continuité", "mm", combinationId, combinationName, "Détail normatif non implémenté"),
   ];
+  if (ignoredLongitudinalOverride) checks.push(emptyCheck("column-longitudinal-override", "Override longitudinal ignoré", "mm", combinationId, combinationName, "Override ignoré : le diamètre longitudinal doit être disponible au catalogue et supérieur ou égal à 10 mm."));
   return { elementId: demand.id, type: "column", combinationId, combinationName, checks, reinforcement, limitations };
 }
 
@@ -661,6 +684,7 @@ export function designReinforcedConcrete(input: { basis: RCDesignBasis; members:
     failedCheckCount: checks.filter(item => item.status === "non satisfaisant").length,
     blockedCheckCount: checks.filter(item => item.status === "bloqué" || item.status === "à vérifier").length,
   };
+  const missingAdmissibleColumnDiameter = elements.some(element => element.type === "column" && element.checks.some(item => item.id === "column-longitudinal-diameter" && item.status === "bloqué"));
   if (numericalSummary.checkCount === 0 || numericalSummary.blockedCheckCount > 0) blockers.push("Le calcul numérique est incomplet : chaque contrôle requis doit produire une valeur numérique et un verdict exploitable.");
-  return { schemaVersion: 1, status: errors.length || numericalSummary.checkCount === 0 ? "bloqué — calcul numérique incomplet" : "calculé numériquement — non certifié", standard: input.basis.standard, nationalAnnex: input.basis.nationalAnnex, sourceReference: input.basis.sourceReference, materialBasis: input.basis, regulatoryReady: false, elements, schedule, errors, warnings, blockers, numericalSummary };
+  return { schemaVersion: 1, status: errors.length || numericalSummary.checkCount === 0 || missingAdmissibleColumnDiameter ? "bloqué — calcul numérique incomplet" : "calculé numériquement — non certifié", standard: input.basis.standard, nationalAnnex: input.basis.nationalAnnex, sourceReference: input.basis.sourceReference, materialBasis: input.basis, regulatoryReady: false, elements, schedule, errors, warnings, blockers, numericalSummary };
 }

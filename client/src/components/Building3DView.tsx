@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Rotate3D } from "lucide-react";
+import type { RCDesignResult, RCElementDesign, RebarProposal } from "@shared/rc-design";
 import { modelColor, modelSpec, type ModelSpec } from "@shared/model-catalog";
 import { cumulativeGridPositions, GRID_UNITS_PER_METER } from "@shared/proportional-grid";
 import {
@@ -92,6 +93,7 @@ type Props = {
   stairPreviewBeam?: ElementItem | null;
   onStairBeamSelect?: (beam: ElementItem) => void;
   onStairBeamHover?: (beam: ElementItem | null) => void;
+  reinforcementDesign?: RCDesignResult | null;
 };
 type Point = { x: number; y: number };
 const distanceBetween = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -249,9 +251,14 @@ export default function Building3DView({
   stairPreviewBeam = null,
   onStairBeamSelect,
   onStairBeamHover,
+  reinforcementDesign = null,
 }: Props) {
   const [rotation, setRotation] = useState({ yaw: 35, pitch: 30 });
   const [zoom, setZoom] = useState(1);
+  const [reinforcementMode, setReinforcementMode] = useState(false);
+  const [concreteOpacity, setConcreteOpacity] = useState(0.28);
+  const [reinforcementCategories, setReinforcementCategories] = useState<Record<string, boolean>>({ columns: true, beams: true, slabs: true, foundations: true, walls: true, balconies: true, stairs: true, others: true });
+  const [selectedRebar, setSelectedRebar] = useState<{ elementId: string; proposalId: string } | null>(null);
   const [navigationMode, setNavigationMode] = useState<"rotate" | "pan">(
     "rotate"
   );
@@ -493,6 +500,158 @@ export default function Building3DView({
       ])
     ).values()
   ).slice(0, 5);
+  const designById = new Map((reinforcementDesign?.elements ?? []).map(item => [item.elementId, item]));
+  const rebarCategory = (item: ElementItem, design: RCElementDesign) => {
+    if (item.type === "Poteau" || design.type === "column") return "columns";
+    if (item.type === "Poutre") return "beams";
+    if (item.type === "Longrine de redressement" || design.type === "tie-beam") return "longrines";
+    if (item.type === "Dalle" || design.type === "slab") return item.type === "Balcon" ? "balconies" : "slabs";
+    if (item.type === "Balcon") return "balconies";
+    if (item.type === "Semelle" || design.type === "footing") return "foundations";
+    if (item.type === "Voile" || design.type === "wall") return "walls";
+    if (item.type === "Escaliers") return "stairs";
+    return "others";
+  };
+  const rebarLine = (key: string, a: Vector3, b: Vector3, item: ElementItem, design: RCElementDesign, proposal: RebarProposal) => {
+    const start = projectMetric(a[0], a[1], a[2]);
+    const end = projectMetric(b[0], b[1], b[2]);
+    const selected = selectedRebar?.elementId === design.elementId && selectedRebar.proposalId === proposal.id;
+    return <line key={key} x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={selected ? "#f08c28" : "#26343d"} strokeWidth={selected ? 3.2 : 2.2} strokeLinecap="round" pointerEvents="stroke" role="button" aria-label={`${item.id} · ${proposal.label}`} onPointerDown={event => { event.stopPropagation(); setSelectedRebar({ elementId: design.elementId, proposalId: proposal.id }); }}><title>{item.id} · {proposal.label} · {proposal.count} × HA {proposal.diameterMm}</title></line>;
+  };
+  const rebarPolyline = (key: string, points: Vector3[], item: ElementItem, design: RCElementDesign, proposal: RebarProposal) => {
+    const projected = points.map(([x, y, z]) => projectMetric(x, y, z));
+    const selected = selectedRebar?.elementId === design.elementId && selectedRebar.proposalId === proposal.id;
+    return <polyline key={key} points={polygon(projected)} fill="none" stroke={selected ? "#f08c28" : "#26343d"} strokeWidth={selected ? 3 : 1.8} strokeLinejoin="round" strokeLinecap="round" pointerEvents="stroke" role="button" aria-label={`${item.id} · ${proposal.label}`} onPointerDown={event => { event.stopPropagation(); setSelectedRebar({ elementId: design.elementId, proposalId: proposal.id }); }}><title>{item.id} · {proposal.label} · {proposal.count} × HA {proposal.diameterMm}</title></polyline>;
+  };
+  const perimeterPoints = (width: number, depth: number, offset: number, count: number) => {
+    const w = Math.max(width - 2 * offset, 0.02), h = Math.max(depth - 2 * offset, 0.02);
+    const perimeter = 2 * (w + h);
+    return Array.from({ length: Math.min(Math.max(count, 0), 96) }, (_, index) => {
+      let d = index * perimeter / Math.max(count, 1);
+      if (d <= w) return [-w / 2 + d, -h / 2] as const;
+      d -= w;
+      if (d <= h) return [w / 2, -h / 2 + d] as const;
+      d -= h;
+      if (d <= w) return [w / 2 - d, h / 2] as const;
+      d -= w;
+      return [-w / 2, h / 2 - d] as const;
+    });
+  };
+  const reinforcementOverlay = reinforcementMode ? levels.flatMap((level, levelIndex) => level.elements.flatMap(item => {
+    const design = designById.get(item.id);
+    if (!design || !design.reinforcement.length) return [];
+    const category = rebarCategory(item, design);
+    if (!reinforcementCategories[category]) return [];
+    const proposals = design.reinforcement.filter(proposal => proposal.count > 0 && proposal.diameterMm > 0);
+    if (!proposals.length) return [];
+    const find = (suffix: string) => proposals.find(proposal => proposal.id.endsWith(suffix));
+    const z = elementElevation(level, levelIndex, item.type);
+    const heightLevel = Math.max(levelHeight(level), 0.1);
+    const dimensions = resolvedDimensions(item, modelCatalog);
+    const cover = Math.max(0, reinforcementDesign?.materialBasis.coverMm ?? 0) / 1000;
+    const lines: React.ReactElement[] = [];
+    if (item.type === "Poteau" && design.type === "column") {
+      const center = metricPoint(item.x, item.y);
+      const baseZ = columnBaseElevation(levels, levelIndex), topZ = postTopElevation(level, levelIndex);
+      const [width, depth] = sectionPair(dimensions, [0.2, 0.3]);
+      const longitudinal = find(":longitudinal"), ties = find(":ties");
+      if (longitudinal) {
+        const tieDia = (ties?.diameterMm ?? 0) / 1000;
+        const offset = cover + tieDia + longitudinal.diameterMm / 2000;
+        const isCircular = /^\\s*Pot[_ -]?D|diam(?:ètre|etre)/i.test(item.section ?? "") || /^\\s*0?[.,]\\d+\\s*m\\s*$/i.test(dimensions);
+        if (isCircular) {
+          const dia = Math.max(0.1, sectionValueMeters(dimensions.replace(/[^0-9.,]/g, ""), dimensions));
+          const radius = Math.max(0.015, dia / 2 - offset);
+          for (let i = 0; i < Math.min(longitudinal.count, 64); i++) {
+            const angle = 2 * Math.PI * i / longitudinal.count;
+            lines.push(rebarLine(`${item.id}:long:${i}`, [center.x + radius * Math.cos(angle), center.y + radius * Math.sin(angle), baseZ + offset], [center.x + radius * Math.cos(angle), center.y + radius * Math.sin(angle), topZ - offset], item, design, longitudinal));
+          }
+        } else {
+          for (const [index, [px, py]] of perimeterPoints(width, depth, offset, longitudinal.count).entries()) lines.push(rebarLine(`${item.id}:long:${index}`, [center.x + px, center.y + py, baseZ + offset], [center.x + px, center.y + py, topZ - offset], item, design, longitudinal));
+        }
+      }
+      if (ties) {
+        const [widthM, depthM] = sectionPair(dimensions, [0.2, 0.3]);
+        const inset = cover + ties.diameterMm / 2000;
+        const halfW = Math.max(0.01, widthM / 2 - inset), halfD = Math.max(0.01, depthM / 2 - inset);
+        const count = Math.min(ties.count, 40);
+        const tieOffset = cover + ties.diameterMm / 2000;
+        for (let i = 0; i < count; i++) {
+          const zTie = baseZ + tieOffset + (topZ - baseZ - 2 * tieOffset) * (count === 1 ? 0.5 : i / (count - 1));
+          lines.push(rebarPolyline(`${item.id}:tie:${i}`, [[center.x-halfW,center.y-halfD,zTie],[center.x+halfW,center.y-halfD,zTie],[center.x+halfW,center.y+halfD,zTie],[center.x-halfW,center.y+halfD,zTie],[center.x-halfW,center.y-halfD,zTie]], item, design, ties));
+        }
+      }
+    } else if ((item.type === "Poutre" || item.type === "Longrine de redressement") && (design.type === "beam" || design.type === "tie-beam")) {
+      const a = metricPoint(item.x, item.y), b = metricPoint(item.x2 ?? item.x, item.y2 ?? item.y);
+      const dx = b.x - a.x, dy = b.y - a.y, length = Math.max(Math.hypot(dx, dy), 0.001), nx = -dy / length, ny = dx / length;
+      const [width, depth] = sectionPair(dimensions, [0.2, 0.4]);
+      const bottom = find(":bottom"), top = find(":top"), links = find(":links");
+      const placeLongitudinal = (proposal: RebarProposal | undefined, side: "bottom" | "top") => {
+        if (!proposal) return;
+        const linkDia = (links?.diameterMm ?? 0) / 1000;
+        const inset = cover + linkDia + proposal.diameterMm / 2000;
+        const zBar = z + (side === "bottom" ? inset : depth - inset);
+        for (let i = 0; i < proposal.count; i++) {
+          const lateral = proposal.count <= 1 ? 0 : -width / 2 + inset + i * Math.max(width - 2 * inset, 0) / (proposal.count - 1);
+          lines.push(rebarLine(`${proposal.id}:${i}`, [a.x + nx*lateral, a.y + ny*lateral, zBar], [b.x + nx*lateral, b.y + ny*lateral, zBar], item, design, proposal));
+        }
+      };
+      placeLongitudinal(bottom, "bottom"); placeLongitudinal(top, "top");
+      if (links) {
+        const inset = cover + links.diameterMm / 2000, hw = Math.max(0.01, width/2-inset), hh = Math.max(0.01, depth/2-inset);
+        for (let i = 0; i < Math.min(links.count, 40); i++) {
+          const t = links.count === 1 ? 0.5 : i / (links.count - 1), cx = a.x + dx*t, cy = a.y + dy*t;
+          const pts: Vector3[] = [[cx+nx*hw,cy+ny*hw,z+inset],[cx-nx*hw,cy-ny*hw,z+inset],[cx-nx*hw,cy-ny*hw,z+depth-inset],[cx+nx*hw,cy+ny*hw,z+depth-inset],[cx+nx*hw,cy+ny*hw,z+inset]];
+          lines.push(rebarPolyline(`${links.id}:${i}`, pts, item, design, links));
+        }
+      }
+    } else if ((item.type === "Dalle" || item.type === "Balcon") && design.type === "slab") {
+      const x2 = item.x2 ?? item.x + 1, y2 = item.y2 ?? item.y + 1;
+      const xA = gridX(item.x), xB = gridX(x2), yA = gridY(item.y), yB = gridY(y2);
+      const [thickness] = sectionPair(dimensions, [0.2,0.2]);
+      const xBar = find(":x"), yBar = find(":y");
+      const drawSlabDirection = (proposal: RebarProposal | undefined, alongX: boolean) => {
+        if (!proposal) return;
+        const length = alongX ? Math.abs(xB-xA) : Math.abs(yB-yA);
+        const width = alongX ? Math.abs(yB-yA) : Math.abs(xB-xA);
+        const spacing = Math.max(0.04, 1 / Math.max(proposal.count, 1));
+        const count = Math.min(96, Math.max(1, Math.floor(width / spacing) + 1));
+        const barZ = z + thickness - cover - proposal.diameterMm / 2000 - (alongX ? 0 : proposal.diameterMm / 1000);
+        for (let i = 0; i < count; i++) {
+          const offset = count === 1 ? width / 2 : i * width / (count - 1);
+          if (alongX) lines.push(rebarLine(`${proposal.id}:${i}`, [xA+cover,yA+offset,barZ], [xB-cover,yA+offset,barZ], item, design, proposal));
+          else lines.push(rebarLine(`${proposal.id}:${i}`, [xA+offset,yA+cover,barZ], [xA+offset,yB-cover,barZ], item, design, proposal));
+        }
+        void length;
+      };
+      drawSlabDirection(xBar, true); drawSlabDirection(yBar, false);
+    } else if (item.type === "Semelle" && design.type === "footing") {
+      const match = dimensions.match(/(\\d+(?:[.,]\\d+)?)\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?)\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?)/i);
+      const width = match ? sectionValueMeters(match[1], dimensions) : FOOTING_3D_HALF_X*2;
+      const depth = match ? sectionValueMeters(match[2], dimensions) : FOOTING_3D_HALF_Y*2;
+      const height = match ? sectionValueMeters(match[3], dimensions) : FOOTING_3D_HEIGHT;
+      const offset = footingCenterOffset(item.foundationMode, item.foundationDirection, width, depth) ?? {xM:0,yM:0};
+      const anchor = metricPoint(item.x,item.y), cx = anchor.x+offset.xM, cy = anchor.y+offset.yM;
+      const xBar = find(":x"), yBar = find(":y"), barZ = z+cover;
+      if (xBar) for (let i=0;i<Math.min(xBar.count,64);i++) { const yy=cy-depth/2+cover+(depth-2*cover)*i/Math.max(1,xBar.count-1); lines.push(rebarLine(`${xBar.id}:${i}`,[cx-width/2+cover,yy,barZ],[cx+width/2-cover,yy,barZ],item,design,xBar)); }
+      if (yBar) for (let i=0;i<Math.min(yBar.count,64);i++) { const xx=cx-width/2+cover+(width-2*cover)*i/Math.max(1,yBar.count-1); lines.push(rebarLine(`${yBar.id}:${i}`,[xx,cy-depth/2+cover,barZ+0.012],[xx,cy+depth/2-cover,barZ+0.012],item,design,yBar)); }
+      void height;
+    } else if (item.type === "Voile" && design.type === "wall") {
+      const a = metricPoint(item.x,item.y), b = metricPoint(item.x2 ?? item.x,item.y2 ?? item.y);
+      const dx=b.x-a.x, dy=b.y-a.y, length=Math.max(Math.hypot(dx,dy),0.001), nx=-dy/length, ny=dx/length;
+      const thickness=Math.max(0.08,firstSectionValue(dimensions,0.2)), vertical=find(":vertical"), horizontal=find(":horizontal"), boundary=find(":boundary");
+      const faceOffsets=[-1,1].map(sign=>sign*(thickness/2-cover));
+      for (const [face,normalOffset] of faceOffsets.entries()) {
+        if (vertical) for (let i=0;i<Math.min(vertical.count,64);i++) { const t=(i+0.5)/vertical.count, px=a.x+dx*t+nx*normalOffset, py=a.y+dy*t+ny*normalOffset; lines.push(rebarLine(`${vertical.id}:${face}:${i}`,[px,py,z+cover],[px,py,z+heightLevel-cover],item,design,vertical)); }
+        if (horizontal) for (let i=0;i<Math.min(horizontal.count,48);i++) { const zz=z+cover+(heightLevel-2*cover)*i/Math.max(1,horizontal.count-1); lines.push(rebarLine(`${horizontal.id}:${face}:${i}`,[a.x+dx*(cover/length)+nx*normalOffset,a.y+dy*(cover/length)+ny*normalOffset,zz],[b.x-dx*(cover/length)+nx*normalOffset,b.y-dy*(cover/length)+ny*normalOffset,zz],item,design,horizontal)); }
+      }
+      if (boundary) for (const t of [cover/length,1-cover/length]) { const px=a.x+dx*t,py=a.y+dy*t; lines.push(rebarLine(`${boundary.id}:${t}`,[px,py,z+cover],[px,py,z+heightLevel-cover],item,design,boundary)); }
+    }
+    return lines.length ? [<g key={`${level.id}:${item.id}:reinforcement`}>{lines}</g>] : [];
+  })) : [];
+  const selectedReinforcement = selectedRebar ? designById.get(selectedRebar.elementId)?.reinforcement.find(item => item.id === selectedRebar.proposalId) : undefined;
+  const selectedReinforcementDesign = selectedRebar ? designById.get(selectedRebar.elementId) : undefined;
+  const uncalculatedReinforcementElementCount = allItems.filter(item => !(designById.get(item.id)?.reinforcement.length)).length;
   return (
     <div className="relative h-[510px] overflow-hidden rounded-[14px] border border-[#a7cde4] bg-[#c9e3f3]">
       <svg
@@ -589,7 +748,7 @@ export default function Building3DView({
             </text>
           );
         })}
-        <g filter="url(#soft-shadow)">
+        <g filter="url(#soft-shadow)" opacity={reinforcementMode ? concreteOpacity : 1}>
           {levels.map((level, levelIndex) => {
             const base = levelElevation(level, levelIndex);
             const height = levelHeight(level);
@@ -608,8 +767,8 @@ export default function Building3DView({
               <g key={level.id}>
                 <polygon
                   points={polygon(slab)}
-                  fill="#d8f0f5"
-                  fillOpacity=".18"
+                  fill={reinforcementMode ? "#92999f" : "#d8f0f5"}
+                  fillOpacity={reinforcementMode ? concreteOpacity * 0.65 : 0.18}
                   stroke="#77a6b6"
                   strokeWidth="1.5"
                 />
@@ -626,7 +785,7 @@ export default function Building3DView({
                     const analysisKey = `${level.id}:${item.id}`;
                     const analysis = analysisValues[analysisKey];
                     const critical = criticalElementKeys.includes(analysisKey);
-                    const color = analysisScaleColors[analysisKey] ?? (critical ? "#ff1717" : colorOf(item));
+                    const color = reinforcementMode ? "#92999f" : analysisScaleColors[analysisKey] ?? (critical ? "#ff1717" : colorOf(item));
                     if (item.type === "Escaliers") {
                       const stairLoad = loadVisuals[analysisKey];
                       const totalHeight = Math.max(levelHeight(level), 0.1);
@@ -998,6 +1157,7 @@ export default function Building3DView({
             );
           })}
         </g>
+        {reinforcementOverlay}
         {stairPlacementActive && (
           <g style={{ pointerEvents: "auto" }}>
             {(stairPlacementStage === 1 || stairPlacementStage === 3) && stairArrivalBeams.map(beam => {
@@ -1043,7 +1203,16 @@ export default function Building3DView({
             })()}
           </g>
         )}
-        {legend.length > 0 && (
+        {reinforcementMode ? (
+          <g transform="translate(10 458)">
+            <rect width="174" height="42" rx="8" fill="#ffffff" fillOpacity=".95" />
+            <text x="8" y="15" className="fill-[#294b5a] text-[8px] font-bold">LÉGENDE · FERRAILLAGE</text>
+            <line x1="10" y1="27" x2="29" y2="27" stroke="#26343d" strokeWidth="2.5" />
+            <text x="34" y="30" className="fill-[#36515c] text-[7px]">Armatures calculées · gris foncé</text>
+            <rect x="10" y="35" width="18" height="3" fill="#92999f" fillOpacity=".55" />
+            <text x="34" y="40" className="fill-[#36515c] text-[7px]">Béton translucide</text>
+          </g>
+        ) : legend.length > 0 && (
           <g transform="translate(10 458)">
             <rect
               width="132"
@@ -1074,6 +1243,25 @@ export default function Building3DView({
         onOrbit={orientation => { stopInertia(); setRotation(orientation); }}
         onFaceSelect={orientation => { stopInertia(); setNavigationMode("rotate"); setRotation(orientation); }}
       />
+      <div className="absolute left-2 top-2 z-20 max-w-[230px]">
+        <button type="button" aria-pressed={reinforcementMode} onClick={() => { setSelectedRebar(null); setReinforcementMode(value => !value); }} className={`rounded-lg border px-3 py-2 text-[10px] font-bold shadow-md ${reinforcementMode ? "border-[#20323d] bg-[#26343d] text-white" : "border-white bg-white text-[#20323d]"}`}>
+          {reinforcementMode ? "Ferraillage 3D · actif" : "Ferraillage 3D"}
+        </button>
+        {reinforcementMode && <div className="mt-1 max-h-[270px] overflow-y-auto rounded-lg border border-white/80 bg-white/95 p-2 text-[9px] text-[#324652] shadow-lg">
+          <div className="mb-1 font-bold">Afficher les armatures par élément</div>
+          {[["columns","Poteaux"],["beams","Poutres"],["longrines","Longrines"],["slabs","Dalles"],["foundations","Fondations / semelles"],["walls","Voiles"],["balconies","Balcons"],["stairs","Escaliers"],["others","Autres"]].map(([key,label]) => <label key={key} className="flex items-center gap-1.5 py-0.5"><input type="checkbox" checked={Boolean(reinforcementCategories[key])} onChange={event => setReinforcementCategories(current => ({...current,[key]:event.target.checked}))} />{label}</label>)}
+          <label className="mt-1 block border-t pt-1">Opacité du béton · {Math.round(concreteOpacity*100)}%<input className="block w-full" type="range" min="0" max="0.8" step="0.04" value={concreteOpacity} onChange={event => setConcreteOpacity(Number(event.target.value))} aria-label="Opacité du béton" /></label>
+          {!reinforcementDesign?.elements.length ? <p className="mt-1 rounded bg-amber-50 p-1.5 text-amber-900">Aucun résultat de ferraillage calculé à afficher. Aucun acier n’est inventé.</p> : <p className="mt-1 rounded bg-[#eef7f5] p-1.5">{reinforcementDesign.elements.filter(item => item.reinforcement.length > 0).length} élément(s) avec propositions calculées; {uncalculatedReinforcementElementCount} restent en béton seul. Les escaliers et les détails d’ancrage non calculés n’affichent aucune barre.</p>}
+        </div>}
+      </div>
+      {reinforcementMode && selectedReinforcement && selectedReinforcementDesign && <div className="absolute bottom-2 left-2 z-20 max-w-[255px] rounded-lg border border-white/80 bg-white/95 p-2 text-[9px] text-[#26343d] shadow-lg">
+        <div className="font-bold">{selectedRebar?.elementId} · {selectedReinforcement.label}</div>
+        <div>{selectedReinforcement.count} × HA {selectedReinforcement.diameterMm} · {selectedReinforcement.lengthPerBarM.toFixed(2)} m/barre · {selectedReinforcement.totalLengthM.toFixed(2)} m total</div>
+        <div>As nécessaire {selectedReinforcement.requiredAreaMm2.toFixed(0)} mm² · fourni {selectedReinforcement.areaMm2.toFixed(0)} mm²</div>
+        <div>Enrobage déclaré {reinforcementDesign?.materialBasis.coverMm ?? "—"} mm · {reinforcementDesign?.standard ?? "norme non renseignée"}</div>
+        <div>Statut des contrôles : {selectedReinforcementDesign.checks.some(item => item.status === "non satisfaisant") ? "non satisfaisant" : selectedReinforcementDesign.checks.some(item => item.status === "bloqué" || item.status === "à vérifier") ? "à vérifier / bloqué" : "aucun échec relevé (pré-étude)"}</div>
+        <button type="button" className="mt-1 text-[#0b747a] underline" onClick={() => setSelectedRebar(null)}>Fermer la fiche</button>
+      </div>}
       {showAnalysisValues && Object.keys(analysisValues).length > 0 && (
         <div className="absolute left-2 top-2 max-w-[190px] rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-[9px] text-[#294b5a] shadow-sm">
           <div className="mb-1 font-bold text-[#27358f]">Valeurs d’analyse</div>

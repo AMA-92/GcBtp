@@ -13,6 +13,9 @@ export type Spatial3DElementResult = {
   lengthM: number;
   start: Spatial3DEndForces;
   end: Spatial3DEndForces;
+  localDistributedLoad: { qxKnM: number; qyKnM: number; qzKnM: number };
+  momentYEnvelope: { minKnM: number; maxKnM: number };
+  momentZEnvelope: { minKnM: number; maxKnM: number };
   startGlobal: Spatial3DGlobalEndForces;
   endGlobal: Spatial3DGlobalEndForces;
   axialForceKn: number;
@@ -286,6 +289,7 @@ type ElementData = {
   transform: number[][];
   localK: number[][];
   localLoad: number[];
+  localDistributedLoad: { qxKnM: number; qyKnM: number; qzKnM: number };
   globalLoad: number[];
   Jt: number;
   releaseData: { released: number[]; retained: number[]; fullK: number[][]; fullF: number[] };
@@ -322,10 +326,16 @@ export function solveGlobal3D(model: AnalyticalModel, loadModel: BuildingLoadMod
     let localK = localStiffness3D(E, material.poissonRatio ?? 0.2, A, Iy, Iz, Jt, L);
     const memberLoads = loadByElement.get(frame.id) ?? loadByElement.get(frame.sourceElementId) ?? [];
     let localLoad = Array(12).fill(0) as number[];
+    const localDistributedLoad = { qxKnM: 0, qyKnM: 0, qzKnM: 0 };
     for (const load of memberLoads) {
       // qx is local axial; qy is the historical gravity convention = global Z.
-      localLoad = localLoad.map((v, i) => v + equivalentUniformLoad([0, 0, finite(load.qyKnM)], L, r)[i]);
-      if (Math.abs(finite(load.qxKnM)) > 0) localLoad[0] += finite(load.qxKnM) * L / 2, localLoad[6] += finite(load.qxKnM) * L / 2;
+      const qx = finite(load.qxKnM), qy = finite(load.qyKnM);
+      const qLocal = matVec(r, [0, 0, qy]);
+      localDistributedLoad.qxKnM += qx;
+      localDistributedLoad.qyKnM += qLocal[1];
+      localDistributedLoad.qzKnM += qLocal[2];
+      localLoad = localLoad.map((v, i) => v + equivalentUniformLoad([0, 0, qy], L, r)[i]);
+      if (Math.abs(qx) > 0) localLoad[0] += qx * L / 2, localLoad[6] += qx * L / 2;
     }
     const released = applyLocalReleases(localK, localLoad, frame.releases);
     localK = released.k; localLoad = released.f;
@@ -334,7 +344,7 @@ export function solveGlobal3D(model: AnalyticalModel, loadModel: BuildingLoadMod
     const i = nodeIndex.get(frame.startNodeId)!, j = nodeIndex.get(frame.endNodeId)!;
     const ids = Array.from({ length: 6 }, (_, dof) => 6 * i + dof).concat(Array.from({ length: 6 }, (_, dof) => 6 * j + dof));
     addBlock(baseK, globalK, ids); addVector(F, globalLoad, ids);
-    elementData.push({ frame, ids, L, E, A, transform, localK, localLoad, globalLoad, Jt, releaseData: { released: released.released, retained: released.retained, fullK: released.fullK, fullF: released.fullF } });
+    elementData.push({ frame, ids, L, E, A, transform, localK, localLoad, localDistributedLoad, globalLoad, Jt, releaseData: { released: released.released, retained: released.retained, fullK: released.fullK, fullF: released.fullF } });
     if (frame.releases.start.length || frame.releases.end.length) warnings.push(`Releases appliquées à ${frame.sourceElementId} : ${[...frame.releases.start, ...frame.releases.end].join(", ")}.`);
     if (frame.eccentricityM.start.some(v => Math.abs(v) > 1e-9) || frame.eccentricityM.end.some(v => Math.abs(v) > 1e-9)) warnings.push(`Excentrements nodaux appliqués à ${frame.sourceElementId}.`);
   }
@@ -431,12 +441,24 @@ export function solveGlobal3D(model: AnalyticalModel, loadModel: BuildingLoadMod
     const [start, end] = endForcesFromLocal(p);
     const startGlobal = globalEndForcesFromLocal(p, element.transform, 0);
     const endGlobal = globalEndForcesFromLocal(p, element.transform, 6);
+    const momentYValues = [start.momentYKnM, end.momentYKnM];
+    const momentZValues = [start.momentZKnM, end.momentZKnM];
+    if (Math.abs(element.localDistributedLoad.qzKnM) > 1e-12) {
+      const x = -start.shearZKn / element.localDistributedLoad.qzKnM;
+      if (x > 0 && x < element.L) momentYValues.push(start.momentYKnM + start.shearZKn * x + 0.5 * element.localDistributedLoad.qzKnM * x * x);
+    }
+    if (Math.abs(element.localDistributedLoad.qyKnM) > 1e-12) {
+      const x = -start.shearYKn / element.localDistributedLoad.qyKnM;
+      if (x > 0 && x < element.L) momentZValues.push(start.momentZKnM + start.shearYKn * x + 0.5 * element.localDistributedLoad.qyKnM * x * x);
+    }
+    const momentYEnvelope = { minKnM: Math.min(...momentYValues), maxKnM: Math.max(...momentYValues) };
+    const momentZEnvelope = { minKnM: Math.min(...momentZValues), maxKnM: Math.max(...momentZValues) };
     const strain = (dLocal[6] - dLocal[0]) / Math.max(element.L, 1e-12);
     const governingAxial = Math.max(Math.abs(start.axialKn), Math.abs(end.axialKn));
     const axialForceKn = strain < 0 ? -governingAxial : strain > 0 ? governingAxial : 0;
     const compressionKn = strain < 0 ? governingAxial : 0;
     const tensionKn = strain > 0 ? governingAxial : 0;
-    return { elementId: element.frame.id, sourceElementId: element.frame.sourceElementId, lengthM: element.L, start, end, startGlobal, endGlobal, axialForceKn, maxAbsMomentKnM: Math.max(Math.abs(start.momentYKnM), Math.abs(start.momentZKnM), Math.abs(end.momentYKnM), Math.abs(end.momentZKnM)), maxAbsShearKn: Math.max(Math.abs(start.shearYKn), Math.abs(start.shearZKn), Math.abs(end.shearYKn), Math.abs(end.shearZKn)), maxAbsTorsionKnM: Math.max(Math.abs(start.torsionKnM), Math.abs(end.torsionKnM)), compressionKn, tensionKn, strain };
+    return { elementId: element.frame.id, sourceElementId: element.frame.sourceElementId, lengthM: element.L, start, end, localDistributedLoad: element.localDistributedLoad, momentYEnvelope, momentZEnvelope, startGlobal, endGlobal, axialForceKn, maxAbsMomentKnM: Math.max(Math.abs(momentYEnvelope.minKnM), Math.abs(momentYEnvelope.maxKnM), Math.abs(momentZEnvelope.minKnM), Math.abs(momentZEnvelope.maxKnM)), maxAbsShearKn: Math.max(Math.abs(start.shearYKn), Math.abs(start.shearZKn), Math.abs(end.shearYKn), Math.abs(end.shearZKn)), maxAbsTorsionKnM: Math.max(Math.abs(start.torsionKnM), Math.abs(end.torsionKnM)), compressionKn, tensionKn, strain };
   });
 
   const nonlinearStates = elements.map(element => {

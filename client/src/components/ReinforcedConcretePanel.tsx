@@ -245,6 +245,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     ["minClearSpacingMm", "Espacement libre min.", "mm"], ["maxLinkSpacingMm", "Espacement cadres max.", "mm"],
     ["maxDeflectionRatio", "Limite de flèche L/", "—"], ["maxColumnSlenderness", "Limite d’élancement λ", "—"],
   ];
+  const normChoice = draft.standard.toLowerCase().includes("bael") ? "bael" : /eurocode|en\s*1992/i.test(draft.standard) ? "ec2" : "custom";
 
   return <section className="space-y-3 rounded-lg border border-[#e7c58d] bg-[#fffaf0] p-3 text-[10px] text-[#554223]">
     <div className="flex items-start justify-between gap-2">
@@ -254,7 +255,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">fck et fyk sont proposés depuis les catalogues matériaux du projet ; vérifiez les certificats et la norme contractuelle. Coefficients code, annexes, enrobage, adhérence et détails restent à renseigner/valider ; les valeurs nominales catalogue ne constituent pas une vérification normative.</div>
     {sourceWarnings.map((warning, index) => <div key={`source-${index}`} className="rounded bg-amber-50 p-2 text-amber-900">Source / périmètre · {warning}</div>)}
     <div className="grid grid-cols-2 gap-2">
-      <label>Référentiel<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.standard} onChange={event => update("standard", event.target.value)} /></label>
+      <label>Norme / référentiel sélectionné<select className="mt-1 h-8 w-full rounded border bg-white px-2" value={normChoice} onChange={event => update("standard", event.target.value === "ec2" ? "Eurocode 2 · EN 1992-1-1" : event.target.value === "bael" ? "BAEL 91 révisé 99" : "Référentiel personnalisé à préciser")}><option value="ec2">Eurocode 2 · EN 1992-1-1</option><option value="bael">BAEL 91 révisé 99</option><option value="custom">Autre référentiel personnalisé</option></select>{normChoice === "custom" && <input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.standard} onChange={event => update("standard", event.target.value)} aria-label="Référentiel personnalisé" />}</label>
       <label>Annexe nationale / règles locales<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.nationalAnnex} onChange={event => update("nationalAnnex", event.target.value)} placeholder="Édition, NA, prescriptions locales" /></label>
       <label className="col-span-2">Source des propriétés / détails<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.sourceReference} onChange={event => update("sourceReference", event.target.value)} placeholder="Document, édition, page, spécification projet" /></label>
     </div>
@@ -262,6 +263,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       {fields.map(([key, label, unit]) => <label key={key}>{label} <span className="text-[#93856d]">{unit}</span><input type="number" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft[key] as string} onChange={event => update(key, event.target.value)} /></label>)}
       <label className="col-span-2">Diamètres d’acier disponibles · mm<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.availableBarDiametersMm} onChange={event => update("availableBarDiametersMm", event.target.value)} /><span className="text-[8px]">Séparer par virgule, espace ou point-virgule.</span></label>
     </div>
+    <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[9px] text-amber-950">Règle de projet : <b>HA8 est interdit comme armature longitudinale principale d’un poteau</b> (il peut rester admissible en cadre/étrier). Le choix BAEL/Eurocode sert à tracer le référentiel déclaré; ce moteur reste une pré-étude générique non certifiée et ne bascule pas automatiquement sur l’ensemble des clauses, annexes, effets du second ordre, ancrages et dispositions sismiques de ces normes.</div>
     <label className="flex items-start gap-2 rounded bg-white p-2"><input type="checkbox" checked={draft.basisConfirmed} onChange={event => update("basisConfirmed", event.target.checked)} /><span>J’ai vérifié ces paramètres contre les documents du projet. Cette attestation de saisie ne transforme pas le calcul générique en vérification normative.</span></label>
     <button type="button" className="h-9 w-full rounded bg-[#8a5b16] px-3 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" disabled={!members.length && !slabs.length && !foundations.length} onClick={run}>Calculer / recalculer les armatures proposées</button>
     {!members.length && !slabs.length && !foundations.length && <div className="rounded bg-white p-2">Aucun effort disponible : lancez d’abord le solveur 2D pour un portique pris en charge et/ou le solveur de dalle.</div>}

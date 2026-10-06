@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveRCMemberDemandsFromPlane, designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
+import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
 import { solvePlaneFrame } from "@shared/frame-solver-2d";
 import type { AnalyticalModel } from "@shared/analytical-model";
 
@@ -74,8 +74,44 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(design.checks.map(item => item.id)).toContain("column-interaction");
     expect(design.checks.map(item => item.id)).toContain("column-slenderness");
     expect(design.reinforcement.map(item => item.id)).toContain("P1:ties");
+    const longitudinal = design.reinforcement.find(item => item.id === "P1:longitudinal")!;
+    const ties = design.reinforcement.find(item => item.id === "P1:ties")!;
+    expect(longitudinal.diameterMm).toBeGreaterThanOrEqual(10);
+    expect(basis().availableBarDiametersMm).toContain(longitudinal.diameterMm);
+    expect(ties.diameterMm).toBe(8);
     expect(result.schedule.length).toBeGreaterThan(0);
     expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
+  });
+
+  it("ignores and blocks a longitudinal HA8 override while proposing an admissible catalog diameter", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(),
+      members: [{ id: "P1", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 700, shearKn: 15, momentKnM: 25 }],
+      slabs: [],
+      overrides: { "P1:longitudinal": { diameterMm: 8, count: 8 } },
+    });
+    const design = result.elements[0];
+    const longitudinal = design.reinforcement.find(item => item.id === "P1:longitudinal")!;
+    expect(longitudinal.diameterMm).toBeGreaterThanOrEqual(10);
+    expect(basis().availableBarDiametersMm).toContain(longitudinal.diameterMm);
+    expect(design.checks.find(item => item.id === "column-longitudinal-override")?.status).toBe("bloqué");
+    expect(design.checks.find(item => item.id === "column-longitudinal-override")?.formula).toContain("Override ignoré");
+  });
+
+  it("blocks column design without an available longitudinal diameter of at least 10 mm", () => {
+    const restrictedBasis = basis();
+    restrictedBasis.availableBarDiametersMm = [8];
+    const result = designReinforcedConcrete({
+      basis: restrictedBasis,
+      members: [{ id: "P1", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 700, shearKn: 15, momentKnM: 25 }],
+      slabs: [],
+    });
+    const design = result.elements[0];
+    expect(design.reinforcement.some(item => item.id === "P1:longitudinal")).toBe(false);
+    expect(design.reinforcement.find(item => item.id === "P1:ties")?.diameterMm).toBe(8);
+    expect(design.checks.find(item => item.id === "column-longitudinal-diameter")?.status).toBe("bloqué");
+    expect(design.checks.find(item => item.id === "column-longitudinal-diameter")?.formula).toContain("dimensionnement du poteau est bloqué");
+    expect(result.status).toBe("bloqué — calcul numérique incomplet");
   });
 
   it("sizes slab X/Y strips separately and applies an explicit punching assumption", () => {
@@ -171,4 +207,25 @@ describe("RC section optimization", () => {
     const proposals = proposeOptimizedRCSections({ basis, members: [], slabs: [], foundations: [{ id: "S1", levelLabel: "Fondation", combinationId: "ELU", combinationName: "ELU", widthM: 1, lengthM: 1, thicknessM: 0.2, columnWidthM: 0.2, columnDepthM: 0.2, axialKn: 20, shearKn: 0, momentXKnM: 0, momentYKnM: 0, soilBearingKPa: 300 }] });
     expect(proposals.some(item => item.elementId === "S1" && item.proposedSection.dimensions[0] < 1)).toBe(true);
   });
+});
+
+it("preserves distinct signed 3D span and support moment envelopes for beam reinforcement", () => {
+  const analyticalModel = {
+    frames: [{ id: "F:B1", sourceElementId: "B1", sourceType: "Poutre", startNodeId: "A", endNodeId: "B", sectionId: "S1" }],
+    sections: [{ id: "S1", dimensionsM: [0.25, 0.50] }],
+    nodes: [{ id: "A", x: 0, y: 0, z: 3 }, { id: "B", x: 5, y: 0, z: 3 }],
+  } as unknown as AnalyticalModel;
+  const spatialResult = {
+    elements: [{
+      elementId: "F:B1", sourceElementId: "B1", lengthM: 5,
+      start: { axialKn: 0 }, end: { axialKn: 0 },
+      momentYEnvelope: { minKnM: -8, maxKnM: 30 }, momentZEnvelope: { minKnM: -2, maxKnM: 2 },
+      maxAbsShearKn: 25,
+    }],
+  } as any;
+  const extracted = deriveRCMemberDemandsFromSpatial({ model: analyticalModel, result: spatialResult, combinationId: "comb:uls", combinationName: "ELU 3D" });
+  expect(extracted.warnings).toEqual([]);
+  expect(extracted.demands[0].positiveMomentKnM).toBe(30);
+  expect(extracted.demands[0].negativeMomentKnM).toBe(8);
+  expect(extracted.demands[0].momentKnM).toBe(30);
 });
