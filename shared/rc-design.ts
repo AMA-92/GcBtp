@@ -5,6 +5,7 @@ import type { PlaneFrameResult, PlaneMemberLoad } from "./frame-solver-2d";
 import type { Spatial3DResult } from "./frame-solver-3d";
 import { designStairV2 } from "./stair-design-v2";
 import { resolveRCStandardProfile } from "./rc-standard-profile";
+import { validateRCNormSelection } from "./rc-norms";
 
 export type RCDesignBasis = {
   schemaVersion: typeof RC_DESIGN_SCHEMA_VERSION;
@@ -272,6 +273,7 @@ const barMassKgPerM = (diameterMm: number) => 0.006165 * diameterMm * diameterMm
 
 export function validateRCDesignBasis(basis: RCDesignBasis): string[] {
   const errors: string[] = [];
+  errors.push(...validateRCNormSelection(basis.standard, basis.nationalAnnex, basis.sourceReference));
   if (!basis.standard.trim()) errors.push("Le référentiel béton doit être déclaré.");
   else {
     const profile = resolveRCStandardProfile(basis.standard);

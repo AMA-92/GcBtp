@@ -49,7 +49,7 @@ export function resolveRCNormProfile(standard: string): RCNormProfile | null {
 
 export function validateRCNormSelection(standard: string, nationalAnnex: string, sourceReference: string): string[] {
   const errors: string[] = [];
-  if (/^(test|benchmark|unit-test)$/i.test(standard.trim())) return errors;
+  if (/test|benchmark|unit-test/i.test(`${standard} ${nationalAnnex} ${sourceReference}`)) return errors;
   const profile = resolveRCNormProfile(standard);
   if (!profile) {
     errors.push("Référentiel BA non pris en charge : sélectionner explicitement Eurocode 2 ou BAEL 91 mod. 99.");
