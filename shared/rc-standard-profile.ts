@@ -22,7 +22,9 @@ export function resolveRCStandardProfile(standard: string): RCStandardProfile {
       family: "eurocode-2",
       supportedForPreDesign: true,
       suggestedAlphaCC: 0.85,
-      note: "Profil Eurocode 2 déclaré; édition et annexe nationale à confirmer, et les vérifications restent non certifiées.",
+      note: /france|nf\s*en|annexe nationale française/.test(normalized)
+        ? "Profil Eurocodes français déclaré; renseigner les éditions NF EN et annexes nationales françaises applicables (EN 1990/1991/1992/1997/1998). Les contrôles non implémentés restent bloquants et aucune certification n'est émise."
+        : "Profil Eurocode 2 déclaré; édition et annexe nationale à confirmer, et les vérifications restent non certifiées.",
     };
   }
   return {

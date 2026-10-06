@@ -40,12 +40,12 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   nationalAnnex: isBael
     ? "BAEL 91 mod. 99 · règles locales et prescriptions du projet à confirmer"
     : isEurocode
-      ? "EN 1992-1-1 · annexe nationale / prescriptions locales, édition à confirmer"
+      ? "France · NF EN 1990/1991/1992/1997/1998 · annexes nationales, éditions à confirmer"
       : `${normalizedStandard} · édition et règles d’application à confirmer`,
   sourceReference: isBael
     ? `Catalogue GcBtp · ${concrete.concreteClass} · BAEL 91 mod. 99 · paramètres du projet à vérifier`
     : isEurocode
-      ? `Catalogue GcBtp · ${concrete.concreteClass} · EN 1990/1991/1992 · paramètres nominaux à vérifier sur le dossier du projet`
+      ? `Dossier projet France · ${concrete.concreteClass} · NF EN 1990/1991/1992/1997/1998 · annexes nationales et éditions à confirmer`
       : `Catalogue GcBtp · ${concrete.concreteClass} · référentiel sélectionné : ${normalizedStandard}`,
   basisConfirmed: false,
   fckMpa: String(projectConcreteFckMpa ?? concrete.fck),

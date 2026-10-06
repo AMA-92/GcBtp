@@ -56,6 +56,9 @@ export function validateRCNormSelection(standard: string, nationalAnnex: string,
     return errors;
   }
   if (profile.requiresNationalAnnex && !nationalAnnex.trim()) errors.push("L’annexe nationale applicable à l’Eurocode 2 est obligatoire.");
+  if (profile.family === "eurocode-2" && /france|nf\s*en|annexe nationale française/i.test(nationalAnnex) && !/france|nf\s*en|annexe nationale française/i.test(sourceReference)) {
+    errors.push("Pour le profil français, la source doit identifier les normes NF EN et les annexes nationales françaises applicables.");
+  }
   if (!sourceReference.toLowerCase().includes(profile.requiredReferenceHint.toLowerCase().split(" ")[0])) {
     errors.push(`La source doit citer explicitement ${profile.requiredReferenceHint}.`);
   }
