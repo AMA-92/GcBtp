@@ -112,7 +112,8 @@ import { runProfessionalAnalysis } from "@shared/professional-analysis";
 import { analyzeCantileverRectangularPlate, analyzeOneWayOrthotropicRectangularPlate, analyzeSimplySupportedRectangularPlate, checkRectangularSurfaceEdgeSupports, meshRectangularSurface, SURFACE_ANALYSIS_SCHEMA_VERSION, type RectangularOpening, type RectangularSurfaceEdge, type SurfaceAnalysis } from "@shared/surface-analysis";
 import { resolveFloorPlateStiffness } from "@shared/plate-stiffness";
 import { deriveStoryMassesFromCumulativeLoads, generateClimateActions, parseClimateSpectrum, type ClimateActionInput, type ClimateActionsResult, type ClimateFieldSource } from "@shared/climate-actions";
-import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand } from "@shared/rc-design";
+import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RCStairDemand } from "@shared/rc-design";
+import { calculateStairPermanentLoad } from "@shared/stair-load";
 import { mapFoundationReactions } from "@shared/foundation-reaction";
 import { DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA, DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE } from "@shared/foundation-engine";
 import { validateStructuralModel, type StructuralValidationResult } from "@shared/structural-validation";
@@ -754,6 +755,77 @@ export default function BuildingCreateFlow({
       }];
     });
   }, [surfaceAnalysis]);
+  const rcStairDemands = useMemo<RCStairDemand[]>(() => {
+    if (!selected) return [];
+    const combination = loadProgram.combinations.find(item => item.id === solverCombinationId);
+    if (!combination) return [];
+    const factor = (caseId: string, patternId: string) => {
+      const actionCase = loadProgram.cases.find(item => item.id === caseId);
+      const pattern = loadProgram.patterns.find(item => item.id === patternId);
+      if (!actionCase?.enabled || !pattern?.enabled) return 0;
+      return (combination.caseFactors[caseId] ?? 0) * (actionCase.patternFactors[patternId] ?? 0);
+    };
+    const gammaG = factor("case:G", "G");
+    const gammaQ = factor("case:Q", "Q");
+    const positions = metricGridAxisPositions(xDistances, yDistances, xAxes.length, yAxes.length, gridDistance);
+    const numeric = (value: string | undefined, fallback: number) => {
+      if (value === undefined || !value.trim()) return fallback;
+      const parsed = Number(String(value ?? "").replace(",", "."));
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+    };
+    const distance = (a: GridPoint, b: GridPoint) => Math.hypot(a.x - b.x, a.y - b.y);
+    const center = (a: GridPoint, b: GridPoint) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    return selected.levels.flatMap(level => level.elements.filter(element => element.type === "Escaliers").map(element => {
+      const geometry = element.absoluteStairGeometry ?? freezeStairGeometry(element.stairGeometry, positions.xAxisPositionsM, positions.yAxisPositionsM);
+      const lowerIndex = selected.levels.findIndex(item => item.id === geometry?.flight1?.lowerLevelId);
+      const upperIndex = selected.levels.findIndex(item => item.id === geometry?.flight1?.upperLevelId);
+      const lowerZ = lowerIndex >= 0 ? floorTopElevation(selected.levels[lowerIndex], lowerIndex) : NaN;
+      const upperZ = upperIndex >= 0 ? floorTopElevation(selected.levels[upperIndex], upperIndex) : NaN;
+      const totalRise = upperZ - lowerZ;
+      const landingRise = Number.isFinite(totalRise) && totalRise > 0
+        ? Number.isFinite(geometry?.landingZ) && (geometry?.landingZ ?? 0) > 0 && (geometry?.landingZ ?? 0) < totalRise
+          ? geometry!.landingZ
+          : totalRise / 2
+        : NaN;
+      const config = normalizeFloorConfig(element.floorConfig ?? {
+        ...defaultFloorConfig,
+        type: "Dalle pleine",
+        thickness: "15 cm",
+        characteristicImposedLoad: usageProfile(selected.projectUsage).stairLoad.toFixed(2),
+        stairRiser: "0.17",
+        stairTread: "0.30",
+        stairFinishLoad: "0.00",
+      });
+      const thicknessMm = (config.thickness.match(/\d+(?:[.,]\d+)?/g) ?? []).reduce((sum, part) => sum + Number(part.replace(",", ".")), 0) * 10;
+      const imposedKnM2 = numeric(config.characteristicImposedLoad, usageProfile(selected.projectUsage).stairLoad);
+      const flights = [geometry?.flight1, geometry?.flight2].flatMap((flight, flightIndex) => {
+        if (!flight || !Number.isFinite(totalRise) || totalRise <= 0 || !Number.isFinite(landingRise)) return [];
+        const lowerWidthM = distance(flight.lowerA, flight.lowerB);
+        const upperWidthM = distance(flight.upperA, flight.upperB);
+        const widthM = (lowerWidthM + upperWidthM) / 2;
+        const horizontalRunM = distance(center(flight.lowerA, flight.lowerB), center(flight.upperA, flight.upperB));
+        const riseM = flightIndex === 0 ? landingRise : totalRise - landingRise;
+        if (![widthM, horizontalRunM, riseM, thicknessMm].every(value => Number.isFinite(value) && value > 0)) return [];
+        const permanentKnM2 = calculateStairPermanentLoad({
+          widthM,
+          horizontalRunM,
+          riseM,
+          slabThicknessM: thicknessMm / 1000,
+          stepHeightM: numeric(config.stairRiser, riseM / Math.max(1, Math.round(horizontalRunM / 0.3))),
+          treadM: numeric(config.stairTread, 0.30),
+          finishLoadKnM2: numeric(config.stairFinishLoad, 0),
+        }).permanentRateKnM2;
+        return [{ id: `${element.id}:flight-${flightIndex + 1}`, spanM: horizontalRunM, riseM, widthM, thicknessMm, permanentKnM2, imposedKnM2, gammaG, gammaQ }];
+      });
+      return {
+        id: element.id,
+        levelLabel: level.label,
+        combinationId: combination.id,
+        combinationName: combination.name,
+        flights,
+      };
+    }));
+  }, [selected, loadProgram, solverCombinationId, xDistances, yDistances, xAxes.length, yAxes.length, gridDistance]);
   const rcFoundationDemands = useMemo<RCFootingDemand[]>(() => {
     if (!analyticalModel || !automaticFoundationResult) return [];
     const mapped = mapFoundationReactions(analyticalModel, automaticFoundationResult, "XZ");
@@ -806,9 +878,10 @@ export default function BuildingCreateFlow({
       if (planeAnalysis.comparison && planeAnalysis.comparison.differencePercent > 1) warnings.push(`Écart d’équilibre global ${planeAnalysis.comparison.differencePercent.toFixed(2)} % ; revue nécessaire avant toute interprétation.`);
     }
     if (!surfaceAnalysis?.rows.some(row => row.analysis.plate)) warnings.push("Efforts de surface absents : lancer le maillage/analyse des dalles pleines, corps creux ou balcons avec leurs appuis définis.");
+    if (rcStairDemands.length) warnings.push("Les escaliers sont pré-dimensionnés volée par volée comme bandes simplement appuyées; les paliers, appuis réels, cisaillement normatif, ancrages et recouvrements restent bloqués à vérifier.");
     warnings.push(...(surfaceAnalysis?.errors ?? []));
     return Array.from(new Set(warnings));
-  }, [rcMemberExtraction, spatial3DResult, planeAnalysis, surfaceAnalysis]);
+  }, [rcMemberExtraction, spatial3DResult, planeAnalysis, surfaceAnalysis, rcStairDemands]);
   const criticalColumn = analysisRows.filter(row => row.type === "Poteau").sort((a, b) => b.nu - a.nu)[0];
   const criticalFoundation = analysisRows.filter(row => row.type === "Semelle").sort((a, b) => b.nu - a.nu)[0];
   const criticalColumnKey = criticalColumn ? `${criticalColumn.levelId}:${criticalColumn.id}` : null;
@@ -5147,6 +5220,7 @@ export default function BuildingCreateFlow({
                       slabs={rcSlabDemands}
                       foundations={rcFoundationDemands}
                       walls={rcWallDemands}
+                      stairs={rcStairDemands}
                       sourceWarnings={rcSourceWarnings}
                       onResultChange={setRcDesignResult}
                       onApplySection={applyOptimizedSection}
@@ -5387,7 +5461,7 @@ export default function BuildingCreateFlow({
                         "DIMENSIONNEMENT NUMÉRIQUE BÉTON ARMÉ — NON CERTIFIÉ",
                         ...(rcDesignResult ? [
                           `Statut : ${rcDesignResult.status} · référentiel ${rcDesignResult.standard || "non renseigné"} · annexe ${rcDesignResult.nationalAnnex || "non renseignée"} · source ${rcDesignResult.sourceReference || "non renseignée"}`,
-                          `Couverture numérique : ${rcDesignResult.numericalSummary.memberCount} membre(s) · ${rcDesignResult.numericalSummary.slabCount} dalle(s) · ${rcDesignResult.numericalSummary.footingCount} semelle(s) · ${rcDesignResult.numericalSummary.passedCheckCount}/${rcDesignResult.numericalSummary.checkCount} contrôles satisfaisants · ${rcDesignResult.numericalSummary.failedCheckCount} non satisfaisant(s) · ${rcDesignResult.numericalSummary.blockedCheckCount} bloqué(s)/à vérifier`,
+                          `Couverture numérique : ${rcDesignResult.numericalSummary.memberCount} membre(s) · ${rcDesignResult.numericalSummary.slabCount} dalle(s) · ${rcDesignResult.numericalSummary.footingCount} semelle(s) · ${rcDesignResult.numericalSummary.stairCount} escalier(s) · ${rcDesignResult.numericalSummary.passedCheckCount}/${rcDesignResult.numericalSummary.checkCount} contrôles satisfaisants · ${rcDesignResult.numericalSummary.failedCheckCount} non satisfaisant(s) · ${rcDesignResult.numericalSummary.blockedCheckCount} bloqué(s)/à vérifier`,
                           `Matériaux/détails saisis : fck ${rcDesignResult.materialBasis.fckMpa} MPa · fyk ${rcDesignResult.materialBasis.fykMpa} MPa · γc ${rcDesignResult.materialBasis.gammaC} · γs ${rcDesignResult.materialBasis.gammaS} · αcc ${rcDesignResult.materialBasis.alphaCC} · enrobage ${rcDesignResult.materialBasis.coverMm} mm · ρmin/max ${rcDesignResult.materialBasis.minReinforcementRatio}/${rcDesignResult.materialBasis.maxReinforcementRatio} · τRd,c ${rcDesignResult.materialBasis.concreteShearStressLimitMpa} MPa · τbd ${rcDesignResult.materialBasis.bondStressMpa} MPa · saisie confirmée ${rcDesignResult.materialBasis.basisConfirmed}`,
                           ...rcDesignResult.elements.flatMap(item => [
                             `${item.type} ${item.elementId} · combinaison gouvernante déclarée ${item.combinationName} (${item.combinationId})`,

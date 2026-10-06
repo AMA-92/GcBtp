@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
 import { solvePlaneFrame } from "@shared/frame-solver-2d";
+import { designStairV2 } from "@shared/stair-design-v2";
 import type { AnalyticalModel } from "@shared/analytical-model";
 
 const basis = (): RCDesignBasis => ({
@@ -29,6 +30,43 @@ const basis = (): RCDesignBasis => ({
 const beam = { id: "B1", type: "beam" as const, combinationId: "comb:uls", combinationName: "ELU benchmark", sectionWidthMm: 250, sectionDepthMm: 500, lengthMm: 5000, axialKn: 0, shearKn: 100, momentKnM: 100, positiveMomentKnM: 100, negativeMomentKnM: 60, serviceMomentKnM: 70, serviceDeflectionMm: 15 };
 
 describe("priority 6 — reinforced concrete pre-design and detailing proposals", () => {
+  it("computes a transparent simply-supported stair-flight predesign and blocks missing execution checks", () => {
+    const calculated = designStairV2({ spanM: 2.4, riseM: 1.0, widthM: 1.2, thicknessM: 0.15, permanentKnM2: 6, imposedKnM2: 3, gammaG: 1.35, gammaQ: 1.5, fykMpa: 500, gammaS: 1.15, coverMm: 30, mainBarDiameterMm: 25, minReinforcementRatio: 0.0013, maxReinforcementRatio: 0.04 });
+    expect(calculated.qULSKnM2).toBeCloseTo(12.6, 8);
+    expect(calculated.MEdKnMPerM).toBeCloseTo(9.072, 8);
+    expect(calculated.VEdKnPerM).toBeCloseTo(15.12, 8);
+    const result = designReinforcedConcrete({
+      basis: basis(), members: [], slabs: [],
+      stairs: [{ id: "S1", combinationId: "comb:uls", combinationName: "ELU benchmark", flights: [{ id: "S1:flight-1", spanM: 2.4, riseM: 1, widthM: 1.2, thicknessMm: 150, permanentKnM2: 6, imposedKnM2: 3, gammaG: 1.35, gammaQ: 1.5 }] }],
+    });
+    const design = result.elements[0];
+    expect(design.type).toBe("stair");
+    expect(design.reinforcement.map(item => item.id)).toEqual(["S1:flight-1:main", "S1:flight-1:distribution"]);
+    expect(design.reinforcement.every(item => item.count > 0 && item.totalLengthM > 0)).toBe(true);
+    expect(design.checks.find(item => item.id === "S1:flight-1:anchorage")?.status).toBe("bloqué");
+    expect(design.checks.find(item => item.id === "S1:flight-1:shear")?.status).toBe("bloqué");
+    expect(result.numericalSummary.stairCount).toBe(1);
+    expect(result.regulatoryReady).toBe(false);
+  });
+
+  it("does not invent stair bars when a flight has invalid geometry", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(), members: [], slabs: [],
+      stairs: [{ id: "S-invalid", combinationId: "comb:uls", combinationName: "ELU benchmark", flights: [{ id: "flight", spanM: 0, riseM: 1, widthM: 1.2, thicknessMm: 150, permanentKnM2: 6, imposedKnM2: 3, gammaG: 1.35, gammaQ: 1.5 }] }],
+    });
+    expect(result.elements[0].reinforcement).toEqual([]);
+    expect(result.elements[0].checks.some(item => item.status === "bloqué")).toBe(true);
+  });
+
+  it("blocks reinforcement and optimization when the project selects an unsupported standard", () => {
+    const unsupportedBasis = { ...basis(), standard: "SANS 10100" };
+    const result = designReinforcedConcrete({ basis: unsupportedBasis, members: [beam], slabs: [] });
+    expect(result.standard).toBe("SANS 10100");
+    expect(result.errors.some(error => error.includes("ne le prend pas en charge"))).toBe(true);
+    expect(result.elements).toEqual([]);
+    expect(proposeOptimizedRCSections({ basis: unsupportedBasis, members: [beam], slabs: [] })).toEqual([]);
+  });
+
   it("blocks missing material, annex, provenance, and detailing inputs", () => {
     const incomplete = basis();
     incomplete.nationalAnnex = "";
@@ -203,7 +241,7 @@ it("ferraille une semelle à partir de la réaction et produit le métré acier"
 
 describe("RC section optimization", () => {
   it("finds a smaller footing when the available checks pass", () => {
-    const basis = { schemaVersion: 1 as const, standard: "test", nationalAnnex: "test", sourceReference: "test", basisConfirmed: true, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, alphaCC: 0.85, coverMm: 50, minReinforcementRatio: 0.0015, maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.8, bondStressMpa: 2.0, minClearSpacingMm: 20, maxLinkSpacingMm: 250, maxDeflectionRatio: 250, maxColumnSlenderness: 30, availableBarDiametersMm: [8,10,12,16,20,25] };
+    const basis = { schemaVersion: 1 as const, standard: "Eurocode 2 — test", nationalAnnex: "test", sourceReference: "test", basisConfirmed: true, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, alphaCC: 0.85, coverMm: 50, minReinforcementRatio: 0.0015, maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.8, bondStressMpa: 2.0, minClearSpacingMm: 20, maxLinkSpacingMm: 250, maxDeflectionRatio: 250, maxColumnSlenderness: 30, availableBarDiametersMm: [8,10,12,16,20,25] };
     const proposals = proposeOptimizedRCSections({ basis, members: [], slabs: [], foundations: [{ id: "S1", levelLabel: "Fondation", combinationId: "ELU", combinationName: "ELU", widthM: 1, lengthM: 1, thicknessM: 0.2, columnWidthM: 0.2, columnDepthM: 0.2, axialKn: 20, shearKn: 0, momentXKnM: 0, momentYKnM: 0, soilBearingKPa: 300 }] });
     expect(proposals.some(item => item.elementId === "S1" && item.proposedSection.dimensions[0] < 1)).toBe(true);
   });

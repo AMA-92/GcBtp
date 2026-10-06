@@ -3,6 +3,8 @@ export const RC_DESIGN_SCHEMA_VERSION = 1 as const;
 import type { AnalyticalModel } from "./analytical-model";
 import type { PlaneFrameResult, PlaneMemberLoad } from "./frame-solver-2d";
 import type { Spatial3DResult } from "./frame-solver-3d";
+import { designStairV2 } from "./stair-design-v2";
+import { resolveRCStandardProfile } from "./rc-standard-profile";
 
 export type RCDesignBasis = {
   schemaVersion: typeof RC_DESIGN_SCHEMA_VERSION;
@@ -99,7 +101,7 @@ export type RebarProposal = {
 };
 export type RCElementDesign = {
   elementId: string;
-  type: "beam" | "column" | "slab" | "wall" | "tie-beam" | "footing";
+  type: "beam" | "column" | "slab" | "wall" | "tie-beam" | "footing" | "stair";
   combinationId: string;
   combinationName: string;
   checks: RCCheck[];
@@ -124,6 +126,24 @@ export type RCFootingDemand = {
 };
 
 export type RCTieBeamDemand = RCMemberDemand & { type: "beam" };
+export type RCStairFlightDemand = {
+  id: string;
+  spanM: number;
+  riseM: number;
+  widthM: number;
+  thicknessMm: number;
+  permanentKnM2: number;
+  imposedKnM2: number;
+  gammaG: number;
+  gammaQ: number;
+};
+export type RCStairDemand = {
+  id: string;
+  levelLabel?: string;
+  combinationId: string;
+  combinationName: string;
+  flights: RCStairFlightDemand[];
+};
 
 export type RCDesignResult = {
   schemaVersion: typeof RC_DESIGN_SCHEMA_VERSION;
@@ -142,6 +162,7 @@ export type RCDesignResult = {
     memberCount: number;
     slabCount: number;
     footingCount: number;
+    stairCount: number;
     checkCount: number;
     passedCheckCount: number;
     failedCheckCount: number;
@@ -252,6 +273,10 @@ const barMassKgPerM = (diameterMm: number) => 0.006165 * diameterMm * diameterMm
 export function validateRCDesignBasis(basis: RCDesignBasis): string[] {
   const errors: string[] = [];
   if (!basis.standard.trim()) errors.push("Le référentiel béton doit être déclaré.");
+  else {
+    const profile = resolveRCStandardProfile(basis.standard);
+    if (!profile.supportedForPreDesign) errors.push(profile.note);
+  }
   if (!basis.nationalAnnex.trim()) errors.push("L’annexe nationale ou les règles locales doivent être déclarées.");
   if (!basis.sourceReference.trim()) errors.push("La référence des paramètres matériaux et de détail est obligatoire.");
   if (!positive(basis.fckMpa) || basis.fckMpa < 15 || basis.fckMpa > 90) errors.push("fck doit être compris entre 15 et 90 MPa.");
@@ -547,6 +572,77 @@ function designSlab(demand: RCSlabDemand, basis: RCDesignBasis, overrides: RCDes
   return { elementId: demand.id, type: "slab", combinationId, combinationName, checks, reinforcement, limitations };
 }
 
+function designStair(demand: RCStairDemand, basis: RCDesignBasis): RCElementDesign {
+  const { combinationId, combinationName } = demand;
+  const limitations = [
+    "Pré-étude de bandes de volée simplement appuyées, avec portée horizontale; la continuité et l’interaction avec la structure ne sont pas résolues.",
+    "Les paliers, appuis réels, efforts latéraux, flexion transversale, torsion, flèche et fissuration ne sont pas calculés.",
+    "Les longueurs de barres excluent ancrages, crochets et recouvrements; la géométrie affichée est schématique et non exécutable.",
+  ];
+  if (!demand.flights.length) return { elementId: demand.id, type: "stair", combinationId, combinationName, checks: [emptyCheck("stair-geometry", "Géométrie des volées", "m", combinationId, combinationName, "Au moins une volée correctement définie est requise")], reinforcement: [], limitations };
+  const diameters = Array.from(new Set(basis.availableBarDiametersMm.filter(positive))).sort((a, b) => a - b);
+  const reinforcement: RebarProposal[] = [];
+  const checks: RCCheck[] = [];
+  const chooseBars = (requiredAreaPerM: number, widthMm: number, effectiveDepthMm: number) => {
+    const candidates = diameters.map(diameterMm => {
+      const count = Math.max(2, Math.ceil(requiredAreaPerM * widthMm / 1000 / barArea(diameterMm)));
+      const clearSpacingMm = (widthMm - 2 * basis.coverMm - count * diameterMm) / (count - 1);
+      const areaPerM = count * barArea(diameterMm) / (widthMm / 1000);
+      return { diameterMm, count, clearSpacingMm, areaPerM };
+    }).filter(item => item.clearSpacingMm >= basis.minClearSpacingMm && item.areaPerM <= basis.maxReinforcementRatio * 1000 * effectiveDepthMm);
+    return candidates.sort((a, b) => a.areaPerM - b.areaPerM || a.diameterMm - b.diameterMm)[0];
+  };
+  for (let index = 0; index < demand.flights.length; index++) {
+    const flight = demand.flights[index];
+    const flightPrefix = `${demand.id}:flight-${index + 1}`;
+    if (![flight.spanM, flight.riseM, flight.widthM, flight.thicknessMm].every(positive)) {
+      checks.push(emptyCheck(`${flightPrefix}:geometry`, `Volée ${index + 1} · géométrie`, "m", combinationId, combinationName, "Portée, hauteur, largeur et épaisseur doivent être positives"));
+      continue;
+    }
+    const mainDiameter = diameters[diameters.length - 1];
+    if (!mainDiameter) {
+      checks.push(emptyCheck(`${flightPrefix}:catalogue`, `Volée ${index + 1} · catalogue HA`, "mm", combinationId, combinationName, "Diamètres d’armature disponibles requis"));
+      continue;
+    }
+    let calculation: ReturnType<typeof designStairV2>;
+    try {
+      calculation = designStairV2({
+        spanM: flight.spanM,
+        riseM: flight.riseM,
+        widthM: flight.widthM,
+        thicknessM: flight.thicknessMm / 1000,
+        permanentKnM2: flight.permanentKnM2,
+        imposedKnM2: flight.imposedKnM2,
+        gammaG: flight.gammaG,
+        gammaQ: flight.gammaQ,
+        fykMpa: basis.fykMpa,
+        gammaS: basis.gammaS,
+        coverMm: basis.coverMm,
+        mainBarDiameterMm: mainDiameter,
+        minReinforcementRatio: basis.minReinforcementRatio,
+        maxReinforcementRatio: basis.maxReinforcementRatio,
+      });
+    } catch (error) {
+      checks.push(emptyCheck(`${flightPrefix}:input`, `Volée ${index + 1} · données`, "—", combinationId, combinationName, error instanceof Error ? error.message : "Entrées invalides"));
+      continue;
+    }
+    const main = chooseBars(calculation.AsRequiredMm2PerM, flight.widthM * 1000, calculation.effectiveDepthMm);
+    const transverse = chooseBars(calculation.AsMinimumMm2PerM, calculation.slopeLengthM * 1000, calculation.effectiveDepthMm);
+    const mainProvided = main?.areaPerM ?? 0;
+    const transverseProvided = transverse?.areaPerM ?? 0;
+    checks.push(check(`${flightPrefix}:flexure`, `Volée ${index + 1} · flexion longitudinale`, calculation.AsRequiredMm2PerM, mainProvided, "mm²/m", "Modèle indicatif MEd = qEd·Lh²/8; As = max(ρmin·b·d, MEd/(0,9d·fyd))", combinationId, combinationName));
+    checks.push(check(`${flightPrefix}:main-ratio`, `Volée ${index + 1} · taux longitudinal maximal`, mainProvided, calculation.AsMaximumMm2PerM, "mm²/m", "As,prov ≤ ρmax·b·d selon la base déclarée", combinationId, combinationName));
+    checks.push(check(`${flightPrefix}:distribution-min`, `Volée ${index + 1} · armatures transversales minimales`, calculation.AsMinimumMm2PerM, transverseProvided, "mm²/m", "Ratio minimal déclaré appliqué aux barres transversales; pré-étude uniquement", combinationId, combinationName));
+    if (main) reinforcement.push(proposal(`${flightPrefix}:main`, `Volée ${index + 1} · principales HA${main.diameterMm} · espacement calculé ${((flight.widthM * 1000) / main.count).toFixed(0)} mm`, main.diameterMm, main.count, calculation.AsRequiredMm2PerM * flight.widthM, calculation.slopeLengthM));
+    if (transverse) reinforcement.push(proposal(`${flightPrefix}:distribution`, `Volée ${index + 1} · répartition HA${transverse.diameterMm} · espacement calculé ${(calculation.slopeLengthM * 1000 / transverse.count).toFixed(0)} mm`, transverse.diameterMm, transverse.count, calculation.AsMinimumMm2PerM * calculation.slopeLengthM, flight.widthM));
+    if (!main || !transverse) checks.push(emptyCheck(`${flightPrefix}:bar-fit`, `Volée ${index + 1} · disposition des barres`, "mm", combinationId, combinationName, "Catalogue disponible, enrobage et espacement libre minimal compatibles requis"));
+    checks.push(emptyCheck(`${flightPrefix}:max-spacing`, `Volée ${index + 1} · espacement maximal normatif`, "mm", combinationId, combinationName, "Valeur de détail propre à l’édition et à l’annexe nationale à renseigner"));
+    checks.push(emptyCheck(`${flightPrefix}:shear`, `Volée ${index + 1} · cisaillement`, "kN/m", combinationId, combinationName, "VEd calculé, mais résistance et dispositions de cisaillement normatives non implémentées"));
+    checks.push(emptyCheck(`${flightPrefix}:anchorage`, `Volée ${index + 1} · ancrages et recouvrements`, "mm", combinationId, combinationName, "Calcul selon adhérence, position, confinement et référentiel non implémenté"));
+  }
+  return { elementId: demand.id, type: "stair", combinationId, combinationName, checks, reinforcement, limitations };
+}
+
 export type RCOptimizationProposal = {
   elementId: string;
   levelLabel?: string;
@@ -588,6 +684,7 @@ export function proposeOptimizedRCSections(input: {
   overrides?: RCDesignOverrides;
   lockedElementIds?: ReadonlySet<string>;
 }): RCOptimizationProposal[] {
+  if (validateRCDesignBasis(input.basis).length) return [];
   const proposals: RCOptimizationProposal[] = [];
   const overrides = input.overrides ?? {};
   const lockedElementIds = input.lockedElementIds ?? new Set<string>();
@@ -649,15 +746,17 @@ export function proposeOptimizedRCSections(input: {
   return proposals;
 }
 
-export function designReinforcedConcrete(input: { basis: RCDesignBasis; members: RCMemberDemand[]; slabs: RCSlabDemand[]; foundations?: RCFootingDemand[]; overrides?: RCDesignOverrides }): RCDesignResult {
+export function designReinforcedConcrete(input: { basis: RCDesignBasis; members: RCMemberDemand[]; slabs: RCSlabDemand[]; foundations?: RCFootingDemand[]; stairs?: RCStairDemand[]; overrides?: RCDesignOverrides }): RCDesignResult {
   const errors = validateRCDesignBasis(input.basis);
   const warnings: string[] = [];
+  const standardProfile = resolveRCStandardProfile(input.basis.standard);
+  if (standardProfile.supportedForPreDesign) warnings.push(standardProfile.note);
   const blockers: string[] = [
     "Aucun jeu de règles nationales/annexe complète n’est certifié dans cette version ; les sorties restent des pré-études.",
     "Aucune vérification réglementaire des voiles, de la torsion, du poinçonnement ni des dispositions sismiques n’est fournie.",
   ];
   if (!input.basis.basisConfirmed) warnings.push("Les paramètres matériaux et de détail sont déclarés provisoires ou non confirmés.");
-  if (!input.members.length && !input.slabs.length && !(input.foundations?.length ?? 0)) errors.push("Aucun effort calculé par le solveur/maillage n’est disponible pour dimensionner le béton armé.");
+  if (!input.members.length && !input.slabs.length && !(input.foundations?.length ?? 0) && !(input.stairs?.length ?? 0)) errors.push("Aucun effort calculé par le solveur/maillage n’est disponible pour dimensionner le béton armé.");
   if (input.members.some(item => !item.combinationId || !item.combinationName)) errors.push("Une combinaison gouvernante doit être identifiée pour chaque membre.");
   const elements: RCElementDesign[] = errors.length ? [] : [
     ...input.members.map(item => {
@@ -667,6 +766,7 @@ export function designReinforcedConcrete(input: { basis: RCDesignBasis; members:
     }),
     ...input.slabs.map(item => designSlab(item, input.basis, input.overrides ?? {})),
     ...(input.foundations ?? []).map(item => designFooting(item, input.basis, input.overrides ?? {})),
+    ...(input.stairs ?? []).map(item => designStair(item, input.basis)),
   ];
   const scheduleMap = new Map<number, { totalLengthM: number; massKg: number }>();
   for (const element of elements) for (const bar of element.reinforcement) {
@@ -679,6 +779,7 @@ export function designReinforcedConcrete(input: { basis: RCDesignBasis; members:
     memberCount: input.members.length,
     slabCount: input.slabs.length,
     footingCount: input.foundations?.length ?? 0,
+    stairCount: input.stairs?.length ?? 0,
     checkCount: checks.length,
     passedCheckCount: checks.filter(item => item.status === "satisfaisant").length,
     failedCheckCount: checks.filter(item => item.status === "non satisfaisant").length,

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { designReinforcedConcrete, proposeOptimizedRCSections, type RCDesignBasis, type RCDesignOverrides, type RCElementDesign, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RebarOverride, type RCOptimizationProposal } from "@shared/rc-design";
+import { designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis, type RCDesignOverrides, type RCElementDesign, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RCStairDemand, type RebarOverride, type RCOptimizationProposal } from "@shared/rc-design";
 import { designWall, type WallDemand } from "@shared/wall-design";
 import { downloadReinforcementA4Pdf, downloadReinforcementGroupA4Pdf } from "@shared/local-pdf";
 import { groupReinforcementElements, loadReinforcementTemplate } from "@shared/reinforcement-report";
 import { CONCRETE_MATERIAL_CATALOG } from "@shared/model-catalog";
+import { resolveRCStandardProfile, sameRCStandardFamily } from "@shared/rc-standard-profile";
 
 type Draft = {
   standard: string;
@@ -30,21 +31,29 @@ type Draft = {
 
 const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRebarFykMpa?: number): Draft => {
   const normalizedStandard = standard || "Eurocode 2";
-  const isBael = normalizedStandard.toLowerCase().includes("bael");
+  const standardProfile = resolveRCStandardProfile(normalizedStandard);
+  const isBael = standardProfile.family === "bael-91-99";
+  const isEurocode = standardProfile.family === "eurocode-2";
   const concrete = Object.values(CONCRETE_MATERIAL_CATALOG).find(item => item.fck === projectConcreteFckMpa) ?? CONCRETE_MATERIAL_CATALOG["C25/30"];
   return {
   standard: normalizedStandard,
   nationalAnnex: isBael
     ? "BAEL 91 mod. 99 · règles locales et prescriptions du projet à confirmer"
-    : "EN 1992-1-1 · annexe nationale / prescriptions locales, édition à confirmer",
-  sourceReference: `Catalogue GcBtp · ${concrete.concreteClass} · EN 1990/1991/1992 · paramètres nominaux à vérifier sur le dossier du projet`,
+    : isEurocode
+      ? "EN 1992-1-1 · annexe nationale / prescriptions locales, édition à confirmer"
+      : `${normalizedStandard} · édition et règles d’application à confirmer`,
+  sourceReference: isBael
+    ? `Catalogue GcBtp · ${concrete.concreteClass} · BAEL 91 mod. 99 · paramètres du projet à vérifier`
+    : isEurocode
+      ? `Catalogue GcBtp · ${concrete.concreteClass} · EN 1990/1991/1992 · paramètres nominaux à vérifier sur le dossier du projet`
+      : `Catalogue GcBtp · ${concrete.concreteClass} · référentiel sélectionné : ${normalizedStandard}`,
   basisConfirmed: false,
   fckMpa: String(projectConcreteFckMpa ?? concrete.fck),
   fykMpa: String(projectRebarFykMpa ?? 500),
   // Valeurs de pré-étude issues du profil Eurocode/BAEL ; elles restent à confirmer.
   gammaC: "1.50",
   gammaS: "1.15",
-  alphaCC: isBael ? "1.00" : "0.85",
+  alphaCC: String(standardProfile.suggestedAlphaCC ?? 0.85),
   coverMm: String(concrete.cover),
   minReinforcementPercent: "0.13",
   maxReinforcementPercent: "4.00",
@@ -69,6 +78,7 @@ type Props = {
   members: RCMemberDemand[];
   slabs: RCSlabDemand[];
   foundations?: RCFootingDemand[];
+  stairs?: RCStairDemand[];
   walls?: WallDemand[];
   sourceWarnings: string[];
   onResultChange: (result: RCDesignResult | null) => void;
@@ -76,14 +86,14 @@ type Props = {
   optimizedElementIds?: Set<string>;
 };
 
-export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set() }: Props) {
+export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set() }: Props) {
   const [draft, setDraft] = useState<Draft>(() => createDraft(projectNorm, projectConcreteFckMpa, projectRebarFykMpa));
   const [overrides, setOverrides] = useState<RCDesignOverrides>({});
   const [result, setResult] = useState<RCDesignResult | null>(null);
   const [optimizationProposals, setOptimizationProposals] = useState<RCOptimizationProposal[]>([]);
   const [templateCompany, setTemplateCompany] = useState("");
   const [dirty, setDirty] = useState(false);
-  const sourceSignature = useMemo(() => JSON.stringify({ members, slabs, foundations, walls, sourceWarnings }), [members, slabs, foundations, walls, sourceWarnings]);
+  const sourceSignature = useMemo(() => JSON.stringify({ members, slabs, foundations, stairs, walls, sourceWarnings }), [members, slabs, foundations, stairs, walls, sourceWarnings]);
 
   useEffect(() => {
     setResult(null);
@@ -95,7 +105,10 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       const saved = sessionStorage.getItem(`gcbtp-rc-design:${projectId}`);
       const parsed = saved ? JSON.parse(saved) as { draft?: Partial<Draft>; overrides?: RCDesignOverrides } : {};
       const savedDraft = parsed.draft ?? {};
-      const merged = { ...base, ...savedDraft, standard: savedDraft.standard || base.standard };
+      const merged: Draft = { ...base, ...savedDraft, standard: base.standard };
+      if (savedDraft.standard && !sameRCStandardFamily(savedDraft.standard, base.standard)) {
+        (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'bondStressMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness'] as const).forEach(key => { merged[key] = base[key] as never; });
+      }
       // Les anciennes sessions contenaient des champs vides : reprendre le catalogue
       // plutôt que conserver silencieusement une base de calcul incomplète.
       (Object.keys(base) as Array<keyof Draft>).forEach(key => {
@@ -105,6 +118,9 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       // utilisateur différente est conservée.
       if (merged.nationalAnnex === "Annexes nationales françaises — édition applicable à confirmer") merged.nationalAnnex = base.nationalAnnex;
       if (merged.sourceReference === "EN 1990 · EN 1991 · EN 1992 · EN 1998 — édition, annexe nationale et projet à confirmer") merged.sourceReference = base.sourceReference;
+      const concreteForLegacySource = Object.values(CONCRETE_MATERIAL_CATALOG).find(item => item.fck === numeric(merged.fckMpa)) ?? CONCRETE_MATERIAL_CATALOG["C25/30"];
+      const legacyEurocodeSource = `Catalogue GcBtp · ${concreteForLegacySource.concreteClass} · EN 1990/1991/1992 · paramètres nominaux à vérifier sur le dossier du projet`;
+      if (resolveRCStandardProfile(base.standard).family === "bael-91-99" && merged.sourceReference === legacyEurocodeSource) merged.sourceReference = base.sourceReference;
       setDraft(merged);
       setOverrides(parsed.overrides ?? {});
     } catch {
@@ -158,13 +174,15 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     onResultChange(null);
   };
   const run = () => {
-    const next = designReinforcedConcrete({ basis, members, slabs, foundations, overrides });
-    const wallDesigns = walls.map(wall => designWall(wall, basis, overrides));
-    next.elements.push(...wallDesigns);
-    for (const element of wallDesigns) for (const bar of element.reinforcement) {
-      const current = next.schedule.find(item => item.diameterMm === bar.diameterMm);
-      if (current) { current.totalLengthM += bar.totalLengthM; current.massKg += bar.massKg; }
-      else next.schedule.push({ diameterMm: bar.diameterMm, totalLengthM: bar.totalLengthM, massKg: bar.massKg });
+    const next = designReinforcedConcrete({ basis, members, slabs, foundations, stairs, overrides });
+    if (!validateRCDesignBasis(basis).length) {
+      const wallDesigns = walls.map(wall => designWall(wall, basis, overrides));
+      next.elements.push(...wallDesigns);
+      for (const element of wallDesigns) for (const bar of element.reinforcement) {
+        const current = next.schedule.find(item => item.diameterMm === bar.diameterMm);
+        if (current) { current.totalLengthM += bar.totalLengthM; current.massKg += bar.massKg; }
+        else next.schedule.push({ diameterMm: bar.diameterMm, totalLengthM: bar.totalLengthM, massKg: bar.massKg });
+      }
     }
     if (sourceWarnings.length) next.warnings.push(...sourceWarnings);
     setResult(next);
@@ -173,6 +191,10 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     onResultChange(next);
   };
   const runOptimization = () => {
+    if (!resolveRCStandardProfile(projectNorm).supportedForPreDesign) {
+      toast.error("Optimisation bloquée : le référentiel du projet n’est pas pris en charge par le moteur BA.");
+      return;
+    }
     const proposals = proposeOptimizedRCSections({ basis, members, slabs, foundations, overrides, lockedElementIds: optimizedElementIds })
       .filter(proposal => !optimizedElementIds.has(proposal.elementId));
     // Voiles : recherche de la plus petite épaisseur conservant les contrôles disponibles.
@@ -239,23 +261,23 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
 
   const fields: Array<[keyof Draft, string, string]> = [
     ["fckMpa", "fck béton", "MPa"], ["fykMpa", "fyk acier", "MPa"],
-    ["gammaC", "γc", "—"], ["gammaS", "γs", "—"], ["alphaCC", "αcc", "—"],
+    ["gammaC", "γc", "—"], ["gammaS", "γs", "—"], ["alphaCC", resolveRCStandardProfile(projectNorm).family === "bael-91-99" ? "Facteur béton d’étude" : "αcc", "—"],
     ["coverMm", "Enrobage nominal", "mm"], ["minReinforcementPercent", "ρ armatures min.", "%"], ["maxReinforcementPercent", "ρ armatures max.", "%"],
     ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"], ["bondStressMpa", "Adhérence τbd déclarée", "MPa"],
     ["minClearSpacingMm", "Espacement libre min.", "mm"], ["maxLinkSpacingMm", "Espacement cadres max.", "mm"],
     ["maxDeflectionRatio", "Limite de flèche L/", "—"], ["maxColumnSlenderness", "Limite d’élancement λ", "—"],
   ];
-  const normChoice = draft.standard.toLowerCase().includes("bael") ? "bael" : /eurocode|en\s*1992/i.test(draft.standard) ? "ec2" : "custom";
+  const selectedStandardProfile = resolveRCStandardProfile(projectNorm);
 
   return <section className="space-y-3 rounded-lg border border-[#e7c58d] bg-[#fffaf0] p-3 text-[10px] text-[#554223]">
     <div className="flex items-start justify-between gap-2">
-      <div><b className="text-[12px]">Béton armé · dimensionnement et ferraillage</b><p className="mt-1 text-[9px] text-[#765f36]">Dalles, poutres, poteaux, longrines de redressement, voiles et semelles sont traités après résolution des efforts. Les sorties ne sont pas une note réglementaire ni une autorisation d’exécution.</p></div>
+      <div><b className="text-[12px]">Béton armé · dimensionnement et ferraillage</b><p className="mt-1 text-[9px] text-[#765f36]">Dalles, poutres, poteaux, longrines, voiles, semelles et volées d’escalier sont traités après résolution des efforts ou de leur pré-étude dédiée. Les sorties ne sont pas une note réglementaire ni une autorisation d’exécution.</p></div>
       <span className="shrink-0 rounded bg-[#f9e7c4] px-2 py-1 font-semibold">Non réglementaire</span>
     </div>
     <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">fck et fyk sont proposés depuis les catalogues matériaux du projet ; vérifiez les certificats et la norme contractuelle. Coefficients code, annexes, enrobage, adhérence et détails restent à renseigner/valider ; les valeurs nominales catalogue ne constituent pas une vérification normative.</div>
     {sourceWarnings.map((warning, index) => <div key={`source-${index}`} className="rounded bg-amber-50 p-2 text-amber-900">Source / périmètre · {warning}</div>)}
     <div className="grid grid-cols-2 gap-2">
-      <label>Norme / référentiel sélectionné<select className="mt-1 h-8 w-full rounded border bg-white px-2" value={normChoice} onChange={event => update("standard", event.target.value === "ec2" ? "Eurocode 2 · EN 1992-1-1" : event.target.value === "bael" ? "BAEL 91 révisé 99" : "Référentiel personnalisé à préciser")}><option value="ec2">Eurocode 2 · EN 1992-1-1</option><option value="bael">BAEL 91 révisé 99</option><option value="custom">Autre référentiel personnalisé</option></select>{normChoice === "custom" && <input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.standard} onChange={event => update("standard", event.target.value)} aria-label="Référentiel personnalisé" />}</label>
+      <div className="rounded border bg-[#f8fafb] p-2"><b>Norme sélectionnée dans les paramètres du projet :</b> {projectNorm || "non renseignée"}<div className="mt-1 text-[8px]">Pour changer de norme, modifiez les paramètres du projet. {selectedStandardProfile.note}</div></div>
       <label>Annexe nationale / règles locales<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.nationalAnnex} onChange={event => update("nationalAnnex", event.target.value)} placeholder="Édition, NA, prescriptions locales" /></label>
       <label className="col-span-2">Source des propriétés / détails<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.sourceReference} onChange={event => update("sourceReference", event.target.value)} placeholder="Document, édition, page, spécification projet" /></label>
     </div>
@@ -263,11 +285,12 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       {fields.map(([key, label, unit]) => <label key={key}>{label} <span className="text-[#93856d]">{unit}</span><input type="number" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft[key] as string} onChange={event => update(key, event.target.value)} /></label>)}
       <label className="col-span-2">Diamètres d’acier disponibles · mm<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.availableBarDiametersMm} onChange={event => update("availableBarDiametersMm", event.target.value)} /><span className="text-[8px]">Séparer par virgule, espace ou point-virgule.</span></label>
     </div>
-    <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[9px] text-amber-950">Règle de projet : <b>HA8 est interdit comme armature longitudinale principale d’un poteau</b> (il peut rester admissible en cadre/étrier). Le choix BAEL/Eurocode sert à tracer le référentiel déclaré; ce moteur reste une pré-étude générique non certifiée et ne bascule pas automatiquement sur l’ensemble des clauses, annexes, effets du second ordre, ancrages et dispositions sismiques de ces normes.</div>
+    <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[9px] text-amber-950">Règle de projet : <b>HA8 est interdit comme armature longitudinale principale d’un poteau</b> (il peut rester admissible en cadre/étrier). La norme est reprise des paramètres du projet et conservée dans le résultat. Le moteur utilise des coefficients de pré-étude déclarés, mais ne réalise pas toutes les clauses BAEL/Eurocode, annexes, effets du second ordre, ancrages ou dispositions sismiques.</div>
     <label className="flex items-start gap-2 rounded bg-white p-2"><input type="checkbox" checked={draft.basisConfirmed} onChange={event => update("basisConfirmed", event.target.checked)} /><span>J’ai vérifié ces paramètres contre les documents du projet. Cette attestation de saisie ne transforme pas le calcul générique en vérification normative.</span></label>
-    <button type="button" className="h-9 w-full rounded bg-[#8a5b16] px-3 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" disabled={!members.length && !slabs.length && !foundations.length} onClick={run}>Calculer / recalculer les armatures proposées</button>
-    {!members.length && !slabs.length && !foundations.length && <div className="rounded bg-white p-2">Aucun effort disponible : lancez d’abord le solveur 2D pour un portique pris en charge et/ou le solveur de dalle.</div>}
-    <button type="button" onClick={runOptimization} disabled={!result || dirty} className="h-9 w-full rounded border border-[#2d7a5d] bg-[#effaf4] px-3 text-[10px] font-bold text-[#236348] disabled:opacity-40">Analyser les sections et proposer l’optimisation — une seule fois par élément</button>
+    <button type="button" className="h-9 w-full rounded bg-[#8a5b16] px-3 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" disabled={!selectedStandardProfile.supportedForPreDesign || (!members.length && !slabs.length && !foundations.length && !stairs.length)} onClick={run}>Calculer / recalculer les armatures proposées</button>
+    {!selectedStandardProfile.supportedForPreDesign && <div className="rounded bg-red-50 p-2 text-red-900">Le calcul est bloqué : le moteur ne prend en charge que les pré-études génériques Eurocode 2 et BAEL 91 mod. 99. Aucun résultat d’armature ne sera présenté sous une autre norme.</div>}
+    {!members.length && !slabs.length && !foundations.length && !stairs.length && <div className="rounded bg-white p-2">Aucune demande de calcul disponible : lancez d’abord les solveurs ou renseignez la géométrie et les charges des escaliers.</div>}
+    <button type="button" onClick={runOptimization} disabled={!selectedStandardProfile.supportedForPreDesign || !result || dirty} className="h-9 w-full rounded border border-[#2d7a5d] bg-[#effaf4] px-3 text-[10px] font-bold text-[#236348] disabled:opacity-40">Analyser les sections et proposer l’optimisation — une seule fois par élément</button>
     {optimizedElementIds.size > 0 && <div className="rounded bg-[#eef8f1] p-2 text-[9px] text-[#35644b]">Optimisation déjà validée pour : {Array.from(optimizedElementIds).join(", ")}. Ces éléments sont verrouillés et ne seront plus ré-optimisés.</div>}
     {optimizationProposals.length > 0 && <div className="space-y-2 rounded border border-[#b9dfc9] bg-[#f5fcf8] p-2">
       <div className="font-bold text-[#236348]">Optimisation proposée · validation manuelle obligatoire</div>
@@ -281,7 +304,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     </div>}
     {result && <div className="space-y-2 rounded border border-[#ead3a8] bg-white p-2">
       <div className="font-bold">Résultat numérique · {result.status} · référentiel déclaré : {result.standard || "non renseigné"} · annexe : {result.nationalAnnex || "non renseignée"}</div>
-      <div className="rounded bg-[#eef8f7] p-2">Couverture numérique : {result.numericalSummary.memberCount} membre(s), {result.numericalSummary.slabCount} dalle(s), {result.numericalSummary.footingCount} semelle(s) · {result.numericalSummary.passedCheckCount}/{result.numericalSummary.checkCount} contrôles satisfaisants · {result.numericalSummary.failedCheckCount} non satisfaisant(s) · {result.numericalSummary.blockedCheckCount} bloqué(s)/à vérifier.</div>
+      <div className="rounded bg-[#eef8f7] p-2">Couverture numérique : {result.numericalSummary.memberCount} membre(s), {result.numericalSummary.slabCount} dalle(s), {result.numericalSummary.footingCount} semelle(s), {result.numericalSummary.stairCount} escalier(s) · {result.numericalSummary.passedCheckCount}/{result.numericalSummary.checkCount} contrôles satisfaisants · {result.numericalSummary.failedCheckCount} non satisfaisant(s) · {result.numericalSummary.blockedCheckCount} bloqué(s)/à vérifier.</div>
       {dirty && <div className="rounded bg-amber-100 p-2 font-bold text-amber-900">Saisie ou proposition modifiée — les résultats affichés sont périmés. Recalculez avant de les exporter.</div>}
       {result.errors.map((error, index) => <div key={`rc-error-${index}`} className="rounded bg-red-50 p-2 text-red-800">Bloqué · {error}</div>)}
       {result.blockers.map((blocker, index) => <div key={`rc-blocker-${index}`} className="rounded bg-amber-50 p-2 text-amber-900">Limite réglementaire · {blocker}</div>)}

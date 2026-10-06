@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Rotate3D } from "lucide-react";
 import type { RCDesignResult, RCElementDesign, RebarProposal } from "@shared/rc-design";
 import { modelColor, modelSpec, type ModelSpec } from "@shared/model-catalog";
+import { DEFAULT_REINFORCEMENT_3D_CATEGORIES, reinforcement3DCategory } from "@shared/reinforcement-3d";
 import { cumulativeGridPositions, GRID_UNITS_PER_METER } from "@shared/proportional-grid";
 import {
   columnBaseElevation,
@@ -257,7 +258,7 @@ export default function Building3DView({
   const [zoom, setZoom] = useState(1);
   const [reinforcementMode, setReinforcementMode] = useState(false);
   const [concreteOpacity, setConcreteOpacity] = useState(0.28);
-  const [reinforcementCategories, setReinforcementCategories] = useState<Record<string, boolean>>({ columns: true, beams: true, slabs: true, foundations: true, walls: true, balconies: true, stairs: true, others: true });
+  const [reinforcementCategories, setReinforcementCategories] = useState<Record<string, boolean>>({ ...DEFAULT_REINFORCEMENT_3D_CATEGORIES });
   const [selectedRebar, setSelectedRebar] = useState<{ elementId: string; proposalId: string } | null>(null);
   const [navigationMode, setNavigationMode] = useState<"rotate" | "pan">(
     "rotate"
@@ -501,17 +502,6 @@ export default function Building3DView({
     ).values()
   ).slice(0, 5);
   const designById = new Map((reinforcementDesign?.elements ?? []).map(item => [item.elementId, item]));
-  const rebarCategory = (item: ElementItem, design: RCElementDesign) => {
-    if (item.type === "Poteau" || design.type === "column") return "columns";
-    if (item.type === "Poutre") return "beams";
-    if (item.type === "Longrine de redressement" || design.type === "tie-beam") return "longrines";
-    if (item.type === "Dalle" || design.type === "slab") return item.type === "Balcon" ? "balconies" : "slabs";
-    if (item.type === "Balcon") return "balconies";
-    if (item.type === "Semelle" || design.type === "footing") return "foundations";
-    if (item.type === "Voile" || design.type === "wall") return "walls";
-    if (item.type === "Escaliers") return "stairs";
-    return "others";
-  };
   const rebarLine = (key: string, a: Vector3, b: Vector3, item: ElementItem, design: RCElementDesign, proposal: RebarProposal) => {
     const start = projectMetric(a[0], a[1], a[2]);
     const end = projectMetric(b[0], b[1], b[2]);
@@ -540,7 +530,7 @@ export default function Building3DView({
   const reinforcementOverlay = reinforcementMode ? levels.flatMap((level, levelIndex) => level.elements.flatMap(item => {
     const design = designById.get(item.id);
     if (!design || !design.reinforcement.length) return [];
-    const category = rebarCategory(item, design);
+    const category = reinforcement3DCategory(item.type, design.type);
     if (!reinforcementCategories[category]) return [];
     const proposals = design.reinforcement.filter(proposal => proposal.count > 0 && proposal.diameterMm > 0);
     if (!proposals.length) return [];
@@ -625,6 +615,58 @@ export default function Building3DView({
         void length;
       };
       drawSlabDirection(xBar, true); drawSlabDirection(yBar, false);
+    } else if (item.type === "Escaliers" && design.type === "stair") {
+      const geometry = item.absoluteStairGeometry ?? item.stairGeometry?.absolute ?? item.stairGeometry;
+      if (geometry?.flight1 && geometry.flight2) {
+        const toMetric = (point: Point) => item.absoluteStairGeometry || item.stairGeometry?.absolute ? point : metricPoint(point.x, point.y);
+        const flight1 = { ...geometry.flight1, lowerA: toMetric(geometry.flight1.lowerA), lowerB: toMetric(geometry.flight1.lowerB), upperA: toMetric(geometry.flight1.upperA), upperB: toMetric(geometry.flight1.upperB) };
+        const flight2 = { ...geometry.flight2, lowerA: toMetric(geometry.flight2.lowerA), lowerB: toMetric(geometry.flight2.lowerB), upperA: toMetric(geometry.flight2.upperA), upperB: toMetric(geometry.flight2.upperB) };
+        const lowerIndex = levels.findIndex(candidate => candidate.id === flight1.lowerLevelId);
+        const middleIndex = levels.findIndex(candidate => candidate.id === flight1.upperLevelId);
+        const upperIndex = levels.findIndex(candidate => candidate.id === flight2.upperLevelId);
+        if (lowerIndex >= 0 && middleIndex >= 0 && upperIndex >= 0) {
+          const baseZ = floorTopElevation(levels[lowerIndex], lowerIndex);
+          const sameLandingLevel = flight1.upperLevelId === flight2.upperLevelId;
+          const middleZ = sameLandingLevel ? baseZ + geometry.landingZ : floorTopElevation(levels[middleIndex], middleIndex);
+          const topZ = floorTopElevation(levels[upperIndex], upperIndex);
+          const stairThickness = Math.max(0.05, firstSectionValue(dimensions, 0.15));
+          const stairFlights = [flight1, flight2];
+          const elevations: Array<[number, number]> = [[baseZ, middleZ], [middleZ, topZ]];
+          const interpolate = (a: Point, b: Point, t: number): Point => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+          stairFlights.forEach((flight, flightIndex) => {
+            const [z0, z1] = elevations[flightIndex];
+            const main = find(`:flight-${flightIndex + 1}:main`);
+            const distribution = find(`:flight-${flightIndex + 1}:distribution`);
+            const flightCover = cover;
+            if (main) {
+              const visibleCount = Math.min(main.count, 96);
+              const width = Math.max(0.01, (Math.hypot(flight.lowerB.x - flight.lowerA.x, flight.lowerB.y - flight.lowerA.y) + Math.hypot(flight.upperB.x - flight.upperA.x, flight.upperB.y - flight.upperA.y)) / 2);
+              const margin = Math.min(0.45, (flightCover + main.diameterMm / 2000) / width);
+              for (let i = 0; i < visibleCount; i++) {
+                const crossT = visibleCount === 1 ? 0.5 : margin + (1 - 2 * margin) * i / (visibleCount - 1);
+                const start = interpolate(flight.lowerA, flight.lowerB, crossT);
+                const end = interpolate(flight.upperA, flight.upperB, crossT);
+                const barOffset = stairThickness - flightCover - main.diameterMm / 2000;
+                const zStart = z0 - barOffset, zEnd = z1 - barOffset;
+                lines.push(rebarLine(`${main.id}:${i}`, [start.x, start.y, zStart], [end.x, end.y, zEnd], item, design, main));
+              }
+            }
+            if (distribution) {
+              const visibleCount = Math.min(distribution.count, 96);
+              const slopeLength = Math.hypot(Math.hypot(flight.upperA.x - flight.lowerA.x, flight.upperA.y - flight.lowerA.y), z1 - z0);
+              const margin = Math.min(0.45, (flightCover + distribution.diameterMm / 2000) / Math.max(slopeLength, 0.01));
+              for (let i = 0; i < visibleCount; i++) {
+                const alongT = visibleCount === 1 ? 0.5 : margin + (1 - 2 * margin) * i / (visibleCount - 1);
+                const left = interpolate(flight.lowerA, flight.upperA, alongT);
+                const right = interpolate(flight.lowerB, flight.upperB, alongT);
+                const barOffset = stairThickness - flightCover - distribution.diameterMm / 2000 - (main?.diameterMm ?? 0) / 1000;
+                const barZ = z0 + (z1 - z0) * alongT - barOffset;
+                lines.push(rebarLine(`${distribution.id}:${i}`, [left.x, left.y, barZ], [right.x, right.y, barZ], item, design, distribution));
+              }
+            }
+          });
+        }
+      }
     } else if (item.type === "Semelle" && design.type === "footing") {
       const match = dimensions.match(/(\\d+(?:[.,]\\d+)?)\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?)\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?)/i);
       const width = match ? sectionValueMeters(match[1], dimensions) : FOOTING_3D_HALF_X*2;

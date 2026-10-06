@@ -67,6 +67,7 @@ export function reinforcementElementTitle(element: RCElementDesign) {
     slab: "DALLE",
     wall: "VOILE",
     footing: "SEMELLE",
+    stair: "ESCALIER",
   };
   return labels[element.type] ?? element.type.toUpperCase();
 }
