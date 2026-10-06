@@ -9,6 +9,10 @@ export const SOILS: Record<SoilType, { label: string; allowableBearing: number; 
   remblai: { label: "Remblai — 100 kPa", allowableBearing: 100, frictionAngle: 18, note: "Ne pas retenir sans caractérisation géotechnique." },
 };
 
+/** Hypothèse géotechnique commune demandée pour tous les projets. */
+export const DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA = 200;
+export const DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE = "Études géotechniques moyennes du projet — qadm = 200 kPa (≈ 2,0 bar), à confirmer par le rapport de sol";
+
 export const FOUNDATIONS: Record<FoundationType, { label: string; factor: number; note: string }> = {
   "semelle isolée": { label: "Semelle isolée", factor: 1, note: "Dimensionnement préliminaire sous poteau." },
   "semelle filante": { label: "Semelle filante", factor: 1.1, note: "Dimensionnement préliminaire sous mur ou ligne de poteaux." },

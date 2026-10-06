@@ -79,9 +79,9 @@ import {
 } from "@shared/element-labels";
 import {
   cumulativeGridPositions,
-  proportionalGridScale,
+  GRID_UNITS_PER_METER,
 } from "@shared/proportional-grid";
-import { levelIndexShift } from "@shared/vertical-structure";
+import { floorTopElevation, levelIndexShift } from "@shared/vertical-structure";
 import { type ClosedFloorArea } from "@shared/floor-area";
 import {
   canCoLocate,
@@ -114,6 +114,8 @@ import { resolveFloorPlateStiffness } from "@shared/plate-stiffness";
 import { deriveStoryMassesFromCumulativeLoads, generateClimateActions, parseClimateSpectrum, type ClimateActionInput, type ClimateActionsResult, type ClimateFieldSource } from "@shared/climate-actions";
 import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand } from "@shared/rc-design";
 import { mapFoundationReactions } from "@shared/foundation-reaction";
+import { DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA, DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE } from "@shared/foundation-engine";
+import { validateStructuralModel, type StructuralValidationResult } from "@shared/structural-validation";
 import type { WallDemand } from "@shared/wall-design";
 import ReinforcedConcretePanel from "@/components/ReinforcedConcretePanel";
 import FoundationReactionPanel, { type FoundationPanelEvaluation } from "@/components/FoundationReactionPanel";
@@ -139,6 +141,7 @@ type Level = {
   label: string;
   elevation: string;
   height?: string;
+  kind?: "foundation" | "habitation" | "edicule" | "technical";
   elements: ElementItem[];
 };
 type GridPoint = { x: number; y: number };
@@ -219,9 +222,9 @@ const remapStairGeometryLevels = (
   targetLevelId: string
 ): StairGeometry | undefined => {
   if (!geometry) return undefined;
-  // Une copie vers R+1 doit commencer sur R+1, et non sur le niveau inférieur RDC.
-  // Le niveau sélectionné représente le niveau de base de la nouvelle travée.
-  const levelShift = levelIndexShift(levels, sourceLevelId, targetLevelId) + 1;
+  // La copie conserve le même intervalle vertical relatif :
+  // Fondation→RDC devient RDC→R+1, puis R+1→R+2, etc.
+  const levelShift = levelIndexShift(levels, sourceLevelId, targetLevelId);
   const translateLevelId = (levelId: string) => {
     const originalIndex = levels.findIndex(level => level.id === levelId);
     const translatedIndex = originalIndex >= 0 ? originalIndex + levelShift : -1;
@@ -280,15 +283,36 @@ const metricOfElement = (element: Pick<ElementItem, "x" | "y" | "x2" | "y2" | "x
   xMidM: element.xMid === undefined ? element.xMidM : (element.xMidM ?? indexToMetric(element.xMid, xPositions)),
   yMidM: element.yMid === undefined ? element.yMidM : (element.yMidM ?? indexToMetric(element.yMid, yPositions)),
 });
+const freezeStairGeometry = (geometry: StairGeometry | undefined, xPositions: number[], yPositions: number[]): StairGeometry["absolute"] => {
+  if (!geometry) return undefined;
+  if (geometry.absolute) return geometry.absolute;
+  const freezePoint = (point?: GridPoint) => point
+    ? { x: indexToMetric(point.x, xPositions), y: indexToMetric(point.y, yPositions) }
+    : undefined;
+  const freezeFlight = (flight?: StairFlightGeometry) => flight
+    ? { ...flight, lowerA: freezePoint(flight.lowerA)!, lowerB: freezePoint(flight.lowerB)!, upperA: freezePoint(flight.upperA)!, upperB: freezePoint(flight.upperB)! }
+    : undefined;
+  return {
+    flight1: freezeFlight(geometry.flight1),
+    flight2: freezeFlight(geometry.flight2),
+    baseA: freezePoint(geometry.baseA),
+    baseB: freezePoint(geometry.baseB),
+    midA: freezePoint(geometry.midA),
+    midB: freezePoint(geometry.midB),
+    topA: freezePoint(geometry.topA),
+    topB: freezePoint(geometry.topB),
+    landingZ: geometry.landingZ,
+  };
+};
 const metricToIndex = (metric: number, positions: number[]) => {
   if (!positions.length) return metric;
   if (metric <= positions[0]) {
-    const span = Math.max(positions[1] - positions[0], 0.01);
+    const span = Math.max(positions[Math.min(1, positions.length - 1)] - positions[0], 0.01);
     return (metric - positions[0]) / span;
   }
   const last = positions.length - 1;
   if (metric >= positions[last]) {
-    const span = Math.max(positions[last] - positions[last - 1], 0.01);
+    const span = Math.max(positions[last] - positions[Math.max(0, last - 1)], 0.01);
     return last + (metric - positions[last]) / span;
   }
   const segment = positions.findIndex((position, index) => index < last && metric >= position && metric <= positions[index + 1]);
@@ -300,8 +324,14 @@ const remapIndexByMetric = (value: number, oldPositions: number[], nextPositions
   if (!oldPositions.length || !nextPositions.length) return value;
   const metric = indexToMetric(value, oldPositions);
   const last = nextPositions.length - 1;
-  if (metric <= nextPositions[0]) return 0;
-  if (metric >= nextPositions[last]) return last;
+  if (metric <= nextPositions[0]) {
+    const span = Math.max(nextPositions[Math.min(1, last)] - nextPositions[0], 0.01);
+    return (metric - nextPositions[0]) / span;
+  }
+  if (metric >= nextPositions[last]) {
+    const span = Math.max(nextPositions[last] - nextPositions[Math.max(0, last - 1)], 0.01);
+    return last + (metric - nextPositions[last]) / span;
+  }
   const segment = nextPositions.findIndex((position, index) =>
     index < last && metric >= position && metric <= nextPositions[index + 1]
   );
@@ -368,6 +398,13 @@ type Project = {
   regulatoryCatalogId?: ProjectStandardId;
   materials?: ProjectMaterialSelection;
   optimizationLockedElementIds?: string[];
+  soil?: {
+    bearingCapacityAdmissibleKPa: number;
+    unit: "kPa";
+    status: "default_preliminary" | "geotechnical_confirmed";
+    requiresGeotechnicalConfirmation: boolean;
+    source: string;
+  };
 };
 type ProjectSettingsDraft = {
   country: string;
@@ -416,10 +453,27 @@ const initialLevels = (): Level[] => [
     label: "Fondation",
     elevation: "-1.00",
     height: "1.00",
+    kind: "foundation",
     elements: [],
   },
-  { id: "rdc", label: "RDC", elevation: "0.00", height: "3.20", elements: [] },
+  { id: "rdc", label: "RDC", elevation: "0.00", height: "3.20", kind: "habitation", elements: [] },
 ];
+const normalizeProjectMetadata = (project: Project): Project => ({
+  ...project,
+  soil: project.soil?.status === "geotechnical_confirmed" && project.soil.bearingCapacityAdmissibleKPa > 0
+    ? project.soil
+    : {
+        bearingCapacityAdmissibleKPa: DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
+        unit: "kPa",
+        status: "default_preliminary",
+        requiresGeotechnicalConfirmation: true,
+        source: DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE,
+      },
+  levels: project.levels.map(level => {
+    const isEdicule = level.kind === "edicule" || /^(r\+3|édifice|edifice)$/i.test(level.label.trim());
+    return { ...level, label: isEdicule ? "Édifice" : level.label, kind: isEdicule ? "edicule" : (level.kind ?? (level.id === "foundation" ? "foundation" : "habitation")) };
+  }),
+});
 const menuItems = [
   "Grille de trame",
   "Mes modèles",
@@ -629,6 +683,7 @@ export default function BuildingCreateFlow({
   const [optimizationLockedElementIds, setOptimizationLockedElementIds] = useState<Set<string>>(new Set());
   const [analyticalModel, setAnalyticalModel] = useState<AnalyticalModel | null>(null);
   const [analyticalPrecheck, setAnalyticalPrecheck] = useState<AnalyticalPrecheck | null>(null);
+  const [structuralValidation, setStructuralValidation] = useState<StructuralValidationResult | null>(null);
   const [buildingLoadModel, setBuildingLoadModel] = useState<ReturnType<typeof buildBuildingLoadModel> | null>(null);
   const [showCalculationPreflight, setShowCalculationPreflight] = useState(false);
   const [meshPrerequisiteReady, setMeshPrerequisiteReady] = useState(false);
@@ -798,7 +853,7 @@ export default function BuildingCreateFlow({
   const selectedProjectMaterials = getProjectMaterialSummary(normalizeProjectMaterials(selected?.materials));
   const constructionCodeCompliance = useMemo(() => evaluateSenegalConstructionCode({
     country,
-    buildingFloorsAboveGround: Math.max(0, (selected?.levels?.length ?? 1) - 1),
+    buildingFloorsAboveGround: Math.max(0, (selected?.levels?.filter(level => level.id !== "foundation" && level.kind !== "edicule").length ?? 1)),
     use: projectUsage,
     housingUnits: undefined,
     publicAccess: false,
@@ -1140,6 +1195,7 @@ export default function BuildingCreateFlow({
     setBuildingCalculation(null);
     setAnalyticalModel(null);
     setAnalyticalPrecheck(null);
+    setStructuralValidation(null);
     setBuildingLoadModel(null);
     setPlaneAnalysis(null);
     setSurfaceAnalysis(null);
@@ -1204,9 +1260,28 @@ export default function BuildingCreateFlow({
     [selected, activeLevelId]
   );
   const setSelectedProject = (next: Project) => {
+    next = normalizeProjectMetadata(next);
+    // Un escalier est affiché et enregistré sur son niveau d’arrivée.
+    // Cette migration ne touche ni ses points, ni ses dimensions, ni sa géométrie.
+    const stairsByTarget = new Map<string, ElementItem[]>();
+    const levelsWithRehomedStairs = next.levels.map(level => ({
+      ...level,
+      elements: level.elements.filter(item => {
+        if (item.type !== "Escaliers") return true;
+        const targetId = item.stairGeometry?.flight2?.upperLevelId ?? item.absoluteStairGeometry?.flight2?.upperLevelId;
+        if (!targetId || targetId === level.id || !next.levels.some(candidate => candidate.id === targetId)) return true;
+        const target = stairsByTarget.get(targetId) ?? [];
+        target.push(item);
+        stairsByTarget.set(targetId, target);
+        return false;
+      }),
+    })).map(level => ({
+      ...level,
+      elements: [...level.elements, ...(stairsByTarget.get(level.id) ?? [])],
+    }));
     const normalized = {
       ...next,
-      levels: renumberBuildingElements(next.levels),
+      levels: renumberBuildingElements(levelsWithRehomedStairs),
     };
     const workspace = workspaceByProject.current[normalized.id];
     if (workspace) {
@@ -1299,6 +1374,13 @@ export default function BuildingCreateFlow({
       projectUsage,
       regulatoryCatalogId: projectSettingsDraft.regulatoryCatalogId,
       materials: { ...projectSettingsDraft.materials },
+      soil: {
+        bearingCapacityAdmissibleKPa: DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
+        unit: "kPa",
+        status: "default_preliminary",
+        requiresGeotechnicalConfirmation: true,
+        source: DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE,
+      },
     };
     setProjects(prev => [project, ...prev]);
     setSelected(project);
@@ -1570,6 +1652,7 @@ export default function BuildingCreateFlow({
   };
   const openCalculationPreflight = () => {
     if (!selected) return;
+    setStructuralValidation(validateStructuralModel(selected.levels));
     setLastStructuralReport("");
     const analytical = buildCurrentAnalytical();
     if (!analytical) return;
@@ -1650,8 +1733,9 @@ export default function BuildingCreateFlow({
     }
     const rows: SurfaceRunRow[] = slabs.map(({ level, element }) => {
       const config = normalizeFloorConfig(element.floorConfig ?? (element.type === "Balcon" ? defaultBalconyFloorConfig() : defaultFloorConfig));
-      const x1M = indexToMetric(element.x, xPositions), y1M = indexToMetric(element.y, yPositions);
-      const x2M = indexToMetric(element.x2 as number, xPositions), y2M = indexToMetric(element.y2 as number, yPositions);
+      const metric = metricOfElement(element, xPositions, yPositions);
+      const x1M = metric.xM, y1M = metric.yM;
+      const x2M = metric.x2M ?? x1M, y2M = metric.y2M ?? y1M;
       const thicknessParts = (config.thickness.match(/\d+(?:[.,]\d+)?/g) ?? []).map(value => Number(value.replace(",", ".")) / 100);
       const thicknessM = thicknessParts.reduce((sum, value) => sum + value, 0);
       const rate = (value: string | undefined) => {
@@ -1865,6 +1949,9 @@ export default function BuildingCreateFlow({
   const remapElementsToMetric = (elements: ElementItem[], oldX: number[], oldY: number[], nextX: number[], nextY: number[]) =>
     elements.map(element => {
       const metric = metricOfElement(element, oldX, oldY);
+      const remappedStairGeometry = element.stairGeometry
+        ? remapPointFields(element.stairGeometry, oldX, oldY, nextX, nextY) as StairGeometry
+        : element.stairGeometry;
       return {
         ...element,
         x: metricToIndex(metric.xM, nextX),
@@ -1874,6 +1961,10 @@ export default function BuildingCreateFlow({
         xMid: metric.xMidM === undefined ? element.xMid : metricToIndex(metric.xMidM, nextX),
         yMid: metric.yMidM === undefined ? element.yMid : metricToIndex(metric.yMidM, nextY),
         xM: metric.xM, yM: metric.yM, x2M: metric.x2M, y2M: metric.y2M, xMidM: metric.xMidM, yMidM: metric.yMidM,
+        stairGeometry: remappedStairGeometry,
+        absoluteStairGeometry: element.type === "Escaliers"
+          ? (element.absoluteStairGeometry ?? freezeStairGeometry(element.stairGeometry, oldX, oldY))
+          : element.absoluteStairGeometry,
       };
     });
 
@@ -2161,7 +2252,7 @@ export default function BuildingCreateFlow({
     const previous = stairConstructionPoints[index - 1];
     if (previous && previous.x === point.x && previous.y === point.y) return;
     const expectedSameAs = [1, 3, 4, 6].includes(index) ? stairPointLevels[index - 1] : undefined;
-    const expectedDifferentFrom = [2, 5].includes(index) ? stairPointLevels[index - 1] : undefined;
+    const expectedDifferentFrom = [2].includes(index) ? stairPointLevels[index - 1] : undefined;
     if (expectedSameAs && currentLevelId !== expectedSameAs) {
       toast.info("Restez sur le même niveau pour définir les deux coins de cette face.");
       return;
@@ -2196,26 +2287,26 @@ export default function BuildingCreateFlow({
     }
     const [lowerA1, , , , , , upperB2] = nextPoints;
     const lowerLevelId = nextLevels[0];
-    const intermediateLevelId = nextLevels[2];
-    const upperLevelId = nextLevels[5];
+    const upperLevelId = nextLevels[2];
     const lowerIndex = selected.levels.findIndex(level => level.id === lowerLevelId);
-    const intermediateIndex = selected.levels.findIndex(level => level.id === intermediateLevelId);
     const upperIndex = selected.levels.findIndex(level => level.id === upperLevelId);
-    if (lowerIndex < 0 || intermediateIndex < 0 || upperIndex < 0 || !(lowerIndex < intermediateIndex && intermediateIndex < upperIndex)) {
-      toast.info("Un escalier doit relier trois niveaux dans l’ordre : bas, intermédiaire puis haut. Le palier est porté par le niveau intermédiaire.");
+    if (lowerIndex < 0 || upperIndex < 0 || !(lowerIndex < upperIndex)) {
+      toast.info("Un escalier doit relier deux niveaux dans l’ordre : plancher bas puis plancher haut. Le palier intermédiaire est placé à mi-hauteur.");
       setStairConstructionPoints([]);
       setStairPointLevels([]);
       setStairPlacementStage(1);
       return;
     }
-    const resolvedLevels = [lowerLevelId, lowerLevelId, intermediateLevelId, intermediateLevelId, intermediateLevelId, upperLevelId, upperLevelId];
-    const totalHeight = Number(selected.levels.find(level => level.id === intermediateLevelId)?.height ?? "3.20") || 3.20;
+    const resolvedLevels = [lowerLevelId, lowerLevelId, upperLevelId, upperLevelId, upperLevelId, upperLevelId, upperLevelId];
+    const lowerElevation = floorTopElevation(selected.levels[lowerIndex], lowerIndex);
+    const upperElevation = floorTopElevation(selected.levels[upperIndex], upperIndex);
+    const totalHeight = Math.max(0.01, upperElevation - lowerElevation);
     const stairConfig = normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: usageProfile(projectUsage).stairLoad.toFixed(2), stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60", stairFinishLoad: "0.00", direction: "X" });
     addElement(lowerA1.x, lowerA1.y, upperB2, stairConfig, nextPoints[2], {
       flight1: { lowerA: nextPoints[0], lowerB: nextPoints[1], upperA: nextPoints[2], upperB: nextPoints[3], lowerLevelId: resolvedLevels[0], upperLevelId: resolvedLevels[2] },
       flight2: { lowerA: nextPoints[3], lowerB: nextPoints[4], upperA: nextPoints[5], upperB: nextPoints[6], lowerLevelId: resolvedLevels[3], upperLevelId: resolvedLevels[5] },
       landingZ: totalHeight / 2,
-    }, intermediateLevelId);
+    }, upperLevelId);
     setPlacementStart(null);
     setStairLandingPoint(null);
     setStairConstructionPoints([]);
@@ -3039,7 +3130,8 @@ export default function BuildingCreateFlow({
       </div>
     );
 
-  const gridCell = 68;
+  // Échelle visuelle partagée avec la 3D : 30 unités SVG par mètre (4 m = 120).
+  const gridCell = GRID_UNITS_PER_METER * 4;
   const gridOrigin = { x: 54, y: 42 };
   const axisDistance = (values: string[], index: number) =>
     Math.max(Number(values[index] || gridDistance) || 0.01, 0.01);
@@ -3048,8 +3140,7 @@ export default function BuildingCreateFlow({
       values.map((_, index) => axisDistance(values, index)),
       count
     );
-    const scale = proportionalGridScale(raw, Math.max(count - 1, 1) * gridCell);
-    return raw.map(value => value * scale);
+    return raw.map(value => value * GRID_UNITS_PER_METER);
   };
   const xGridPositions = cumulativeAxis(xDistances, xAxes.length);
   const yGridPositions = cumulativeAxis(yDistances, yAxes.length);
@@ -4959,6 +5050,17 @@ export default function BuildingCreateFlow({
                       <Button type="button" variant="outline" className="h-8 bg-white text-[10px]" onClick={downloadAnalyticalJson}>Exporter le modèle analytique JSON</Button>
                       {analyticalPrecheck.errors.map((item,index) => <div key={`${item.code}-${index}`} className="rounded bg-white/80 p-2">Erreur · {item.message}</div>)}
                       {analyticalPrecheck.warnings.map((item,index) => <div key={`${item.code}-${index}`} className="rounded bg-white/70 p-2">Avertissement · {item.message}</div>)}
+                    </div>
+                  )}
+                  {structuralValidation && (
+                    <div className={`space-y-2 rounded-lg border p-3 text-[10px] ${structuralValidation.status === "conforme" ? "border-[#bfe4e2] bg-[#eaf8f7] text-[#245e60]" : structuralValidation.status === "a_verifier" ? "border-[#efd49d] bg-[#fffaf0] text-[#765f36]" : "border-[#efc4b9] bg-[#fff1ed] text-[#914d3d]"}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <b>Vérification du modèle · {structuralValidation.status === "conforme" ? "🟢 CONFORME" : structuralValidation.status === "a_verifier" ? "🟠 À VÉRIFIER" : "🔴 NON CONFORME"}</b>
+                        <span>{structuralValidation.checkedLevels} niveau(x) · {structuralValidation.checkedElements} élément(s)</span>
+                      </div>
+                      <div>qadm projet : <b>{selected?.soil?.bearingCapacityAdmissibleKPa ?? DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA} kPa (≈ 2,0 bar)</b> · valeur de pré-dimensionnement à confirmer par étude géotechnique.</div>
+                      {structuralValidation.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className="rounded bg-white/80 p-2">{issue.severity === "error" ? "Erreur" : "Avertissement"} · {issue.message}</div>)}
+                      {!structuralValidation.issues.length && <div className="rounded bg-white/80 p-2">Aucune discontinuité verticale, semelle orpheline ou duplication détectée dans le contrôle automatique.</div>}
                     </div>
                   )}
                   <p className="text-[11px] text-[#68767d]">

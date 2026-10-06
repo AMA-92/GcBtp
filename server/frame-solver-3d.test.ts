@@ -73,6 +73,22 @@ describe("priority 1 — 3D frame solver", () => {
     expect(element.start).toHaveProperty("shearZKn");
     expect(element.start).toHaveProperty("torsionKnM");
     expect(element.start).toHaveProperty("momentYKnM");
-    expect(element.start).toHaveProperty("momentZKnM");
+    expect(element.end).toHaveProperty("momentZKnM");
+  });
+
+  it("does not report slab-only mesh vertices as inactive frame degrees of freedom", () => {
+    const surfaceNodes = [
+      { id: "S1", x: 0, y: 0, z: 3, levelIds: ["rdc"], sourceElementIds: ["SLAB"] },
+      { id: "S2", x: 4, y: 0, z: 3, levelIds: ["rdc"], sourceElementIds: ["SLAB"] },
+      { id: "S3", x: 4, y: 4, z: 3, levelIds: ["rdc"], sourceElementIds: ["SLAB"] },
+      { id: "S4", x: 0, y: 4, z: 3, levelIds: ["rdc"], sourceElementIds: ["SLAB"] },
+    ];
+    const result = solveGlobal3D(model({
+      nodes: [...model().nodes, ...surfaceNodes],
+      surfaces: [{ id: "S:SLAB", sourceElementId: "SLAB", sourceType: "Dalle", kind: "slab", nodeIds: surfaceNodes.map(node => node.id), sectionId: "S", materialId: "M", levelId: "rdc", openings: [] }],
+    }), emptyLoads, combo, program, { pDelta: false, rigidDiaphragm: true });
+    expect(result.errors).toEqual([]);
+    expect(result.result).not.toBeNull();
+    expect(result.warnings.some(warning => warning.includes("degré(s) de liberté sans raideur active"))).toBe(false);
   });
 });

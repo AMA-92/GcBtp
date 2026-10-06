@@ -156,25 +156,12 @@ export async function saveCloudBuildingProject<T extends CloudBuildingProject>(
 }
 
 export async function deleteCloudBuildingProject(accountId: string, projectId: string): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const existing = await getCloudProjectRow(accountId, projectId);
-    if (!existing?.project_data || !(PROJECT_DATA_KEY in existing.project_data)) return;
-    const nextProjectData = { ...existing.project_data };
-    delete nextProjectData[PROJECT_DATA_KEY];
-    const previousUpdatedAt = Date.parse(existing.updated_at);
-    const updatedAt = new Date(Math.max(Date.now(), Number.isFinite(previousUpdatedAt) ? previousUpdatedAt + 1 : Date.now())).toISOString();
-    const { data, error } = await supabase
-      .from("projects")
-      .update({ project_data: Object.keys(nextProjectData).length ? nextProjectData : null, updated_at: updatedAt })
-      .eq("owner_id", accountId)
-      .eq("id", projectId)
-      .eq("updated_at", existing.updated_at)
-      .select("id")
-      .maybeSingle();
-    if (error) throw error;
-    if (data) return;
-  }
-  throw new Error("Le projet est encore en cours de synchronisation. Fermez la fenêtre puis réessayez.");
+  const { error } = await supabase
+    .from("projects")
+    .delete()
+    .eq("owner_id", accountId)
+    .eq("id", projectId);
+  if (error) throw error;
 }
 
 export function loadAccountBuildingProjectCache<T extends BuildingProjectLike>(accountId: string): BuildingProjectSnapshot<T>[] {

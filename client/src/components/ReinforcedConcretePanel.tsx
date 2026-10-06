@@ -4,6 +4,7 @@ import { designReinforcedConcrete, proposeOptimizedRCSections, type RCDesignBasi
 import { designWall, type WallDemand } from "@shared/wall-design";
 import { downloadReinforcementA4Pdf, downloadReinforcementGroupA4Pdf } from "@shared/local-pdf";
 import { groupReinforcementElements, loadReinforcementTemplate } from "@shared/reinforcement-report";
+import { CONCRETE_MATERIAL_CATALOG } from "@shared/model-catalog";
 
 type Draft = {
   standard: string;
@@ -27,27 +28,35 @@ type Draft = {
   availableBarDiametersMm: string;
 };
 
-const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRebarFykMpa?: number): Draft => ({
-  standard: standard || "EN 1992-1-1 + EN 1992-1-2 — annexe nationale / prescriptions locales à confirmer",
-  nationalAnnex: "Annexes nationales françaises — édition applicable à confirmer",
-  sourceReference: "EN 1990 · EN 1991 · EN 1992 · EN 1998 — édition, annexe nationale et projet à confirmer",
+const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRebarFykMpa?: number): Draft => {
+  const normalizedStandard = standard || "Eurocode 2";
+  const isBael = normalizedStandard.toLowerCase().includes("bael");
+  const concrete = Object.values(CONCRETE_MATERIAL_CATALOG).find(item => item.fck === projectConcreteFckMpa) ?? CONCRETE_MATERIAL_CATALOG["C25/30"];
+  return {
+  standard: normalizedStandard,
+  nationalAnnex: isBael
+    ? "BAEL 91 mod. 99 · règles locales et prescriptions du projet à confirmer"
+    : "EN 1992-1-1 · annexe nationale / prescriptions locales, édition à confirmer",
+  sourceReference: `Catalogue GcBtp · ${concrete.concreteClass} · EN 1990/1991/1992 · paramètres nominaux à vérifier sur le dossier du projet`,
   basisConfirmed: false,
-  fckMpa: projectConcreteFckMpa ? String(projectConcreteFckMpa) : "",
-  fykMpa: projectRebarFykMpa ? String(projectRebarFykMpa) : "",
-  gammaC: "",
-  gammaS: "",
-  alphaCC: "",
-  coverMm: "",
-  minReinforcementPercent: "",
-  maxReinforcementPercent: "",
-  concreteShearStressLimitMpa: "",
-  bondStressMpa: "",
-  minClearSpacingMm: "",
-  maxLinkSpacingMm: "",
-  maxDeflectionRatio: "",
-  maxColumnSlenderness: "",
+  fckMpa: String(projectConcreteFckMpa ?? concrete.fck),
+  fykMpa: String(projectRebarFykMpa ?? 500),
+  // Valeurs de pré-étude issues du profil Eurocode/BAEL ; elles restent à confirmer.
+  gammaC: "1.50",
+  gammaS: "1.15",
+  alphaCC: isBael ? "1.00" : "0.85",
+  coverMm: String(concrete.cover),
+  minReinforcementPercent: "0.13",
+  maxReinforcementPercent: "4.00",
+  concreteShearStressLimitMpa: "0.55",
+  bondStressMpa: "2.25",
+  minClearSpacingMm: "20",
+  maxLinkSpacingMm: "300",
+  maxDeflectionRatio: "250",
+  maxColumnSlenderness: "15",
   availableBarDiametersMm: "8, 10, 12, 16, 20, 25",
-});
+  };
+};
 
 const numeric = (value: string) => value.trim() ? Number(value.trim().replace(",", ".")) : Number.NaN;
 const statusStyle = (status: string) => status === "satisfaisant" ? "text-emerald-800 bg-emerald-50" : status === "non satisfaisant" ? "text-red-800 bg-red-50" : status === "bloqué" ? "text-slate-700 bg-slate-100" : "text-amber-800 bg-amber-50";
@@ -85,7 +94,18 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     try {
       const saved = sessionStorage.getItem(`gcbtp-rc-design:${projectId}`);
       const parsed = saved ? JSON.parse(saved) as { draft?: Partial<Draft>; overrides?: RCDesignOverrides } : {};
-      setDraft({ ...base, ...(parsed.draft ?? {}), standard: parsed.draft?.standard || base.standard });
+      const savedDraft = parsed.draft ?? {};
+      const merged = { ...base, ...savedDraft, standard: savedDraft.standard || base.standard };
+      // Les anciennes sessions contenaient des champs vides : reprendre le catalogue
+      // plutôt que conserver silencieusement une base de calcul incomplète.
+      (Object.keys(base) as Array<keyof Draft>).forEach(key => {
+        if (key !== "basisConfirmed" && typeof merged[key] === "string" && !String(merged[key]).trim()) merged[key] = base[key] as never;
+      });
+      // Migration ciblée des libellés génériques de la première version ; une saisie
+      // utilisateur différente est conservée.
+      if (merged.nationalAnnex === "Annexes nationales françaises — édition applicable à confirmer") merged.nationalAnnex = base.nationalAnnex;
+      if (merged.sourceReference === "EN 1990 · EN 1991 · EN 1992 · EN 1998 — édition, annexe nationale et projet à confirmer") merged.sourceReference = base.sourceReference;
+      setDraft(merged);
       setOverrides(parsed.overrides ?? {});
     } catch {
       setDraft(base);

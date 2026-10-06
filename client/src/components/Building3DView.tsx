@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Rotate3D } from "lucide-react";
 import { modelColor, modelSpec, type ModelSpec } from "@shared/model-catalog";
-import { cumulativeGridPositions } from "@shared/proportional-grid";
+import { cumulativeGridPositions, GRID_UNITS_PER_METER } from "@shared/proportional-grid";
 import {
   columnBaseElevation,
   elementElevation,
+  floorTopElevation,
   levelElevation,
   levelHeight,
   postTopElevation,
@@ -271,7 +272,6 @@ export default function Building3DView({
   } | null>(null);
   const velocityRef = useRef({ yaw: 0, pitch: 0 });
   const inertiaFrameRef = useRef<number | null>(null);
-  const cell = 58;
   const origin = { x: 208, y: 330 };
   const xMetricPositions = cumulativeGridPositions(
     xAxisDistances.map(value => Number(String(value).replace(",", ".")) || 0.01),
@@ -281,11 +281,8 @@ export default function Building3DView({
     yAxisDistances.map(value => Number(String(value).replace(",", ".")) || 0.01),
     yCount
   );
-  const averageGridSpacing = (positions: number[]) => {
-    const spans = positions.slice(1).map((value, index) => value - positions[index]).filter(value => value > 0);
-    return spans.length ? spans.reduce((sum, value) => sum + value, 0) / spans.length : Math.max(Number(String(gridDistance).replace(",", ".")) || 4, 0.01);
-  };
-  const horizontalScale = cell / Math.max((averageGridSpacing(xMetricPositions) + averageGridSpacing(yMetricPositions)) / 2, 0.01);
+  // Même unité que la grille 2D : 1 mètre = 30 unités SVG.
+  const horizontalScale = GRID_UNITS_PER_METER;
   const interpolateAxis = (value: number, positions: number[]) => {
     if (!positions.length) return value;
     if (value <= 0) return positions[0] ?? 0;
@@ -596,7 +593,9 @@ export default function Building3DView({
           {levels.map((level, levelIndex) => {
             const base = levelElevation(level, levelIndex);
             const height = levelHeight(level);
-            const slab = projectRect(0, 0, maxX, maxY, base + height * 0.92);
+            // La ligne de niveau représente le plancher haut réel, exactement
+            // comme les extrémités des volées et les poutres porteuses.
+            const slab = projectRect(0, 0, maxX, maxY, floorTopElevation(level, levelIndex));
             const rank = (item: ElementItem) =>
               item.type === "Semelle"
                 ? 0
@@ -641,8 +640,8 @@ export default function Building3DView({
                       const width = 1;
                       const stepCount = 8;
                       const flight = (from: { x: number; y: number }, to: { x: number; y: number }, z0: number, z1: number, prefix: string) => {
-                        const fromMetric = metricPoint(from.x, from.y);
-                        const toMetric = metricPoint(to.x, to.y);
+                        const fromMetric = from;
+                        const toMetric = to;
                         const dx = toMetric.x - fromMetric.x;
                         const dy = toMetric.y - fromMetric.y;
                         const length = Math.max(Math.hypot(dx, dy), 0.001);
@@ -676,53 +675,66 @@ export default function Building3DView({
                       };
                       const inclinedSlabFromFourPoints = (flight: { lowerA: Point; lowerB: Point; upperA: Point; upperB: Point }, z0: number, z1: number, prefix: string) => {
                         const thickness = 0.15;
-                        const lowerA = metricPoint(flight.lowerA.x, flight.lowerA.y);
-                        const lowerB = metricPoint(flight.lowerB.x, flight.lowerB.y);
-                        const upperA = metricPoint(flight.upperA.x, flight.upperA.y);
-                        const upperB = metricPoint(flight.upperB.x, flight.upperB.y);
+                        const lowerA = flight.lowerA;
+                        const lowerB = flight.lowerB;
+                        const upperA = flight.upperA;
+                        const upperB = flight.upperB;
                         const top = [projectMetric(lowerA.x, lowerA.y, z0), projectMetric(upperA.x, upperA.y, z1), projectMetric(upperB.x, upperB.y, z1), projectMetric(lowerB.x, lowerB.y, z0)];
                         const bottom = [projectMetric(lowerA.x, lowerA.y, z0 - thickness), projectMetric(upperA.x, upperA.y, z1 - thickness), projectMetric(upperB.x, upperB.y, z1 - thickness), projectMetric(lowerB.x, lowerB.y, z0 - thickness)];
                         return <g key={prefix}><polygon points={polygon(top)} fill={color} fillOpacity=".9" stroke="#536b78" strokeWidth="1" /><polygon points={polygon(bottom)} fill={color} fillOpacity=".65" stroke="#536b78" strokeWidth=".7" /><polygon points={polygon([top[0], top[1], bottom[1], bottom[0]])} fill={color} fillOpacity=".8" stroke="#536b78" strokeWidth=".7" /><polygon points={polygon([top[3], top[2], bottom[2], bottom[3]])} fill={color} fillOpacity=".75" stroke="#536b78" strokeWidth=".7" /></g>;
                       };
-                      const geometry = item.stairGeometry;
-                      const baseA = geometry?.baseA ?? { x: item.x, y: item.y };
-                      const baseB = geometry?.baseB ?? { x: item.x, y: item.y + 1 };
-                      const midA = geometry?.midA ?? corner;
-                      const midB = geometry?.midB ?? { x: corner.x, y: corner.y + 1 };
-                      const topA = geometry?.topA ?? { x: endX, y: endY };
-                      const topB = geometry?.topB ?? { x: endX, y: endY + 1 };
+                      const geometry = item.absoluteStairGeometry ?? item.stairGeometry;
+                      const toMetricPoint = (point: Point) => item.absoluteStairGeometry ? point : metricPoint(point.x, point.y);
+                      const baseA = toMetricPoint(geometry?.baseA ?? { x: item.x, y: item.y });
+                      const baseB = toMetricPoint(geometry?.baseB ?? { x: item.x, y: item.y + 1 });
+                      const midA = toMetricPoint(geometry?.midA ?? corner);
+                      const midB = toMetricPoint(geometry?.midB ?? { x: corner.x, y: corner.y + 1 });
+                      const topA = toMetricPoint(geometry?.topA ?? { x: endX, y: endY });
+                      const topB = toMetricPoint(geometry?.topB ?? { x: endX, y: endY + 1 });
                       const lowerLevelIndex = geometry?.flight1?.lowerLevelId ? levels.findIndex(level => level.id === geometry.flight1?.lowerLevelId) : -1;
+                      const middleLevelIndex = geometry?.flight1?.upperLevelId ? levels.findIndex(level => level.id === geometry.flight1?.upperLevelId) : -1;
                       const upperLevelIndex = geometry?.flight2?.upperLevelId ? levels.findIndex(level => level.id === geometry.flight2?.upperLevelId) : -1;
                       const lowerLevel = lowerLevelIndex >= 0 ? levels[lowerLevelIndex] : undefined;
-                      const baseZ = lowerLevel && /fondation/i.test(`${lowerLevel.id} ${lowerLevel.label}`) ? 0 : lowerLevelIndex >= 0 && lowerLevel ? levelElevation(lowerLevel, lowerLevelIndex) : z;
-                      const stairHeight = geometry?.landingZ ? geometry.landingZ * 2 : totalHeight;
-                      const topZ = baseZ + stairHeight;
-                      const middleZ = baseZ + stairHeight / 2;
-                      const middleHeight = stairHeight / 2;
+                      const middleLevel = middleLevelIndex >= 0 ? levels[middleLevelIndex] : undefined;
+                      const upperLevel = upperLevelIndex >= 0 ? levels[upperLevelIndex] : undefined;
+                      const baseZ = lowerLevelIndex >= 0 && lowerLevel ? floorTopElevation(lowerLevel, lowerLevelIndex) : z;
+                      const singleFloorStair = Boolean(geometry?.flight1?.upperLevelId && geometry?.flight2?.upperLevelId && geometry.flight1.upperLevelId === geometry.flight2.upperLevelId);
+                      const middleZ = singleFloorStair
+                        ? baseZ + (geometry?.landingZ ?? totalHeight / 2)
+                        : middleLevelIndex >= 0 && middleLevel
+                        ? floorTopElevation(middleLevel, middleLevelIndex)
+                        : baseZ + (geometry?.landingZ ?? totalHeight / 2);
+                      // La volée d’arrivée doit s’arrêter sur l’altitude réelle du niveau supérieur,
+                      // et non sur une hauteur cumulée approximative susceptible de dépasser le plancher.
+                      const topZ = upperLevelIndex >= 0 && upperLevel
+                        ? floorTopElevation(upperLevel, upperLevelIndex)
+                        : middleZ + (geometry?.landingZ ?? totalHeight / 2);
                       const center = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
                       const flight1 = geometry?.flight1;
                       const flight2 = geometry?.flight2;
-                      const firstLower = flight1 ? center(flight1.lowerA, flight1.lowerB) : center(baseA, baseB);
-                      const firstUpper = flight1 ? center(flight1.upperA, flight1.upperB) : center(midA, midB);
-                      const secondLower = flight2 ? center(flight2.lowerA, flight2.lowerB) : center(midA, midB);
-                      const secondUpper = flight2 ? center(flight2.upperA, flight2.upperB) : center(topA, topB);
-                      const firstFlight = flight1 ? inclinedSlabFromFourPoints(flight1, baseZ, middleZ, "flight-a-slab") : flight(firstLower, firstUpper, baseZ, middleZ, "flight-a");
-                      const secondFlight = flight2 ? inclinedSlabFromFourPoints(flight2, middleZ, topZ, "flight-b-slab") : flight(secondLower, secondUpper, middleZ, topZ, "flight-b");
+                      const flight1Metric = flight1 ? { ...flight1, lowerA: toMetricPoint(flight1.lowerA), lowerB: toMetricPoint(flight1.lowerB), upperA: toMetricPoint(flight1.upperA), upperB: toMetricPoint(flight1.upperB) } : undefined;
+                      const flight2Metric = flight2 ? { ...flight2, lowerA: toMetricPoint(flight2.lowerA), lowerB: toMetricPoint(flight2.lowerB), upperA: toMetricPoint(flight2.upperA), upperB: toMetricPoint(flight2.upperB) } : undefined;
+                      const firstLower = flight1Metric ? center(flight1Metric.lowerA, flight1Metric.lowerB) : center(baseA, baseB);
+                      const firstUpper = flight1Metric ? center(flight1Metric.upperA, flight1Metric.upperB) : center(midA, midB);
+                      const secondLower = flight2Metric ? center(flight2Metric.lowerA, flight2Metric.lowerB) : center(midA, midB);
+                      const secondUpper = flight2Metric ? center(flight2Metric.upperA, flight2Metric.upperB) : center(topA, topB);
+                      const firstFlight = flight1Metric ? inclinedSlabFromFourPoints(flight1Metric, baseZ, middleZ, "flight-a-slab") : flight(firstLower, firstUpper, baseZ, middleZ, "flight-a");
+                      const secondFlight = flight2Metric ? inclinedSlabFromFourPoints(flight2Metric, middleZ, topZ, "flight-b-slab") : flight(secondLower, secondUpper, middleZ, topZ, "flight-b");
                       const firstRun = { x: firstUpper.x - firstLower.x, y: firstUpper.y - firstLower.y };
                       const firstRunLength = Math.max(Math.hypot(firstRun.x, firstRun.y), 0.001);
                       const landingDepth = { x: firstRun.x / firstRunLength, y: firstRun.y / firstRunLength };
-                      const upperEdge = flight1 ? { x: flight1.upperB.x - flight1.upperA.x, y: flight1.upperB.y - flight1.upperA.y } : { x: 0, y: 1 };
+                      const upperEdge = flight1Metric ? { x: flight1Metric.upperB.x - flight1Metric.upperA.x, y: flight1Metric.upperB.y - flight1Metric.upperA.y } : { x: 0, y: 1 };
                       const upperEdgeLength = Math.max(Math.hypot(upperEdge.x, upperEdge.y), 0.001);
                       const landingLengthDirection = { x: upperEdge.x / upperEdgeLength, y: upperEdge.y / upperEdgeLength };
-                      const landingStart = flight1 ? flight1.upperA : { x: firstUpper.x, y: firstUpper.y - 0.5 };
+                      const landingStart = flight1Metric ? flight1Metric.upperA : { x: firstUpper.x, y: firstUpper.y - 0.5 };
                       const landingFarEdge = { x: landingStart.x + landingLengthDirection.x * 2, y: landingStart.y + landingLengthDirection.y * 2 };
                       const landingNearDepth = { x: landingStart.x + landingDepth.x, y: landingStart.y + landingDepth.y };
                       const landingFarDepth = { x: landingFarEdge.x + landingDepth.x, y: landingFarEdge.y + landingDepth.y };
                       const secondLowerForRender = secondLower;
                       const solidLanding = (worldPoints: Point[], elevation: number, prefix: string) => {
                         const thickness = 0.15;
-                        const top = worldPoints.map(point => project(point.x, point.y, elevation));
-                        const bottom = worldPoints.map(point => project(point.x, point.y, elevation - thickness));
+                        const top = worldPoints.map(point => projectMetric(point.x, point.y, elevation));
+                        const bottom = worldPoints.map(point => projectMetric(point.x, point.y, elevation - thickness));
                         const sides = worldPoints.map((_, index) => {
                           const next = (index + 1) % worldPoints.length;
                           return <polygon key={`${prefix}-side-${index}`} points={polygon([top[index], top[next], bottom[next], bottom[index]])} fill={color} fillOpacity=".78" stroke="#536b78" strokeWidth=".7" />;
@@ -739,12 +751,12 @@ export default function Building3DView({
                       const arrivalRun = { x: secondUpper.x - secondLower.x, y: secondUpper.y - secondLower.y };
                       const arrivalRunLength = Math.max(Math.hypot(arrivalRun.x, arrivalRun.y), 0.001);
                       const arrivalDirection = { x: arrivalRun.x / arrivalRunLength, y: arrivalRun.y / arrivalRunLength };
-                      const arrivalLateral = flight2
-                        ? { x: (flight2.upperA.x - flight2.upperB.x) / Math.max(Math.hypot(flight2.upperB.x - flight2.upperA.x, flight2.upperB.y - flight2.upperA.y), 0.001), y: (flight2.upperA.y - flight2.upperB.y) / Math.max(Math.hypot(flight2.upperB.x - flight2.upperA.x, flight2.upperB.y - flight2.upperA.y), 0.001) }
+                      const arrivalLateral = flight2Metric
+                        ? { x: (flight2Metric.upperA.x - flight2Metric.upperB.x) / Math.max(Math.hypot(flight2Metric.upperB.x - flight2Metric.upperA.x, flight2Metric.upperB.y - flight2Metric.upperA.y), 0.001), y: (flight2Metric.upperA.y - flight2Metric.upperB.y) / Math.max(Math.hypot(flight2Metric.upperB.x - flight2Metric.upperA.x, flight2Metric.upperB.y - flight2Metric.upperA.y), 0.001) }
                         : { x: 0, y: -1 };
                       const arrivalDepth = 1;
                       const arrivalLength = 2;
-                      const arrivalLandingStart = flight2?.upperB;
+                      const arrivalLandingStart = flight2Metric?.upperB;
                       const arrivalLandingWorld = arrivalLandingStart
                         ? [
                             arrivalLandingStart,

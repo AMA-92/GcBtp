@@ -1,3 +1,5 @@
+export const GRID_UNITS_PER_METER = 30;
+
 export function cumulativeGridPositions(distances: number[], count: number) {
   const positions = [0];
   for (let index = 0; index < Math.max(count - 1, 0); index += 1) {

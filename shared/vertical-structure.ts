@@ -27,6 +27,11 @@ export function postTopElevation(level: VerticalLevel, index: number) {
   return base + (isFoundationLevel(level) ? Math.min(height, 0.85) : height);
 }
 
+/** Cote du plancher haut brut d’un niveau, sans l’ajustement de tête de poteau. */
+export function floorTopElevation(level: VerticalLevel, index: number) {
+  return levelElevation(level, index) + levelHeight(level);
+}
+
 const foundationColumnBaseElevation = (base: number) => base - 0.35 + 0.18;
 
 export function columnBaseElevation(levels: VerticalLevel[], index: number) {

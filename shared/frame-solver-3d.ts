@@ -63,7 +63,7 @@ export function solveDenseSystem(matrix: number[][], rhs: number[], tolerance = 
   const n = rhs.length;
   if (matrix.length !== n || matrix.some(row => row.length !== n)) throw new Error("Matrice de rigidité non carrée.");
   const a = matrix.map((row, i) => [...row, rhs[i]]);
-  const scale = Math.max(1, ...matrix.flat().map(value => Math.abs(value)));
+  const scale = Math.max(1, matrix.reduce((maximum, row) => row.reduce((rowMaximum, value) => Math.max(rowMaximum, Math.abs(value)), maximum), 0));
   for (let col = 0; col < n; col++) {
     let pivot = col;
     for (let row = col + 1; row < n; row++) if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
@@ -224,7 +224,7 @@ function globalEndForcesFromLocal(p: number[], transform: number[][], offset: 0 
   return { fxKn: f[0], fyKn: f[1], fzKn: f[2], mxKnM: m[0], myKnM: m[1], mzKnM: m[2] };
 }
 
-function addRigidDiaphragmConstraints(K: number[][], model: AnalyticalModel, nodeIndex: Map<string, number>, warnings: string[]) {
+function addRigidDiaphragmConstraints(K: number[][], model: AnalyticalModel, nodeIndex: Map<string, number>, warnings: string[], frameNodeIndices: Set<number>) {
   const slabNodesByLevel = new Map<string, Set<string>>();
   for (const slab of model.surfaces.filter(item => item.kind === "slab")) {
     const nodes = slabNodesByLevel.get(slab.levelId) ?? new Set<string>(); slab.nodeIds.forEach(id => nodes.add(id)); slabNodesByLevel.set(slab.levelId, nodes);
@@ -232,10 +232,18 @@ function addRigidDiaphragmConstraints(K: number[][], model: AnalyticalModel, nod
   if (!slabNodesByLevel.size) return;
   // Penalty constraints implement the correct rigid-body kinematics relative to the first/master node:
   // ux_i = ux_m - rz_m*(y_i-y_m), uy_i = uy_m + rz_m*(x_i-x_m), rz_i = rz_m.
-  const maximumDiagonal = Math.max(1, ...K.map((row, index) => Math.abs(row[index] ?? 0)));
-  const penalty = maximumDiagonal * 1e7;
+  const maximumDiagonal = K.reduce((maximum, row, index) => Math.max(maximum, Math.abs(row[index] ?? 0)), 1);
+  // A penalty must be large enough to enforce the kinematic relation, but it
+  // must not grow without bound with the largest axial stiffness. An
+  // unbounded penalty makes the global matrix ill-conditioned and can turn a
+  // stable model into a false singularity during Gaussian elimination.
+  const penalty = Math.min(Math.max(maximumDiagonal * 1e5, 1e8), 1e12);
   slabNodesByLevel.forEach((nodeIds, levelId) => {
-    const ids = Array.from(nodeIds).filter(id => nodeIndex.has(id));
+    // The global frame solver owns only nodes attached to at least one frame.
+    // Slab/footing mesh vertices are handled by the surface solver and must
+    // not be introduced into the rigid diaphragm penalty system as free
+    // structural degrees of freedom.
+    const ids = Array.from(nodeIds).filter(id => nodeIndex.has(id) && frameNodeIndices.has(nodeIndex.get(id)!));
     if (ids.length < 3) { warnings.push(`Diaphragme ${levelId} non activé : au moins trois nœuds de dalle sont nécessaires.`); return; }
     const masterNode = model.nodes[nodeIndex.get(ids[0])!];
     const master = nodeIndex.get(ids[0])!;
@@ -331,7 +339,8 @@ export function solveGlobal3D(model: AnalyticalModel, loadModel: BuildingLoadMod
     if (frame.eccentricityM.start.some(v => Math.abs(v) > 1e-9) || frame.eccentricityM.end.some(v => Math.abs(v) > 1e-9)) warnings.push(`Excentrements nodaux appliqués à ${frame.sourceElementId}.`);
   }
 
-  if (options.rigidDiaphragm !== false) addRigidDiaphragmConstraints(baseK, model, nodeIndex, warnings);
+  const frameNodeIndices = new Set(elementData.flatMap(element => element.ids.map(id => Math.floor(id / 6))));
+  if (options.rigidDiaphragm !== false) addRigidDiaphragmConstraints(baseK, model, nodeIndex, warnings, frameNodeIndices);
 
   const zLevels = Array.from(new Set(nodes.map(node => Number(node.z.toFixed(6))))).sort((a, b) => a - b);
   const structuralByStory = new Map<number, number[]>();
@@ -357,10 +366,13 @@ export function solveGlobal3D(model: AnalyticalModel, loadModel: BuildingLoadMod
   if (!restrained.size && !springK.size) return { result: null, errors: ["Le modèle 3D ne possède aucun degré de liberté bloqué ou ressort."], warnings };
 
   const solveWithK = (K: number[][]) => {
-    const scale = Math.max(1, ...K.flat().map(value => Math.abs(value)));
+    // Do not spread the flattened global matrix into Math.max: a realistic
+    // model contains hundreds of thousands of entries and would overflow the
+    // JavaScript argument stack before the linear solve even starts.
+    const scale = Math.max(1, K.reduce((maximum, row) => row.reduce((rowMaximum, value) => Math.max(rowMaximum, Math.abs(value)), maximum), 0));
     const rowTolerance = scale * 1e-14;
     const free = Array.from({ length: nDof }, (_, i) => i).filter(i => !restrained.has(i) && K[i].some(value => Math.abs(value) > rowTolerance));
-    const inactive = Array.from({ length: nDof }, (_, i) => i).filter(i => !restrained.has(i) && !free.includes(i));
+    const inactive = Array.from({ length: nDof }, (_, i) => i).filter(i => frameNodeIndices.has(Math.floor(i / 6)) && !restrained.has(i) && !free.includes(i));
     if (inactive.length) warnings.push(`${inactive.length} degré(s) de liberté sans raideur active neutralisé(s) ; vérifier qu’il ne s’agit pas d’un mécanisme structurel.`);
     const displacement = Array(nDof).fill(0) as number[];
     if (free.length) {

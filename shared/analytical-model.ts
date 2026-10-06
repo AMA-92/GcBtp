@@ -1,7 +1,7 @@
 import { cumulativeGridPositions } from "./proportional-grid";
 import { resolveConcreteMaterial } from "./model-catalog";
 import { isSlabElementType } from "./floor-config";
-import { columnBaseElevation, elementElevation, levelElevation, postTopElevation } from "./vertical-structure";
+import { columnBaseElevation, elementElevation, floorTopElevation, levelElevation, postTopElevation } from "./vertical-structure";
 import { footingCenterOffset, type FootingDirectionSelection, type FootingLayoutMode } from "./footing-geometry";
 
 export const ANALYTICAL_SCHEMA_VERSION = 2 as const;
@@ -33,6 +33,7 @@ export type AnalyticalGraphicElement = {
   stairGeometry?: {
     flight1?: { lowerA: {x:number;y:number}; lowerB: {x:number;y:number}; upperA: {x:number;y:number}; upperB: {x:number;y:number}; lowerLevelId: string; upperLevelId: string };
     flight2?: { lowerA: {x:number;y:number}; lowerB: {x:number;y:number}; upperA: {x:number;y:number}; upperB: {x:number;y:number}; lowerLevelId: string; upperLevelId: string };
+    landingZ?: number;
   };
 };
 export type AnalyticalGraphicLevel = { id: string; label: string; elevation: string; height?: string; elements: AnalyticalGraphicElement[] };
@@ -229,6 +230,9 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
       if (!flights.length) {
         diagnostics.push({ severity: "warning", code: "stair-geometry-unresolved", message: `Escalier ${element.id} sans géométrie de volée explicite ; géométrie analytique omise.`, elementIds: [element.id], levelId: element.levelId });
       }
+      const singleFloorStair = flights.length >= 2 && flights[0].upperLevelId === flights[1].upperLevelId;
+      const singleFloorLower = singleFloorStair ? levelById.get(flights[0].lowerLevelId) : undefined;
+      const singleFloorUpper = singleFloorStair ? levelById.get(flights[1].upperLevelId) : undefined;
       flights.forEach((flight, flightIndex) => {
         const lower = levelById.get(flight.lowerLevelId);
         const upper = levelById.get(flight.upperLevelId);
@@ -242,7 +246,12 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
         // donc à la même cote que les poutres et les dalles porteuses. Utiliser
         // levelElevation() ici plaçait la volée en pied de niveau et empêchait
         // toute fusion avec les appuis supérieurs.
-        const z0 = elementElevation(lower.level, lower.index, "Dalle"), z1 = elementElevation(upper.level, upper.index, "Dalle");
+        const z0 = singleFloorStair && singleFloorLower && singleFloorUpper
+          ? (flightIndex === 0 ? floorTopElevation(singleFloorLower.level, singleFloorLower.index) : floorTopElevation(singleFloorLower.level, singleFloorLower.index) + (element.stairGeometry?.landingZ ?? 0))
+          : elementElevation(lower.level, lower.index, "Dalle");
+        const z1 = singleFloorStair && singleFloorLower && singleFloorUpper
+          ? (flightIndex === 0 ? floorTopElevation(singleFloorLower.level, singleFloorLower.index) + (element.stairGeometry?.landingZ ?? 0) : floorTopElevation(singleFloorUpper.level, singleFloorUpper.index))
+          : elementElevation(upper.level, upper.index, "Dalle");
         const flightGeometry = absoluteFlight ?? flight; const nodePoints = [point(flightGeometry.lowerA,z0),point(flightGeometry.lowerB,z0),point(flightGeometry.upperB,z1),point(flightGeometry.upperA,z1)];
         const section = sectionFor(element.type,element.section);
         addSurface({...element,id:`${element.id}:volée-${flightIndex+1}`} as AnalyticalGraphicElement & {levelId:string},"stair-flight",nodePoints,section);
@@ -253,7 +262,9 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
         const middle = levelById.get(first.upperLevelId);
         const upper = levelById.get(second.upperLevelId);
         if (middle) {
-          const z = elementElevation(middle.level, middle.index, "Dalle");
+          const z = singleFloorStair && singleFloorLower
+            ? floorTopElevation(singleFloorLower.level, singleFloorLower.index) + (element.stairGeometry?.landingZ ?? 0)
+            : elementElevation(middle.level, middle.index, "Dalle");
           addSurface({...element, id: `${element.id}:palier-intermediaire`} as AnalyticalGraphicElement & { levelId: string }, "stair-flight", [
             [element.absoluteStairGeometry?.flight1?.upperA.x ?? coordinateAt(first.upperA.x, xPositions), element.absoluteStairGeometry?.flight1?.upperA.y ?? coordinateAt(first.upperA.y, yPositions), z],
             [element.absoluteStairGeometry?.flight1?.upperB.x ?? coordinateAt(first.upperB.x, xPositions), element.absoluteStairGeometry?.flight1?.upperB.y ?? coordinateAt(first.upperB.y, yPositions), z],
@@ -262,15 +273,19 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
           ], sectionFor(element.type, element.section));
         }
         if (upper) {
-          const run = { x: second.upperA.x - second.lowerA.x, y: second.upperA.y - second.lowerA.y };
+          const absoluteSecond = element.absoluteStairGeometry?.flight2;
+          const secondGeometry = absoluteSecond ?? second;
+          const run = { x: secondGeometry.upperA.x - secondGeometry.lowerA.x, y: secondGeometry.upperA.y - secondGeometry.lowerA.y };
           const runLength = Math.max(Math.hypot(run.x, run.y), 0.001);
           const depth = { x: run.x / runLength, y: run.y / runLength };
-          const edge = { x: second.upperB.x - second.upperA.x, y: second.upperB.y - second.upperA.y };
+          const edge = { x: secondGeometry.upperB.x - secondGeometry.upperA.x, y: secondGeometry.upperB.y - secondGeometry.upperA.y };
           const edgeLength = Math.max(Math.hypot(edge.x, edge.y), 0.001);
           const lateral = { x: -edge.y / edgeLength, y: edge.x / edgeLength };
-          const start = second.upperB;
-          const z = elementElevation(upper.level, upper.index, "Dalle");
-          const corner = (x: number, y: number): [number, number, number] => [coordinateAt(x, xPositions), coordinateAt(y, yPositions), z];
+          const start = secondGeometry.upperB;
+          const z = singleFloorStair
+            ? floorTopElevation(upper.level, upper.index)
+            : elementElevation(upper.level, upper.index, "Dalle");
+          const corner = (x: number, y: number): [number, number, number] => absoluteSecond ? [x, y, z] : [coordinateAt(x, xPositions), coordinateAt(y, yPositions), z];
           addSurface({...element, id: `${element.id}:palier-arrivee`} as AnalyticalGraphicElement & { levelId: string }, "stair-flight", [
             corner(start.x, start.y),
             corner(start.x + lateral.x * 2, start.y + lateral.y * 2),

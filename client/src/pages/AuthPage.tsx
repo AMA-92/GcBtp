@@ -67,17 +67,6 @@ export default function AuthPage({ initialMode = "login" }: { initialMode?: Mode
     }
   };
 
-  const googleLogin = async () => {
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
-      if (error) throw error;
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Connexion Google indisponible.");
-      setBusy(false);
-    }
-  };
-
   const title = mode === "login" ? "Bon retour ! 👋" : mode === "signup" ? "Créer votre compte" : mode === "reset" ? "Nouveau mot de passe" : "Réinitialiser le mot de passe";
   const subtitle = mode === "login" ? "Connectez-vous à votre espace de travail." : mode === "signup" ? "Créez votre espace professionnel GcBtp en quelques secondes." : mode === "reset" ? "Choisissez un nouveau mot de passe sécurisé pour votre compte." : "Saisissez votre e-mail pour recevoir un lien sécurisé.";
 
@@ -115,8 +104,6 @@ export default function AuthPage({ initialMode = "login" }: { initialMode?: Mode
               {mode === "login" && <div className="flex items-center justify-end py-1 text-xs"><button type="button" onClick={() => setMode("forgot")} className="font-bold text-[#2864e8] hover:underline">Mot de passe oublié ?</button></div>}
               <button disabled={busy} className="gcbtp-auth-primary" type="submit">{busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : mode === "signup" ? "Créer mon compte" : mode === "reset" ? "Enregistrer le nouveau mot de passe" : "Envoyer le lien"}{!busy && <ArrowRight className="h-4 w-4" />}</button>
             </form>
-
-            {(mode === "login" || mode === "signup") && <><div className="my-6 flex items-center gap-4 text-[11px] font-bold text-[#9aa6ad]"><div className="h-px flex-1 bg-[#e3e9ed]" /><span>OU</span><div className="h-px flex-1 bg-[#e3e9ed]" /></div><button disabled={busy} type="button" onClick={googleLogin} className="gcbtp-auth-google"><span className="text-lg font-extrabold">G</span> Continuer avec Google</button></>}
 
             <div className="mt-8 text-center text-sm text-[#71808a]">
               {mode === "login" ? <>Vous n'avez pas de compte ? <button type="button" onClick={() => setMode("signup")} className="font-bold text-[#2864e8] hover:underline">Créer un compte</button></> : <button type="button" onClick={() => setMode("login")} className="font-bold text-[#2864e8] hover:underline">← Retour à la connexion</button>}

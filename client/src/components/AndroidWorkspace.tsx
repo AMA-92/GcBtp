@@ -10,7 +10,7 @@ import { DSRCAD_MODULES, DSRCAD_NORMS, DSRCAD_COUNTRIES } from "@shared/dsrcad";
 import { AFRICAN_COUNTRIES, getRegulatoryRule, getRegulatorySiteProfile } from "@shared/regulatory";
 import { buildLoadDescentNote, calculateLoadDescent, MATERIALS, type LoadCase, type Material } from "@shared/load-engine";
 import { downloadLocalPdf } from "@shared/local-pdf";
-import { calculateFoundation, FOUNDATIONS, SOILS, type FoundationType, type SoilType } from "@shared/foundation-engine";
+import { calculateFoundation, DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA, FOUNDATIONS, SOILS, type FoundationType, type SoilType } from "@shared/foundation-engine";
 import { ADDITIONAL_PERMANENT_LOADS, CONCRETE_CLASSES, IMPOSED_LOAD_PROFILES, MATERIAL_CATALOG, STRUCTURAL_LOAD_PROFILES, STRUCTURAL_SUPPORT_CATALOG } from "@shared/load-catalog";
 import { trpc } from "@/lib/trpc";
 import { Calculator, ChevronLeft, Copy, Download, Eye, FileText, Grid3X3, Home, MoreHorizontal, Plus, Rotate3D, Save, Settings2, Sparkles, Wrench } from "lucide-react";
@@ -67,7 +67,7 @@ function LoadDescentScreen({ onSave }: { onSave: (details: string) => void }) {
   const [thickness, setThickness] = useState('0.15');
   const [soil, setSoil] = useState<SoilType>('argile');
   const [foundationType, setFoundationType] = useState<FoundationType>('semelle isolée');
-  const [allowableBearing, setAllowableBearing] = useState('150');
+  const [allowableBearing, setAllowableBearing] = useState(String(DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA));
   const [safetyFactor, setSafetyFactor] = useState('2.5');
   const [foundationDepth, setFoundationDepth] = useState('1.2');
   const [groundwaterDepth, setGroundwaterDepth] = useState('3');
