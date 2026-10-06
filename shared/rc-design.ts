@@ -127,7 +127,7 @@ export type RCTieBeamDemand = RCMemberDemand & { type: "beam" };
 
 export type RCDesignResult = {
   schemaVersion: typeof RC_DESIGN_SCHEMA_VERSION;
-  status: "pré-étude — non réglementaire";
+  status: "calculé numériquement — non certifié" | "bloqué — calcul numérique incomplet";
   standard: string;
   nationalAnnex: string;
   sourceReference: string;
@@ -138,6 +138,15 @@ export type RCDesignResult = {
   errors: string[];
   warnings: string[];
   blockers: string[];
+  numericalSummary: {
+    memberCount: number;
+    slabCount: number;
+    footingCount: number;
+    checkCount: number;
+    passedCheckCount: number;
+    failedCheckCount: number;
+    blockedCheckCount: number;
+  };
 };
 
 export function deriveRCMemberDemandsFromPlane(input: {
@@ -377,11 +386,19 @@ function designFooting(demand: RCFootingDemand, basis: RCDesignBasis, overrides:
   const punchingV=Math.max(0,demand.axialKn-qAvg*punchingArea);
   const punchingStress=punchingV*1000/Math.max(punchingPerimeter*(d/1000)*1000,1);
   const punchingResistance=basis.concreteShearStressLimitMpa;
+  const cantileverX=Math.max(0,demand.widthM/2-demand.columnWidthM/2-d/1000);
+  const cantileverY=Math.max(0,demand.lengthM/2-demand.columnDepthM/2-d/1000);
+  const oneWayShearX=Math.max(0,qAvg*demand.lengthM*cantileverX - demand.axialKn*(cantileverX/Math.max(demand.widthM, 1e-9)));
+  const oneWayShearY=Math.max(0,qAvg*demand.widthM*cantileverY - demand.axialKn*(cantileverY/Math.max(demand.lengthM, 1e-9)));
+  const oneWayStressX=oneWayShearX*1000/Math.max(demand.lengthM*1000*d, 1);
+  const oneWayStressY=oneWayShearY*1000/Math.max(demand.widthM*1000*d, 1);
   const checks=[
     check("bearing-screen","Pression moyenne sous semelle",qAvg,demand.soilBearingKPa,"kPa","q = N/(B·L) ≤ qadm géotechnique",combinationId,combinationName),
     check("flexion-x","Flexion X · As",asXReq,dx.areaMm2,"mm²","As,prov ≥ max(As,req; As,min)",combinationId,combinationName),
     check("flexion-y","Flexion Y · As",asYReq,dy.areaMm2,"mm²","As,prov ≥ max(As,req; As,min)",combinationId,combinationName),
     check("punching","Poinçonnement",punchingStress,punchingResistance,"MPa","vEd ≤ vRd,c selon base BA déclarée",combinationId,combinationName),
+    check("one-way-shear-x","Cisaillement unidirectionnel X",oneWayStressX,punchingResistance,"MPa","vEd = VEd/(b·d) ≤ vRd,c à d de la face du poteau",combinationId,combinationName),
+    check("one-way-shear-y","Cisaillement unidirectionnel Y",oneWayStressY,punchingResistance,"MPa","vEd = VEd/(b·d) ≤ vRd,c à d de la face du poteau",combinationId,combinationName),
     check("spacing-x","Espacement libre X",basis.minClearSpacingMm,dx.clearSpacingMm,"mm","sclair ≥ minimum déclaré",combinationId,combinationName),
     check("spacing-y","Espacement libre Y",basis.minClearSpacingMm,dy.clearSpacingMm,"mm","sclair ≥ minimum déclaré",combinationId,combinationName),
     emptyCheck("anchorage","Ancrage des armatures de semelle","mm",combinationId,combinationName,"lb,rqd/lbd selon EN 1992 et annexe nationale"),
@@ -634,5 +651,16 @@ export function designReinforcedConcrete(input: { basis: RCDesignBasis; members:
     scheduleMap.set(bar.diameterMm, { totalLengthM: current.totalLengthM + bar.totalLengthM, massKg: current.massKg + bar.massKg });
   }
   const schedule = Array.from(scheduleMap, ([diameterMm, totals]) => ({ diameterMm, ...totals })).sort((a, b) => a.diameterMm - b.diameterMm);
-  return { schemaVersion: 1, status: "pré-étude — non réglementaire", standard: input.basis.standard, nationalAnnex: input.basis.nationalAnnex, sourceReference: input.basis.sourceReference, materialBasis: input.basis, regulatoryReady: false, elements, schedule, errors, warnings, blockers };
+  const checks = elements.flatMap(element => element.checks);
+  const numericalSummary = {
+    memberCount: input.members.length,
+    slabCount: input.slabs.length,
+    footingCount: input.foundations?.length ?? 0,
+    checkCount: checks.length,
+    passedCheckCount: checks.filter(item => item.status === "satisfaisant").length,
+    failedCheckCount: checks.filter(item => item.status === "non satisfaisant").length,
+    blockedCheckCount: checks.filter(item => item.status === "bloqué" || item.status === "à vérifier").length,
+  };
+  if (numericalSummary.checkCount === 0 || numericalSummary.blockedCheckCount > 0) blockers.push("Le calcul numérique est incomplet : chaque contrôle requis doit produire une valeur numérique et un verdict exploitable.");
+  return { schemaVersion: 1, status: errors.length || numericalSummary.checkCount === 0 ? "bloqué — calcul numérique incomplet" : "calculé numériquement — non certifié", standard: input.basis.standard, nationalAnnex: input.basis.nationalAnnex, sourceReference: input.basis.sourceReference, materialBasis: input.basis, regulatoryReady: false, elements, schedule, errors, warnings, blockers, numericalSummary };
 }

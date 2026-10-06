@@ -278,7 +278,8 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       </div>)}
     </div>}
     {result && <div className="space-y-2 rounded border border-[#ead3a8] bg-white p-2">
-      <div className="font-bold">Résultat · {result.status} · référentiel déclaré : {result.standard || "non renseigné"} · annexe : {result.nationalAnnex || "non renseignée"}</div>
+      <div className="font-bold">Résultat numérique · {result.status} · référentiel déclaré : {result.standard || "non renseigné"} · annexe : {result.nationalAnnex || "non renseignée"}</div>
+      <div className="rounded bg-[#eef8f7] p-2">Couverture numérique : {result.numericalSummary.memberCount} membre(s), {result.numericalSummary.slabCount} dalle(s), {result.numericalSummary.footingCount} semelle(s) · {result.numericalSummary.passedCheckCount}/{result.numericalSummary.checkCount} contrôles satisfaisants · {result.numericalSummary.failedCheckCount} non satisfaisant(s) · {result.numericalSummary.blockedCheckCount} bloqué(s)/à vérifier.</div>
       {dirty && <div className="rounded bg-amber-100 p-2 font-bold text-amber-900">Saisie ou proposition modifiée — les résultats affichés sont périmés. Recalculez avant de les exporter.</div>}
       {result.errors.map((error, index) => <div key={`rc-error-${index}`} className="rounded bg-red-50 p-2 text-red-800">Bloqué · {error}</div>)}
       {result.blockers.map((blocker, index) => <div key={`rc-blocker-${index}`} className="rounded bg-amber-50 p-2 text-amber-900">Limite réglementaire · {blocker}</div>)}

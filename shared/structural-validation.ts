@@ -97,7 +97,9 @@ export function validateStructuralModel(levels: ValidationLevel[], toleranceM = 
   for (const [key, ids] of duplicateKeys) if (ids.length > 1) issues.push({ severity: "warning", code: "duplicate-elements", message: `Éléments potentiellement dupliqués : ${ids.join(", ")} (${key}).` });
 
   return {
-    status: issues.some(issue => issue.severity === "error") ? "non_conforme" : issues.length ? "a_verifier" : "conforme",
+    // Ce contrôle ne résout ni les efforts internes ni les armatures : une
+    // géométrie cohérente ne peut donc jamais être affichée « conforme ».
+    status: issues.some(issue => issue.severity === "error") ? "non_conforme" : "a_verifier",
     issues,
     checkedLevels: ordered.length,
     checkedElements: allElements.length,

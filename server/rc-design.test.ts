@@ -159,6 +159,10 @@ it("ferraille une semelle à partir de la réaction et produit le métré acier"
   expect(result.elements[0].reinforcement.map(item => item.id)).toEqual(expect.arrayContaining(["S1:x", "S1:y"]));
   expect(result.schedule.length).toBeGreaterThan(0);
   expect(result.elements[0].checks.map(item => item.id)).toEqual(expect.arrayContaining(["bearing-screen", "flexion-x", "flexion-y", "punching"]));
+  expect(result.elements[0].checks.map(item => item.id)).toEqual(expect.arrayContaining(["one-way-shear-x", "one-way-shear-y"]));
+  expect(result.numericalSummary.footingCount).toBe(1);
+  expect(result.numericalSummary.checkCount).toBeGreaterThan(0);
+  expect(result.status).toBe("calculé numériquement — non certifié");
 });
 
 describe("RC section optimization", () => {

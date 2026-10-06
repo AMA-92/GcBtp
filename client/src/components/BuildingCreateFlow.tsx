@@ -773,7 +773,8 @@ export default function BuildingCreateFlow({
       shearKn: Math.abs(record.horizontalReactionKn),
       momentXKnM: record.momentAxis === "x" ? Math.abs(record.momentReactionKnM) : 0,
       momentYKnM: record.momentAxis === "y" ? Math.abs(record.momentReactionKnM) : 0,
-      soilBearingKPa: Number.parseFloat(proposeSoil(selected?.country ?? country, city || selected?.city || "", location || selected?.location || "").qadm) || 0,
+      // Valeur projet imposée par l'étude géotechnique moyenne commune.
+      soilBearingKPa: selected?.soil?.bearingCapacityAdmissibleKPa ?? DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
     }));
   }, [analyticalModel, automaticFoundationResult, solverCombinationId, loadProgram.combinations, selected, country, city, location]);
 
@@ -5382,9 +5383,10 @@ export default function BuildingCreateFlow({
                           ...climateAnalysis.warnings.map(message => `Avertissement action climatique : ${message}`),
                         ] : ["Analyse climatique/sismique non exécutée dans cette session."]),
                         "",
-                        "PRÉ-DIMENSIONNEMENT BÉTON ARMÉ — NON RÉGLEMENTAIRE",
+                        "DIMENSIONNEMENT NUMÉRIQUE BÉTON ARMÉ — NON CERTIFIÉ",
                         ...(rcDesignResult ? [
                           `Statut : ${rcDesignResult.status} · référentiel ${rcDesignResult.standard || "non renseigné"} · annexe ${rcDesignResult.nationalAnnex || "non renseignée"} · source ${rcDesignResult.sourceReference || "non renseignée"}`,
+                          `Couverture numérique : ${rcDesignResult.numericalSummary.memberCount} membre(s) · ${rcDesignResult.numericalSummary.slabCount} dalle(s) · ${rcDesignResult.numericalSummary.footingCount} semelle(s) · ${rcDesignResult.numericalSummary.passedCheckCount}/${rcDesignResult.numericalSummary.checkCount} contrôles satisfaisants · ${rcDesignResult.numericalSummary.failedCheckCount} non satisfaisant(s) · ${rcDesignResult.numericalSummary.blockedCheckCount} bloqué(s)/à vérifier`,
                           `Matériaux/détails saisis : fck ${rcDesignResult.materialBasis.fckMpa} MPa · fyk ${rcDesignResult.materialBasis.fykMpa} MPa · γc ${rcDesignResult.materialBasis.gammaC} · γs ${rcDesignResult.materialBasis.gammaS} · αcc ${rcDesignResult.materialBasis.alphaCC} · enrobage ${rcDesignResult.materialBasis.coverMm} mm · ρmin/max ${rcDesignResult.materialBasis.minReinforcementRatio}/${rcDesignResult.materialBasis.maxReinforcementRatio} · τRd,c ${rcDesignResult.materialBasis.concreteShearStressLimitMpa} MPa · τbd ${rcDesignResult.materialBasis.bondStressMpa} MPa · saisie confirmée ${rcDesignResult.materialBasis.basisConfirmed}`,
                           ...rcDesignResult.elements.flatMap(item => [
                             `${item.type} ${item.elementId} · combinaison gouvernante déclarée ${item.combinationName} (${item.combinationId})`,
