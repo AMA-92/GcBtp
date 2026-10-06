@@ -1,9 +1,17 @@
+import { DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA, DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE } from "./foundation-engine";
+
 export type SoilProposal = { soil: string; qadm: string; groundwater: string; status: "provisoire"; basis: string };
 
-export function proposeSoil(country: string, city: string, location: string): SoilProposal {
-  const text = `${country} ${city} ${location}`.toLowerCase();
-  if (/lagos|tanger|casablanca|alexandrie|delta|cotonou/.test(text)) return { soil: "Sol sablo-limoneux / alluvial", qadm: "120 kPa", groundwater: "Nappe potentiellement proche — à confirmer", status: "provisoire", basis: "Proposition régionale, non substitutive à une étude géotechnique" };
-  if (/dakar|nouakchott|tunis|windhoek|gaborone/.test(text)) return { soil: "Sol sableux", qadm: "180 kPa", groundwater: "Nappe non déduite — à confirmer", status: "provisoire", basis: "Proposition régionale, non substitutive à une étude géotechnique" };
-  if (country === "Côte d’Ivoire" && /abidjan/.test(text)) return { soil: "Sol latéritique / argilo-sableux", qadm: "150 kPa", groundwater: "Nappe variable — à confirmer", status: "provisoire", basis: "Proposition régionale, non substitutive à une étude géotechnique" };
-  return { soil: "Sol à portance moyenne", qadm: "150 kPa", groundwater: "Nappe à confirmer", status: "provisoire", basis: "Aucune donnée géotechnique locale fournie" };
+/**
+ * Une ville ou une région ne suffit pas à déduire les paramètres géotechniques.
+ * GcBtp ne fournit donc qu'une hypothèse de projet explicitement provisoire.
+ */
+export function proposeSoil(_country: string, _city: string, _location: string): SoilProposal {
+  return {
+    soil: "Sol non caractérisé",
+    qadm: `${DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA} kPa`,
+    groundwater: "Nappe et paramètres à confirmer par l'étude géotechnique",
+    status: "provisoire",
+    basis: `${DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE} — la localisation seule ne permet pas de déduire la portance du sol`,
+  };
 }

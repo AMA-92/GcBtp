@@ -3,9 +3,10 @@ import { mapFoundationReactions, checkFoundationReaction, type FoundationReactio
 import type { AnalyticalModel } from "@shared/analytical-model";
 import type { FramePlane, PlaneFrameResult } from "@shared/frame-solver-2d";
 import { DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA, DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE } from "@shared/foundation-engine";
+import { FRENCH_EUROCODE_PROFILE } from "@shared/french-standard-profile";
 
 export type FoundationPanelEvaluation = {
-  basis: { soilName: string; source: string; allowableBearingKPa: number | null; bearingSafetyFactor: number; slidingSafetyFactor: number; frictionAngleDeg: number; concreteShearCapacityKPa: number | null; subgradeModulusKnM3: number | null; allowableSettlementMm: number | null };
+  basis: { soilName: string; source: string; allowableBearingKPa: number | null; bearingSafetyFactor: number; slidingSafetyFactor: number; frictionAngleDeg: number | null; concreteShearCapacityKPa: number | null; subgradeModulusKnM3: number | null; allowableSettlementMm: number | null };
   rows: Array<{ footingId: string; columnId: string; reaction: FoundationReactionRecord; result: FoundationReactionResult | null; error?: string }>;
   warnings: string[];
 };
@@ -26,17 +27,27 @@ const parseOptional = (value: string): number | null => {
   const parsed = Number(value.replace(",", "."));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
+const parseOptionalAngle = (value: string): number | null => {
+  if (!value.trim()) return null;
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 && parsed < 60 ? parsed : null;
+};
 const statusClass = (status: string) => status === "satisfaisant" ? "bg-emerald-50 text-emerald-800" : status === "insuffisant" ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-900";
 
 export default function FoundationReactionPanel({ model, result, gravityResult, plane, soilName, suggestedBearingKPa, suggestedSource, onResultChange }: Props) {
-  const [bearing, setBearing] = useState(String(DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA));
-  const [source, setSource] = useState(DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE);
-  const [bearingSafetyFactor, setBearingSafetyFactor] = useState("1.5");
-  const [slidingSafetyFactor, setSlidingSafetyFactor] = useState("1.5");
-  const [frictionAngle, setFrictionAngle] = useState("30");
+  const [bearing, setBearing] = useState(String(suggestedBearingKPa ?? DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA));
+  const [source, setSource] = useState(suggestedSource || DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE);
+  const [bearingSafetyFactor, setBearingSafetyFactor] = useState("1");
+  const [slidingSafetyFactor, setSlidingSafetyFactor] = useState("1");
+  const [frictionAngle, setFrictionAngle] = useState("");
   const [concreteShearCapacity, setConcreteShearCapacity] = useState("");
   const [subgradeModulus, setSubgradeModulus] = useState("");
   const [allowableSettlement, setAllowableSettlement] = useState("");
+
+  useEffect(() => {
+    if (suggestedBearingKPa !== null && Number.isFinite(suggestedBearingKPa) && suggestedBearingKPa > 0) setBearing(String(suggestedBearingKPa));
+    if (suggestedSource) setSource(suggestedSource);
+  }, [suggestedBearingKPa, suggestedSource]);
 
   const effectiveResult = gravityResult ?? result;
   const mapped = useMemo(() => {
@@ -45,7 +56,7 @@ export default function FoundationReactionPanel({ model, result, gravityResult, 
     return gravityResult ? { ...mappedResult, warnings: mappedResult.warnings.filter(message => !message.startsWith("Réactions projetées depuis le plan")) } : mappedResult;
   }, [model, effectiveResult, plane, gravityResult]);
   const bearingKPa = parseOptional(bearing);
-  const phiDeg = parseOptional(frictionAngle);
+  const phiDeg = parseOptionalAngle(frictionAngle);
   const punchingKPa = parseOptional(concreteShearCapacity);
   const modulus = parseOptional(subgradeModulus);
   const settlementLimit = parseOptional(allowableSettlement);
@@ -54,7 +65,7 @@ export default function FoundationReactionPanel({ model, result, gravityResult, 
     if (!bearingKPa) warnings.push("qadm géotechnique absent : aucune vérification de portance ne peut être interprétée.");
     if (!source.trim()) warnings.push("Provenance géotechnique non renseignée.");
     const rows = mapped.records.map(record => {
-      if (!bearingKPa || phiDeg === null) return { footingId: record.footingId, columnId: record.columnId, reaction: record, result: null, error: "Renseignez qadm et l’angle de frottement issus d’une étude géotechnique." };
+      if (!bearingKPa) return { footingId: record.footingId, columnId: record.columnId, reaction: record, result: null, error: "Renseignez un qadm de projet ou issu d’une étude géotechnique." };
       const footingSelfWeightKn = record.widthXM * record.widthYM * record.thicknessM * 25;
       const input: FoundationReactionInput = {
         ...record,
@@ -77,13 +88,13 @@ export default function FoundationReactionPanel({ model, result, gravityResult, 
   useEffect(() => { onResultChange?.(evaluation); }, [evaluation, onResultChange]);
 
   return <section className="space-y-2 rounded-xl border border-[#bddbd8] bg-[#f5fbfa] p-3 text-[10px] text-[#36585b]">
-    <div><b className="text-[12px] text-[#087f7f]">Fondations · réactions du solveur global 3D</b><div className="mt-1 rounded bg-amber-100 p-2 text-amber-900"><b>Pré-étude indicative — non certifiée.</b> Les réactions sont issues du portique spatial 3D (axial, flexion biaxiale et torsion) pour la combinaison gravitaire G/Q. Les diaphragmes, le second ordre et les non-linéarités restent exclus.</div></div>
+    <div><b className="text-[12px] text-[#087f7f]">Fondations · réactions du solveur global 3D</b><div className="mt-1 rounded bg-amber-100 p-2 text-amber-900"><b>Pré-étude indicative — non certifiée.</b> Références françaises : {FRENCH_EUROCODE_PROFILE.geotechnicalReference}. qadm est une hypothèse de projet, pas une donnée normative. Les facteurs additionnels de cet écran ne remplacent pas les justifications de NF EN 1997-1/NA et NF P 94-261/A1; φ, nappe, tassements et paramètres de sol doivent provenir de l’étude géotechnique. Les réactions utilisent le solveur spatial 3D pour la combinaison gravitaire G/Q; diaphragmes, second ordre et non-linéarités restent exclus.</div></div>
     <div className="grid grid-cols-2 gap-2">
       <label>Sol proposé — à confirmer<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={soilName} readOnly /></label>
-      <label>qadm projet fixe · kPa<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-[#eef8f7] px-2 font-bold" value={bearing} readOnly aria-readonly="true" /></label>
-      <label>φ · degrés<input type="number" min="0" max="60" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={frictionAngle} onChange={event => setFrictionAngle(event.target.value)} /></label>
-      <label>γ portance<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={bearingSafetyFactor} onChange={event => setBearingSafetyFactor(event.target.value)} /></label>
-      <label>γ glissement<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={slidingSafetyFactor} onChange={event => setSlidingSafetyFactor(event.target.value)} /></label>
+      <label>qadm projet · kPa (pré-étude)<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-[#eef8f7] px-2 font-bold" value={bearing} readOnly aria-readonly="true" /></label>
+      <label>φ · degrés, selon l’étude<input type="number" min="0" max="59.99" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={frictionAngle} onChange={event => setFrictionAngle(event.target.value)} placeholder="À renseigner depuis l’étude" /></label>
+      <label>Facteur additionnel de portance<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={bearingSafetyFactor} onChange={event => setBearingSafetyFactor(event.target.value)} /></label>
+      <label>Facteur additionnel de glissement<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={slidingSafetyFactor} onChange={event => setSlidingSafetyFactor(event.target.value)} /></label>
       <label>Provenance géotechnique<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={source} onChange={event => setSource(event.target.value)} placeholder="Étude, page, date" /></label>
       <label>Capacité de poinçonnement vérifiée · kPa<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={concreteShearCapacity} onChange={event => setConcreteShearCapacity(event.target.value)} placeholder="Sans détail BA : non vérifié" /></label>
       <label>Module de réaction k · kN/m³<input type="number" min="1" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={subgradeModulus} onChange={event => setSubgradeModulus(event.target.value)} placeholder="Étude géotechnique" /></label>

@@ -1,11 +1,14 @@
 import { distributeFloorToBeams, type BeamSupport, type RectangularFloor, type TributaryContribution, type PropagatedLoad } from "./tributary-load";
 import type { FloorConfig } from "./floor-config";
-import { defaultBalconyFloorConfig, isSlabElementType } from "./floor-config";
+import { defaultBalconyFloorConfig, defaultFloorConfig, isSlabElementType } from "./floor-config";
 import { MATERIAL_CATALOG } from "./load-catalog";
-import { calculateStairPermanentLoad } from "./stair-load";
+import { calculateStairSurfaceLoads, type StairFlightPlan } from "./stair-load";
+import { FRENCH_EUROCODE_ACTION_CATALOG } from "./french-load-catalog";
 import { checkRectangularSurfaceEdgeSupports, type RectangularSurfaceEdge } from "./surface-analysis";
 
-export type BuildingElementForLoads = { id: string; type: string; section?: string; x: number; y: number; x2?: number; y2?: number; levelId?: string; floorConfig?: Partial<FloorConfig>; stairGeometry?: { flight1?: { lowerA: { x: number; y: number }; lowerB: { x: number; y: number }; upperA: { x: number; y: number }; upperB: { x: number; y: number }; lowerLevelId: string; upperLevelId: string }; flight2?: { lowerA: { x: number; y: number }; lowerB: { x: number; y: number }; upperA: { x: number; y: number }; upperB: { x: number; y: number }; lowerLevelId: string; upperLevelId: string }; baseA?: { x: number; y: number }; baseB?: { x: number; y: number }; midA?: { x: number; y: number }; midB?: { x: number; y: number }; topA?: { x: number; y: number }; topB?: { x: number; y: number }; landingZ: number } };
+type StairFlightCoordinates = StairFlightPlan & { lowerLevelId: string; upperLevelId: string };
+type StairGeometryForLoads = { flight1?: StairFlightCoordinates; flight2?: StairFlightCoordinates; baseA?: { x: number; y: number }; baseB?: { x: number; y: number }; midA?: { x: number; y: number }; midB?: { x: number; y: number }; topA?: { x: number; y: number }; topB?: { x: number; y: number }; landingZ?: number };
+export type BuildingElementForLoads = { id: string; type: string; section?: string; x: number; y: number; x2?: number; y2?: number; levelId?: string; floorConfig?: Partial<FloorConfig>; stairGeometry?: StairGeometryForLoads; absoluteStairGeometry?: { flight1?: StairFlightPlan; flight2?: StairFlightPlan } };
 export type BuildingLoadRow = {
   id: string;
   label: string;
@@ -26,6 +29,7 @@ export type BuildingLoadModel = {
   beamToColumns: Record<string, string[]>;
   columnToFoundation: Record<string, string>;
   floors: RectangularFloor[];
+  surfaceAssignments: Array<{ id: string; parentElementId: string; meshSurfaceId: string; loadName: string; sourceType: string; kind: "floor" | "flight" | "landing" | "balcony"; areaM2: number; gkKnM2: number; qkKnM2: number; gkKn: number; qkKn: number }>;
   beams: BeamSupport[];
   warnings: string[];
   propagation: { beams: Record<string, PropagatedLoad>; columns: Record<string, PropagatedLoad>; foundations: Record<string, PropagatedLoad>; warnings: string[] };
@@ -36,6 +40,8 @@ export type BuildingLoadModel = {
 
 const EPSILON = 1e-6;
 const CONCRETE_UNIT_WEIGHT = MATERIAL_CATALOG.find(item => item.id === "beton-arme")?.unitWeightKnM3 ?? 25;
+const GAMMA_G = FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.permanentUnfavourable;
+const GAMMA_Q = FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.variableUnfavourable;
 const near = (a: number, b: number) => Math.abs(a - b) <= EPSILON;
 const samePoint = (a: { x: number; y: number }, b: { x: number; y: number }) => near(a.x, b.x) && near(a.y, b.y);
 const numeric = (value: unknown, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -71,45 +77,90 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
   const levelHeights = options.levelHeights ?? {};
   const levelHeight = (id: string) => Math.max(numeric(levelHeights[id], id === "foundation" ? 1 : 3.2), 0.1);
   for (const id of discovered) if (!levelOrder.includes(id)) levelOrder.push(id);
+  const surfaceAssignments: BuildingLoadModel["surfaceAssignments"] = [];
   const floors: RectangularFloor[] = elements.filter(e => (isSlabElementType(e.type) || e.type === "Escaliers") && e.x2 !== undefined && e.y2 !== undefined).map(e => {
     const x1 = Math.min(e.x, e.x2 as number), x2 = Math.max(e.x, e.x2 as number), y1 = Math.min(e.y, e.y2 as number), y2 = Math.max(e.y, e.y2 as number);
     const rectArea = (a: { x: number; y: number }, b: { x: number; y: number }) => {
       const start = metricPoint(a), end = metricPoint(b);
       return Math.abs((end.x - start.x) * (end.y - start.y));
     };
-    const intersectionArea = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }) => {
-      const [startA, endA, startB, endB] = [a, b, c, d].map(metricPoint);
-      return Math.max(0, Math.min(Math.max(startA.x, endA.x), Math.max(startB.x, endB.x)) - Math.max(Math.min(startA.x, endA.x), Math.min(startB.x, endB.x)))
-        * Math.max(0, Math.min(Math.max(startA.y, endA.y), Math.max(startB.y, endB.y)) - Math.max(Math.min(startA.y, endA.y), Math.min(startB.y, endB.y)));
-    };
     const stairGeometry = e.stairGeometry;
     const legacyGeometry = stairGeometry?.baseA && stairGeometry.baseB && stairGeometry.midA && stairGeometry.midB && stairGeometry.topA && stairGeometry.topB;
-    const flight1 = stairGeometry?.flight1;
-    const flight2 = stairGeometry?.flight2;
-    const area = flight1 && flight2
-      ? rectArea(flight1.lowerA, flight1.lowerB) + rectArea(flight1.upperA, flight1.upperB) + rectArea(flight2.lowerA, flight2.lowerB) + rectArea(flight2.upperA, flight2.upperB) - intersectionArea(flight1.upperA, flight1.upperB, flight2.lowerA, flight2.lowerB) + Math.max(0, 2 - intersectionArea(flight1.upperA, flight1.upperB, flight2.lowerA, flight2.lowerB))
-      : legacyGeometry
-        ? rectArea(stairGeometry.baseA!, stairGeometry.baseB!) + rectArea(stairGeometry.midA!, stairGeometry.midB!) + rectArea(stairGeometry.topA!, stairGeometry.topB!)
-        : rectArea({ x: x1, y: y1 }, { x: x2, y: y2 });
-    const physicalArea = area;
-    const config = e.floorConfig ?? (e.type === "Escaliers" ? { type: "Dalle pleine", thickness: "15 cm", span: "3.00", direction: "X", concreteClass: "C25/30", characteristicImposedLoad: "2.50", stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60" } : e.type === "Balcon" ? defaultBalconyFloorConfig() : undefined);
-    const rate = (value: string | undefined, fallback: number) => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : fallback;
-    const explicitPermanent = Number(String(config?.characteristicPermanentLoad ?? "").replace(",", "."));
-    const explicitImposed = Number(String(config?.characteristicImposedLoad ?? "").replace(",", "."));
-    const hasStairParameters = e.type === "Escaliers" && (Boolean(config?.stairRiser || config?.stairTread || config?.stairRise || config?.stairRun) || explicitPermanent === 3.75);
-    const stairRate = hasStairParameters ? calculateStairPermanentLoad({ widthM: 1.2, horizontalRunM: rate(config?.stairRun, 3.6), riseM: rate(config?.stairRise, 2.04), slabThicknessM: floorThickness(config), concreteDensityKnM3: CONCRETE_UNIT_WEIGHT, stepHeightM: rate(config?.stairRiser, 0.17), treadM: rate(config?.stairTread, 0.30), finishLoadKnM2: rate(config?.stairFinishLoad, rate(config?.finishLoad, 0)) }) : null;
-    const permanentRate = hasStairParameters ? stairRate!.permanentRateKnM2 : Number.isFinite(explicitPermanent) ? Math.max(0, explicitPermanent) : floorSelfWeightRate(config) + rate(config?.finishLoad, 1) + rate(config?.ceilingLoad, 0.3) + rate(config?.partitionLoad, 1) + rate(config?.equipmentLoad, 0.5);
-    const imposedRate = Number.isFinite(explicitImposed) ? Math.max(0, explicitImposed) : rate(config?.imposedLoad, 2);
+    const config = e.floorConfig ?? (e.type === "Escaliers" ? { ...defaultFloorConfig, type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: "2.50", stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60" } : e.type === "Balcon" ? defaultBalconyFloorConfig() : defaultFloorConfig);
+    const rate = (value: string | undefined, fallback: number) => { const parsed = Number(String(value ?? "").replace(",", ".")); return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback; };
+    const optionalRate = (value: string | undefined) => { if (value === undefined || value.trim() === "") return undefined; const parsed = Number(value.replace(",", ".")); return Number.isFinite(parsed) ? Math.max(0, parsed) : undefined; };
+    const explicitPermanent = optionalRate(config.characteristicPermanentLoad);
+    const explicitImposed = optionalRate(config.characteristicImposedLoad);
+    const imposedRate = explicitImposed ?? rate(config.imposedLoad, 2);
+    const thicknessM = floorThickness(config);
+    let areaM2 = rectArea({ x: x1, y: y1 }, { x: x2, y: y2 });
+    let gk = 0;
+    let qk = 0;
+    if (e.type === "Escaliers") {
+      const absoluteGeometry = e.absoluteStairGeometry;
+      const toLoadCoordinates = (point: { x: number; y: number }, absolute: boolean) => absolute ? point : metricPoint(point);
+      const flightPlan = (flight: StairFlightCoordinates | undefined, absolute: boolean): StairFlightPlan | undefined => flight ? {
+        lowerA: toLoadCoordinates(flight.lowerA, absolute),
+        lowerB: toLoadCoordinates(flight.lowerB, absolute),
+        upperA: toLoadCoordinates(flight.upperA, absolute),
+        upperB: toLoadCoordinates(flight.upperB, absolute),
+      } : undefined;
+      const flight1 = flightPlan(absoluteGeometry?.flight1 as StairFlightCoordinates | undefined ?? stairGeometry?.flight1, Boolean(absoluteGeometry?.flight1));
+      const flight2 = flightPlan(absoluteGeometry?.flight2 as StairFlightCoordinates | undefined ?? stairGeometry?.flight2, Boolean(absoluteGeometry?.flight2));
+      const stairLoads = calculateStairSurfaceLoads({
+        flights: [flight1, flight2],
+        landingDepthM: rate(config.stairLandingDepthM, 0),
+        riseM: rate(config.stairRise, 2.04),
+        slabThicknessM: thicknessM,
+        concreteDensityKnM3: CONCRETE_UNIT_WEIGHT,
+        stepHeightM: rate(config.stairRiser, 0.17),
+        treadM: rate(config.stairTread, 0.30),
+        flightFinishLoadKnM2: rate(config.stairFinishLoad, 0),
+        landingFinishLoadKnM2: rate(config.stairLandingFinishLoad, rate(config.finishLoad, 0)),
+        flightImposedLoadKnM2: imposedRate,
+        landingImposedLoadKnM2: rate(config.stairLandingImposedLoad, imposedRate),
+      });
+      if (stairLoads.rows.length >= 2) {
+        areaM2 = stairLoads.totalAreaM2;
+        gk = stairLoads.totalGkKn;
+        qk = stairLoads.totalQkKn;
+        for (const load of stairLoads.rows) surfaceAssignments.push({
+          id: `${e.id}:${load.id}`,
+          meshSurfaceId: `${e.id}:${load.id}`,
+          parentElementId: e.id,
+          loadName: `${load.label} · ${e.id}`,
+          sourceType: "Escaliers",
+          kind: load.kind,
+          areaM2: load.areaM2,
+          gkKnM2: load.gkKnM2,
+          qkKnM2: load.qkKnM2,
+          gkKn: load.gkKn,
+          qkKn: load.qkKn,
+        });
+        if (stairLoads.landingDepthWasDerived) warnings.push(`Escalier ${e.id} : profondeur des paliers non renseignée; valeur de secours ${stairLoads.landingDepthM.toFixed(2)} m (largeur mesurée de la volée). Enregistrer et confirmer sur plan.`);
+      } else {
+        warnings.push(`Escalier ${e.id} sans géométrie de volées complète : charge provisoire calculée sur son emprise rectangulaire.`);
+        if (legacyGeometry) areaM2 = rectArea(stairGeometry!.baseA!, stairGeometry!.baseB!) + rectArea(stairGeometry!.midA!, stairGeometry!.midB!) + rectArea(stairGeometry!.topA!, stairGeometry!.topB!);
+      }
+    }
+    if (e.type !== "Escaliers" || !surfaceAssignments.some(row => row.parentElementId === e.id)) {
+      const physicalArea = areaM2;
+      const permanentRate = explicitPermanent ?? floorSelfWeightRate(config) + rate(config.finishLoad, 1) + rate(config.ceilingLoad, 0.3) + rate(config.partitionLoad, 1) + rate(config.equipmentLoad, 0.5);
+      gk = permanentRate * physicalArea;
+      qk = imposedRate * physicalArea;
+      const typeLabel = e.type === "Escaliers" ? "Escalier · géométrie héritée/provisoire" : e.type === "Balcon" ? "Balcon · dalle pleine" : config.type === "Dalle pleine" ? "Dalle pleine" : "Dalle à corps creux";
+      surfaceAssignments.push({ id: e.id, meshSurfaceId: e.id, parentElementId: e.id, loadName: `${typeLabel} · ${e.id}`, sourceType: e.type, kind: e.type === "Balcon" ? "balcony" : "floor", areaM2: physicalArea, gkKnM2: permanentRate, qkKnM2: imposedRate, gkKn: gk, qkKn: qk });
+    }
     return {
       id: e.id,
       x1,
       y1,
       x2,
       y2,
-      gk: permanentRate * physicalArea,
-      qk: imposedRate * physicalArea,
+      gk,
+      qk,
       spanDirection: (config?.direction ?? "X").toLowerCase() as "x" | "y",
-      distributionMode: config?.type === "Dalle pleine" ? "two-way" : "one-way",
+      distributionMode: e.type === "Escaliers" ? "one-way" : config.type === "Dalle pleine" ? "two-way" : "one-way",
     };
   });
   const beams: BeamSupport[] = elements.filter(e => (e.type === "Poutre" || e.type === "Voile" || e.type === "Longrine de redressement") && e.x2 !== undefined && e.y2 !== undefined).map(e => ({ id: e.id, x1: e.x, y1: e.y, x2: e.x2 as number, y2: e.y2 as number, levelId: levelKey(e) }));
@@ -334,7 +385,7 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
       ? ((gk + qk) * physicalSpan) / 8
       : undefined;
     const floorSources = floor
-      ? [`${e.type} ${e.id} · surface ${(Math.abs(floor.x2 - floor.x1) * Math.abs(floor.y2 - floor.y1) * gridScale * gridScale).toFixed(2)} m² · ${floor.distributionMode === "two-way" ? "répartition bidirectionnelle" : `portée ${floor.spanDirection.toUpperCase()}`}`]
+      ? surfaceAssignments.filter(assignment => assignment.parentElementId === e.id).map(assignment => `${assignment.loadName} · ${assignment.areaM2.toFixed(2)} m² · Gk ${assignment.gkKnM2.toFixed(2)} / Qk ${assignment.qkKnM2.toFixed(2)} kN/m²`)
       : [];
     const supports = e.type === "Poteau"
       ? (columnToFoundation[e.id] ? [columnToFoundation[e.id]] : [])
@@ -349,14 +400,14 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
       section: e.section,
       gk,
       qk,
-      nu: 1.35 * gk + 1.5 * qk,
+      nu: GAMMA_G * gk + GAMMA_Q * qk,
       nser: gk + qk,
       moment,
       sources: [...floorSources, ...(load.sources ?? [])],
       supports,
     };
   });
-  return { contributions: allContributions, beamToColumns, columnToFoundation, floors, beams, warnings: allWarnings, propagation, rows, levelOrder, levelLoads: levelDirect };
+  return { contributions: allContributions, beamToColumns, columnToFoundation, floors, surfaceAssignments, beams, warnings: allWarnings, propagation, rows, levelOrder, levelLoads: levelDirect };
 }
 
 export function summarizeBuildingLoads(model: BuildingLoadModel) {

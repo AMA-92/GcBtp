@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AFRICAN_COUNTRIES, getRegulatoryRule } from "../shared/regulatory";
+import { FRENCH_EUROCODE_DEFAULT_STANDARD } from "../shared/french-standard-profile";
 
 describe("GcBtp regulatory catalogue", () => {
   it("contains the 54 African countries without duplicate entries", () => {
@@ -7,16 +8,21 @@ describe("GcBtp regulatory catalogue", () => {
     expect(new Set(AFRICAN_COUNTRIES).size).toBe(54);
   });
 
-  it("proposes a South African national reference", () => {
-    const rule = getRegulatoryRule("Afrique du Sud");
-    expect(rule.code).toContain("SANS 10160");
-    expect(rule.status).toBe("national");
+  it("applies the French calculation reference to every African-country profile", () => {
+    for (const country of AFRICAN_COUNTRIES) {
+      const rule = getRegulatoryRule(country);
+      expect(rule.code).toContain("NF EN 1990/NA:2011");
+      expect(rule.status).toBe("adapted");
+    }
+    expect(getRegulatoryRule("Afrique du Sud").code).not.toContain("SANS");
+    expect(getRegulatoryRule("Gambie").code).not.toContain("BS 8110");
+    expect(FRENCH_EUROCODE_DEFAULT_STANDARD).toBe("Eurocode 2 — France");
   });
 
-  it("keeps unconfirmed countries explicitly marked for local validation", () => {
-    const rule = getRegulatoryRule("Gabon");
-    expect(rule.status).toBe("to-confirm");
-    expect(rule.note).toContain("validation");
+  it("keeps the French calculation default for unknown countries while warning about local obligations", () => {
+    const rule = getRegulatoryRule("Pays non répertorié");
+    expect(rule.code).toContain("NF EN 1990/NA:2011");
+    expect(rule.note).toContain("obligations administratives locales");
   });
 });
 
@@ -36,11 +42,11 @@ describe("Code de la Construction Sénégal 2023-21", () => {
 import { checkMitoyennete } from "../shared/mitoyennete";
 describe("mitoyenneté Sénégal", () => {
   it("bloque une construction sur ligne séparative sans accord", () => {
-    const r = checkMitoyennete({country:"Sénégal",wallOnSeparativeLine:true,writtenNeighbourAgreement:false,isHousingProgram:false,wallIsCommon:false,hasOpeningInCommonWall:false,directViewToNeighbour:false});
-    expect(r.blockers.length).toBe(1);
+    const result = checkMitoyennete({ country: "Sénégal", wallOnSeparativeLine: true, writtenNeighbourAgreement: false, isHousingProgram: false, wallIsCommon: false, hasOpeningInCommonWall: false, directViewToNeighbour: false });
+    expect(result.blockers.length).toBe(1);
   });
-  it("bloque une vue directe à moins d'un mètre", () => {
-    const r = checkMitoyennete({country:"Sénégal",wallOnSeparativeLine:false,writtenNeighbourAgreement:false,isHousingProgram:false,wallIsCommon:false,hasOpeningInCommonWall:false,directViewToNeighbour:true,openingDistanceToBoundaryM:.8});
-    expect(r.blockers.length).toBe(1);
+  it("bloque une vue directe à moins d’un mètre", () => {
+    const result = checkMitoyennete({ country: "Sénégal", wallOnSeparativeLine: false, writtenNeighbourAgreement: false, isHousingProgram: false, wallIsCommon: false, hasOpeningInCommonWall: false, directViewToNeighbour: true, openingDistanceToBoundaryM: 0.8 });
+    expect(result.blockers.length).toBe(1);
   });
 });

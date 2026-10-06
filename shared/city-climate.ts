@@ -12,7 +12,7 @@ export type CityClimateProfile = {
 };
 
 const CCKP = "https://climateknowledgeportal.worldbank.org/";
-const city = (country: string, city: string, climateZone: string, windExposure: string, rainfallExposure: string, note: string): CityClimateProfile => ({ country, city, climateZone, windExposure, rainfallExposure, snow: { groundLoad: 0, status: "not-applicable" }, seismic: { zone: "À confirmer selon carte nationale et étude de sol", status: "to-confirm" }, wind: { zone: "À confirmer selon annexe nationale et exposition du site", status: "to-confirm" }, source: CCKP, note });
+const city = (country: string, city: string, climateZone: string, windExposure: string, rainfallExposure: string, note: string): CityClimateProfile => ({ country, city, climateZone, windExposure, rainfallExposure, snow: { groundLoad: 0, status: "to-confirm" }, seismic: { zone: "À confirmer selon NF EN 1998/NA, carte d’aléa et étude de sol", status: "to-confirm" }, wind: { zone: "À confirmer selon NF EN 1991-1-4/NA et l’exposition du site", status: "to-confirm" }, source: CCKP, note });
 
 export const CITY_CLIMATE_PROFILES: Record<string, CityClimateProfile[]> = {
   "Sénégal": [
@@ -51,4 +51,9 @@ export const CITY_CLIMATE_PROFILES: Record<string, CityClimateProfile[]> = {
 };
 
 export function getCitiesForCountry(country: string): CityClimateProfile[] { return CITY_CLIMATE_PROFILES[country] ?? []; }
-export function getCityClimateProfile(country: string, cityName = ""): CityClimateProfile | undefined { return getCitiesForCountry(country).find(item => item.city === cityName) ?? getCitiesForCountry(country)[0]; }
+export function getCityClimateProfile(country: string, cityName = ""): CityClimateProfile | undefined {
+  const cities = getCitiesForCountry(country);
+  const requestedCity = cityName.trim();
+  if (!requestedCity) return undefined;
+  return cities.find(item => item.city.toLocaleLowerCase("fr") === requestedCity.toLocaleLowerCase("fr"));
+}

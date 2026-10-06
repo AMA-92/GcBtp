@@ -1,3 +1,5 @@
+import { FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "./french-standard-profile";
+
 export type BuildingDraft = {
   name: string;
   level: string;
@@ -39,7 +41,7 @@ export function restoreBuildingDraft(raw: string | null): BuildingDraft | null {
       snapRadius: value.snapRadius ?? "0.80",
       footerPdf: value.footerPdf ?? false,
       floorOpacity: value.floorOpacity ?? "45",
-      norm: value.norm ?? "Eurocodes EN 1990/1991/1992",
+      norm: normalizeProjectStandard(value.norm ?? FRENCH_EUROCODE_DEFAULT_STANDARD),
       country: value.country ?? "Sénégal",
     };
   } catch {

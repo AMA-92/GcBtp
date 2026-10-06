@@ -14,7 +14,7 @@ export type FoundationReactionInput = {
   allowableBearingKPa: number;
   bearingSafetyFactor: number;
   slidingSafetyFactor: number;
-  frictionAngleDeg: number;
+  frictionAngleDeg: number | null;
   footingSelfWeightKn?: number;
   soilCoverLoadKn?: number;
   concreteShearCapacityKPa?: number | null;
@@ -61,6 +61,7 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
   if (!positive(effectiveAxialKn)) validation.push("La réaction verticale nette n’est pas en compression ; le contact de la semelle ne peut pas être vérifié par ce modèle.");
   if (![input.widthXM, input.widthYM, input.thicknessM, input.columnWidthM, input.columnDepthM].every(positive)) validation.push("Dimensions de semelle, épaisseur ou poteau manquantes.");
   if (!positive(input.allowableBearingKPa) || !positive(input.bearingSafetyFactor) || !positive(input.slidingSafetyFactor)) validation.push("Portance géotechnique et coefficients de sécurité positifs requis.");
+  if (input.frictionAngleDeg !== null && (!finite(input.frictionAngleDeg) || input.frictionAngleDeg < 0 || input.frictionAngleDeg >= 60)) validation.push("L’angle de frottement φ doit provenir de l’étude géotechnique et être compris entre 0° et 60°.");
   if (validation.length) throw new Error(validation.join(" "));
 
   const areaM2 = input.widthXM * input.widthYM;
@@ -80,8 +81,15 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
   const bearingStatus = maximumPressureKPa <= designBearingKPa ? "satisfaisant" : "insuffisant";
   const contactStatus = contactPossible ? (fullContact ? "satisfaisant" : "insuffisant") : "insuffisant";
 
-  const frictionResistanceKn = effectiveAxialKn * Math.tan((input.frictionAngleDeg * Math.PI) / 180) / input.slidingSafetyFactor;
-  const slidingStatus = Math.abs(input.horizontalReactionKn) <= frictionResistanceKn ? "satisfaisant" : "insuffisant";
+  const frictionResistanceKn = input.frictionAngleDeg === null
+    ? null
+    : effectiveAxialKn * Math.tan((input.frictionAngleDeg * Math.PI) / 180) / input.slidingSafetyFactor;
+  const slidingStatus = frictionResistanceKn === null
+    ? "non vérifié"
+    : Math.abs(input.horizontalReactionKn) <= frictionResistanceKn ? "satisfaisant" : "insuffisant";
+  const slidingNote = input.frictionAngleDeg === null
+    ? "Angle φ issu de l’étude géotechnique requis ; le glissement n’est pas vérifié."
+    : `Résistance frictionnelle simplifiée à partir de φ = ${input.frictionAngleDeg}° ; pas de cohésion ni butée passive.`;
   const effectiveDepthM = Math.max(0, input.thicknessM * 0.8);
   const punchingPerimeterM = 2 * (input.columnWidthM + input.columnDepthM + 2 * effectiveDepthM);
   const punchingInsideAreaM2 = (input.columnWidthM + effectiveDepthM) * (input.columnDepthM + effectiveDepthM);
@@ -102,7 +110,7 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
   const checks: FoundationCheck[] = [
     { id: "bearing", label: "Portance avec moment", demand: maximumPressureKPa, resistance: designBearingKPa, unit: "kPa", status: bearingStatus, note: `qmin ${minimumPressureKPa.toFixed(2)} kPa · qadm/sécurité ${designBearingKPa.toFixed(2)} kPa.` },
     { id: "contact", label: "Excentricité et décollement", demand: eccentricityM, resistance: momentDimension / 6, unit: "m", status: contactStatus, note: contactPossible ? (fullContact ? "Contact théorique intégral (e ≤ B/6)." : `Décollement partiel estimé ; largeur comprimée ${effectiveContactWidthM.toFixed(3)} m.`) : "Le résultant sort du noyau central élargi ; pas d’équilibre de contact dans ce modèle." },
-    { id: "sliding", label: "Glissement", demand: Math.abs(input.horizontalReactionKn), resistance: frictionResistanceKn, unit: "kN", status: slidingStatus, note: `Résistance frictionnelle simplifiée à partir de φ = ${input.frictionAngleDeg}° ; pas de cohésion ni butée passive.` },
+    { id: "sliding", label: "Glissement", demand: Math.abs(input.horizontalReactionKn), resistance: frictionResistanceKn, unit: "kN", status: slidingStatus, note: slidingNote },
     { id: "punching", label: "Poinçonnement — screening", demand: punchingDemandKPa, resistance: positive(punchingCapacity ?? 0) ? punchingCapacity as number : null, unit: "kPa", status: punchingStatus, note: "La capacité doit provenir d’un détail BA et d’un référentiel vérifiés ; d = 0,8h est une approximation de pré-étude." },
     { id: "settlement", label: "Tassement — screening", demand: estimatedSettlementMm, resistance: finite(input.allowableSettlementMm) ? input.allowableSettlementMm : null, unit: "mm", status: settlementStatus, note: settlementCanRun ? `Estimation élastique grossière avec k = ${input.subgradeModulusKnM3} kN/m³ ; ne remplace pas l’étude géotechnique.` : "Module de réaction et limite de tassement issus de l’étude géotechnique requis." },
   ];
@@ -163,6 +171,7 @@ export function mapFoundationReactions(model: AnalyticalModel, result: PlaneFram
   const records: FoundationReactionRecord[] = [];
   const seenNodes = new Set<string>();
   for (const support of model.supports) {
+    if (support.role !== "column-base") continue;
     if (seenNodes.has(support.nodeId)) {
       warnings.push(`Appuis multiples au nœud ${support.nodeId} : réaction non répartie automatiquement entre les semelles.`);
       continue;

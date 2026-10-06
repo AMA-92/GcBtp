@@ -29,7 +29,7 @@ describe("parcours bâtiment DSRCAD", () => {
 
   it("restaure tous les paramètres du bâtiment après réouverture", () => {
     const restored = restoreBuildingDraft(serializeBuildingDraft(draft));
-    expect(restored).toEqual(draft);
+    expect(restored).toEqual({ ...draft, norm: "BAEL 91 mod. 99" });
     expect(restoreBuildingDraft(null)).toBeNull();
     expect(restoreBuildingDraft("invalid-json")).toBeNull();
   });

@@ -1,4 +1,5 @@
 import { IMPOSED_LOAD_PROFILES } from "./load-catalog";
+import { FRENCH_PROJECT_USAGE_CATALOG } from "./french-load-catalog";
 
 export type FloorType = "Corps creux" | "Dalle pleine";
 export type FloorConfig = {
@@ -25,6 +26,9 @@ export type FloorConfig = {
   stairRise?: string;
   stairRun?: string;
   stairFinishLoad?: string;
+  stairLandingDepthM?: string;
+  stairLandingFinishLoad?: string;
+  stairLandingImposedLoad?: string;
 };
 
 export const FLOOR_PRESETS: Record<FloorType, string[]> = {
@@ -46,10 +50,10 @@ export const defaultFloorConfig: FloorConfig = {
   ceilingLoad: "0.30",
   partitionLoad: "1.00",
   equipmentLoad: "0.50",
-  imposedLoad: "2.00",
+  imposedLoad: FRENCH_PROJECT_USAGE_CATALOG.habitation.load.toFixed(2),
   roofLoad: "0.80",
   characteristicPermanentLoad: "5.84",
-  characteristicImposedLoad: "1.50",
+  characteristicImposedLoad: FRENCH_PROJECT_USAGE_CATALOG.habitation.load.toFixed(2),
 };
 
 export function normalizeFloorConfig(config: Partial<FloorConfig> = {}): FloorConfig {

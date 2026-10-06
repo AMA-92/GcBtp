@@ -1,42 +1,25 @@
-import { AFRICAN_COUNTRIES, getRegulatoryRule, getRegulatorySiteProfile } from "./regulatory";
+import { AFRICAN_COUNTRIES, getRegulatoryRule } from "./regulatory";
 import {
   CONCRETE_MATERIAL_CATALOG,
   type ConcreteMaterialClass,
   type ConcreteMaterialProperties,
 } from "./model-catalog";
+import { FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "./french-standard-profile";
 
 export const PROJECT_COUNTRIES = AFRICAN_COUNTRIES;
 
 export const PROJECT_STANDARD_CATALOG = [
   {
     id: "eurocode-2",
-    norm: "Eurocode 2",
-    label: "Eurocode 2 · EN 1992 (avec EN 1990/1991 selon le projet)",
-    shortLabel: "Eurocode 2",
+    norm: FRENCH_EUROCODE_DEFAULT_STANDARD,
+    label: "Eurocodes français · NF EN et annexes nationales françaises",
+    shortLabel: "Eurocodes français",
   },
   {
     id: "bael-91-99",
     norm: "BAEL 91 mod. 99",
-    label: "BAEL 91 révisé 99 · béton armé",
+    label: "BAEL 91 mod. 99 · option française historique (béton armé)",
     shortLabel: "BAEL 91 mod. 99",
-  },
-  {
-    id: "bs-8110",
-    norm: "BS 8110",
-    label: "BS 8110 · béton armé",
-    shortLabel: "BS 8110",
-  },
-  {
-    id: "sans-10100",
-    norm: "SANS 10100",
-    label: "SANS 10100 · béton armé (Afrique du Sud)",
-    shortLabel: "SANS 10100",
-  },
-  {
-    id: "ecp-egypt",
-    norm: "ECP · code égyptien (à confirmer)",
-    label: "ECP · code égyptien de pratique (édition à confirmer)",
-    shortLabel: "ECP · à confirmer",
   },
 ] as const;
 
@@ -44,14 +27,12 @@ export type ProjectStandard = (typeof PROJECT_STANDARD_CATALOG)[number]["norm"];
 export type ProjectStandardId = (typeof PROJECT_STANDARD_CATALOG)[number]["id"];
 
 export function getProjectStandardId(norm: string): ProjectStandardId {
-  return PROJECT_STANDARD_CATALOG.find(item => item.norm === norm)?.id ?? "eurocode-2";
+  const normalized = normalizeProjectStandard(norm);
+  return PROJECT_STANDARD_CATALOG.find(item => item.norm === normalized)?.id ?? "eurocode-2";
 }
 
-export function getCountryProjectStandard(country: string, city = ""): ProjectStandard {
-  if (country === "Afrique du Sud") return "SANS 10100";
-  if (country === "Égypte") return "ECP · code égyptien (à confirmer)";
-  const proposed = getRegulatorySiteProfile(country, city).preferredNorm;
-  return PROJECT_STANDARD_CATALOG.find(item => item.norm === proposed)?.norm ?? "Eurocode 2";
+export function getCountryProjectStandard(_country: string, _city = ""): ProjectStandard {
+  return FRENCH_EUROCODE_DEFAULT_STANDARD;
 }
 
 export function getProjectCountryGuidance(country: string) {

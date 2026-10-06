@@ -30,6 +30,16 @@ describe("building load propagation", () => {
     expect(model.rows.find(row => row.id === "BAL1")).toMatchObject({ type: "Balcon", gk: 96, qk: 56 });
   });
 
+  it("keeps solid and hollow-core slabs as separately named load assignments", () => {
+    const model = buildBuildingLoadModel([
+      { id: "PL-PLEINE", type: "Dalle", x: 0, y: 0, x2: 1, y2: 1, levelId: "rdc", floorConfig: { type: "Dalle pleine", thickness: "20 cm", characteristicPermanentLoad: "8.00", characteristicImposedLoad: "2.00" } },
+      { id: "PL-CORPS", type: "Dalle", x: 2, y: 0, x2: 3, y2: 1, levelId: "rdc", floorConfig: { type: "Corps creux", thickness: "16+4 cm", characteristicPermanentLoad: "5.84", characteristicImposedLoad: "1.50" } },
+    ], { levelOrder: ["rdc"], gridDistance: 1 });
+    expect(model.surfaceAssignments.map(row => row.loadName)).toEqual(["Dalle pleine · PL-PLEINE", "Dalle à corps creux · PL-CORPS"]);
+    expect(model.surfaceAssignments.map(row => row.gkKnM2)).toEqual([8, 5.84]);
+    expect(model.surfaceAssignments.map(row => row.qkKnM2)).toEqual([2, 1.5]);
+  });
+
   it("transfers a cantilever balcony load only to its selected fixed edge", () => {
     const model = buildBuildingLoadModel([
       { id: "BAL2", type: "Balcon", x: 0, y: 0, x2: 1, y2: 1, levelId: "rdc", floorConfig: { type: "Dalle pleine", thickness: "20 cm", characteristicPermanentLoad: "6.00", characteristicImposedLoad: "3.50", balconySupportEdge: "left" } },
@@ -140,6 +150,23 @@ describe("building load propagation", () => {
     ], { levelOrder: ["rdc"], gridDistance: 1 });
     expect(model.floors[0].gk).toBeCloseTo(19.5);
     expect(model.floors[0].qk).toBeCloseTo(7.5);
+    expect(model.surfaceAssignments[0].loadName).toContain("Escalier · géométrie héritée/provisoire");
+  });
+
+  it("affecte quatre charges distinctes aux deux volées et aux deux paliers mesurés", () => {
+    const flight1 = { lowerA: { x: 0, y: 0 }, lowerB: { x: 1, y: 0 }, upperA: { x: 0, y: 2 }, upperB: { x: 1, y: 2 }, lowerLevelId: "rdc", upperLevelId: "rdc" };
+    const flight2 = { lowerA: { x: 1, y: 2 }, lowerB: { x: 2, y: 2 }, upperA: { x: 1, y: 0 }, upperB: { x: 2, y: 0 }, lowerLevelId: "rdc", upperLevelId: "rdc" };
+    const model = buildBuildingLoadModel([
+      { id: "ES1", type: "Escaliers", x: 0, y: 0, x2: 2, y2: 2, levelId: "rdc", stairGeometry: { flight1, flight2, landingZ: 2.1 }, absoluteStairGeometry: { flight1, flight2 }, floorConfig: { type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: "3.00", stairLandingDepthM: "1.00", stairRise: "2.04", stairRiser: "0.17", stairTread: "0.30", stairFinishLoad: "0.00", stairLandingFinishLoad: "1.00", stairLandingImposedLoad: "3.00" } },
+    ], { levelOrder: ["rdc"], gridDistance: 1 });
+    expect(model.surfaceAssignments.map(row => row.id)).toEqual(["ES1:volée-1", "ES1:volée-2", "ES1:palier-intermediaire", "ES1:palier-arrivee"]);
+    expect(model.surfaceAssignments.reduce((sum, row) => sum + row.areaM2, 0)).toBeCloseTo(7);
+    expect(model.surfaceAssignments.slice(0, 2).map(row => row.areaM2)).toEqual([2, 2]);
+    expect(model.surfaceAssignments.slice(2).map(row => row.areaM2)).toEqual([2, 1]);
+    expect(model.surfaceAssignments.slice(2).map(row => row.gkKnM2)).toEqual([4.75, 4.75]);
+    expect(model.surfaceAssignments.every(row => row.qkKnM2 === 3)).toBe(true);
+    expect(model.surfaceAssignments.reduce((sum, row) => sum + row.gkKn, 0)).toBeCloseTo(model.floors[0].gk);
+    expect(model.surfaceAssignments.reduce((sum, row) => sum + row.qkKn, 0)).toBeCloseTo(model.floors[0].qk);
   });
 
   it("includes landing area and support reactions in the stair load chain", () => {
@@ -164,8 +191,11 @@ describe("building load propagation", () => {
         landingZ: 1.6,
       }, floorConfig: { type: "Dalle pleine", thickness: "15 cm", characteristicPermanentLoad: "6.50", characteristicImposedLoad: "2.50" } },
     ], { levelOrder: ["rdc", "r1", "r2"], gridDistance: 1 });
-    expect(model.floors[0].gk).toBeCloseTo(26);
-    expect(model.floors[0].qk).toBeCloseTo(10);
+    expect(model.surfaceAssignments.map(row => row.id)).toEqual(["ESC2:volée-1", "ESC2:volée-2", "ESC2:palier-intermediaire", "ESC2:palier-arrivee"]);
+    expect(model.surfaceAssignments.filter(row => row.id === "ESC2:palier-intermediaire")).toHaveLength(1);
+    expect(model.surfaceAssignments.reduce((sum, row) => sum + row.areaM2, 0)).toBeCloseTo(8);
+    expect(model.surfaceAssignments.reduce((sum, row) => sum + row.gkKn, 0)).toBeCloseTo(model.floors[0].gk);
+    expect(model.surfaceAssignments.reduce((sum, row) => sum + row.qkKn, 0)).toBeCloseTo(model.floors[0].qk);
   });
 
 describe("longrines de redressement entre semelles", () => {

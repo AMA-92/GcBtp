@@ -1,4 +1,5 @@
 import type { FloorConfig } from "./floor-config";
+import { FRENCH_EUROCODE_ACTION_CATALOG, FRENCH_IMPOSED_LOAD_CATALOG, FRENCH_PROJECT_USAGE_CATALOG } from "./french-load-catalog";
 
 export type LoadCategory = "permanent" | "variable" | "climatic" | "accidental";
 export type LoadCatalogEntry = { id: string; label: string; category: LoadCategory; unit: "kN/m²" | "kN/m" | "kN"; defaultValue: number; source: string; editable: boolean };
@@ -24,7 +25,7 @@ export const CONCRETE_CLASSES: ConcreteClass[] = [
 ];
 
 export const MATERIAL_CATALOG: MaterialCatalogEntry[] = [
-  { id: "beton-arme", label: "Béton armé", densityKgM3: 2500, unitWeightKnM3: 25, poisson: 0.2, thermalExpansionPerC: 10e-6, grade: "C25/30", source: "EN 1991-1-1 / EN 1992-1-1" },
+  { id: "beton-arme", label: "Béton armé", densityKgM3: 2500, unitWeightKnM3: 25, poisson: 0.2, thermalExpansionPerC: 10e-6, grade: "C25/30", source: "NF EN 1991-1-1 / NF EN 1992-1-1" },
   { id: "acier-ha400", label: "Acier HA400", densityKgM3: 7850, unitWeightKnM3: 78.5, poisson: 0.3, thermalExpansionPerC: 12e-6, elasticModulusMpa: 200000, grade: "HA400", source: "Catalogue projet" },
   { id: "acier-ha500", label: "Acier HA500", densityKgM3: 7850, unitWeightKnM3: 78.5, poisson: 0.3, thermalExpansionPerC: 12e-6, elasticModulusMpa: 200000, grade: "HA500", source: "Catalogue projet" },
 ];
@@ -51,31 +52,37 @@ export const ADDITIONAL_PERMANENT_LOADS = [
 ];
 
 export const IMPOSED_LOAD_PROFILES = [
-  { id: "housing", label: "Habitation", range: "1,5–2,0", defaultValue: 2, unit: "kN/m²" },
-  { id: "logement", label: "Logement collectif", range: "1,5–2,0", defaultValue: 2, unit: "kN/m²" },
-  { id: "office", label: "Bureau", range: "2,0–3,0", defaultValue: 2.5, unit: "kN/m²" },
-  { id: "stair-housing", label: "Escalier habitation", range: "2,0–4,0", defaultValue: 3, unit: "kN/m²" },
-  { id: "balcony", label: "Balcon", range: "2,5–4,0", defaultValue: 3.5, unit: "kN/m²" },
-  { id: "commerce", label: "Commerce", range: "4,0–5,0", defaultValue: 5, unit: "kN/m²" },
+  { id: "housing", label: "Habitation · catégorie A", range: "1,50", defaultValue: FRENCH_PROJECT_USAGE_CATALOG.habitation.load, unit: "kN/m²" },
+  { id: "logement", label: "Logement collectif · catégorie A", range: "1,50", defaultValue: FRENCH_PROJECT_USAGE_CATALOG.logement.load, unit: "kN/m²" },
+  { id: "office", label: "Bureaux · catégorie B", range: "2,50", defaultValue: FRENCH_PROJECT_USAGE_CATALOG.bureau.load, unit: "kN/m²" },
+  { id: "stair-housing", label: "Escalier habitation · catégorie A", range: "2,50", defaultValue: FRENCH_PROJECT_USAGE_CATALOG.habitation.stairLoad, unit: "kN/m²" },
+  { id: "balcony", label: "Balcon habitation · catégorie A", range: "3,50", defaultValue: FRENCH_PROJECT_USAGE_CATALOG.habitation.balconyLoad, unit: "kN/m²" },
+  { id: "commerce", label: "Commerce de détail · catégorie D1", range: "5,00", defaultValue: FRENCH_PROJECT_USAGE_CATALOG.commerce.load, unit: "kN/m²" },
 ];
 
 export const LOAD_CATALOG: LoadCatalogEntry[] = [
   { id: "slab-self-weight", label: "Poids propre du plancher", category: "permanent", unit: "kN/m²", defaultValue: 0, source: "Géométrie × densité du matériau", editable: false },
   { id: "finishes", label: "Revêtements et chape", category: "permanent", unit: "kN/m²", defaultValue: 1.0, source: "Valeur de projet à confirmer", editable: true },
   { id: "ceiling", label: "Plafonds et réseaux", category: "permanent", unit: "kN/m²", defaultValue: 0.3, source: "Valeur de projet à confirmer", editable: true },
-  { id: "partitions", label: "Cloisons réparties", category: "permanent", unit: "kN/m²", defaultValue: 1.0, source: "EN 1991-1-1 / choix de projet", editable: true },
+  { id: "partitions", label: "Cloisons réparties", category: "permanent", unit: "kN/m²", defaultValue: 1.0, source: "NF EN 1991-1-1 · poids des cloisons à déterminer selon le projet", editable: true },
   { id: "equipment", label: "Équipements fixes", category: "permanent", unit: "kN/m²", defaultValue: 0.5, source: "Valeur de projet à confirmer", editable: true },
   { id: "walls", label: "Murs sur poutres", category: "permanent", unit: "kN/m", defaultValue: 0, source: "Épaisseur × hauteur × densité", editable: true },
-  { id: "occupancy", label: "Exploitation selon usage", category: "variable", unit: "kN/m²", defaultValue: 2.0, source: "EN 1991-1-1 / catégorie d’usage", editable: true },
-  { id: "roof", label: "Toiture accessible ou entretien", category: "variable", unit: "kN/m²", defaultValue: 0.8, source: "EN 1991-1-1 / catégorie de toiture", editable: true },
-  { id: "wind", label: "Vent", category: "climatic", unit: "kN/m²", defaultValue: 0.6, source: "EN 1991-1-4 / zone et exposition", editable: true },
-  { id: "snow", label: "Neige", category: "climatic", unit: "kN/m²", defaultValue: 0, source: "EN 1991-1-3 / zone de neige", editable: true },
-  { id: "seismic", label: "Action sismique", category: "climatic", unit: "kN", defaultValue: 0, source: "EN 1998 / zone, sol et spectre", editable: true },
-  { id: "fire", label: "Action accidentelle / incendie", category: "accidental", unit: "kN", defaultValue: 0, source: "EN 1991-1-2 / scénario à définir", editable: true },
+  { id: "occupancy", label: "Exploitation selon usage", category: "variable", unit: "kN/m²", defaultValue: FRENCH_PROJECT_USAGE_CATALOG.habitation.load, source: `${FRENCH_EUROCODE_ACTION_CATALOG.imposedLoadsReference} · catégorie A, tableau 6.2 (NF)`, editable: true },
+  { id: "roof", label: "Toiture · catégorie H", category: "variable", unit: "kN/m²", defaultValue: FRENCH_IMPOSED_LOAD_CATALOG["H-low-slope"].qkKnM2, source: `${FRENCH_IMPOSED_LOAD_CATALOG["H-low-slope"].source} · pente < 15 % avec étanchéité; sinon appliquer le cas H-other`, editable: true },
+  { id: "wind", label: "Vent", category: "climatic", unit: "kN/m²", defaultValue: 0, source: "NF EN 1991-1-4/NA · calcul selon site, terrain, hauteur et géométrie", editable: true },
+  { id: "snow", label: "Neige", category: "climatic", unit: "kN/m²", defaultValue: 0, source: "NF EN 1991-1-3/NA · calcul selon zone, altitude et forme de toiture", editable: true },
+  { id: "seismic", label: "Action sismique", category: "climatic", unit: "kN", defaultValue: 0, source: "NF EN 1998/NA · calcul selon zone, sol, spectre et masses", editable: true },
+  { id: "fire", label: "Action accidentelle / incendie", category: "accidental", unit: "kN", defaultValue: 0, source: "NF EN 1991-1-2/NA · scénario à définir", editable: true },
 ];
 
 export const DEFAULT_LOAD_VALUES = Object.fromEntries(LOAD_CATALOG.map(entry => [entry.id, entry.defaultValue])) as Record<string, number>;
-export const DESIGN_COMBINATIONS = { eluFundamental: "1,35·Gk + 1,50·Qk", elsCharacteristic: "Gk + Qk", elsFrequent: "Gk + ψ1·Qk", elsQuasiPermanent: "Gk + ψ2·Qk" } as const;
+const formatFactor = (value: number) => String(Number(value.toFixed(2))).replace(".", ",");
+export const DESIGN_COMBINATIONS = {
+  eluFundamental: `${formatFactor(FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.permanentUnfavourable)}·Gk + ${formatFactor(FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.variableUnfavourable)}·Qk,1 + Σ${formatFactor(FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.variableUnfavourable)}·ψ0,i·Qk,i`,
+  elsCharacteristic: "Gk + Qk,1 + Σψ0,i·Qk,i",
+  elsFrequent: "Gk + ψ1,1·Qk,1 + Σψ2,i·Qk,i",
+  elsQuasiPermanent: "Gk + Σψ2,i·Qk,i",
+} as const;
 
 export function loadCatalogByCategory(category: LoadCategory) { return LOAD_CATALOG.filter(entry => entry.category === category); }
 

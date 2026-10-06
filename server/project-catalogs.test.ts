@@ -9,19 +9,23 @@ import {
   PROJECT_COUNTRIES,
   PROJECT_STANDARD_CATALOG,
 } from "../shared/project-catalogs";
+import { FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "../shared/french-standard-profile";
 
 describe("catalogues des paramètres de projet", () => {
-  it("propose une norme issue du profil réglementaire du pays", () => {
-    expect(getCountryProjectStandard("Sénégal")).toBe("Eurocode 2");
-    expect(getCountryProjectStandard("Gambie")).toBe("BS 8110");
-    expect(getCountryProjectStandard("Afrique du Sud")).toBe("SANS 10100");
-    expect(getCountryProjectStandard("Égypte")).toBe("ECP · code égyptien (à confirmer)");
+  it("applique le profil Eurocodes français quel que soit le pays ou la ville", () => {
+    for (const country of PROJECT_COUNTRIES) {
+      expect(getCountryProjectStandard(country, "Ville test")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
+    }
+    expect(getCountryProjectStandard("Sénégal", "Dakar")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
+    expect(normalizeProjectStandard("BS 8110")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
+    expect(normalizeProjectStandard("SANS 10100")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
+    expect(normalizeProjectStandard("BAEL 91 mod. 99")).toBe("BAEL 91 mod. 99");
     expect(getProjectStandardId("BAEL 91 mod. 99")).toBe("bael-91-99");
   });
 
-  it("expose les référentiels existants et les pays du catalogue réglementaire", () => {
+  it("n’expose que les deux choix français de calcul du projet", () => {
     expect(PROJECT_STANDARD_CATALOG.map(item => item.norm)).toEqual([
-      "Eurocode 2", "BAEL 91 mod. 99", "BS 8110", "SANS 10100", "ECP · code égyptien (à confirmer)",
+      FRENCH_EUROCODE_DEFAULT_STANDARD, "BAEL 91 mod. 99",
     ]);
     expect(PROJECT_COUNTRIES).toContain("Sénégal");
     expect(PROJECT_COUNTRIES).toContain("Afrique du Sud");

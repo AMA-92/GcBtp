@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +43,7 @@ import {
   type ProjectStandard,
   type ProjectStandardId,
 } from "@shared/project-catalogs";
+import { getFrenchCalculationBasisLabel, normalizeProjectStandard } from "@shared/french-standard-profile";
 import {
   restoreBuildingDraft,
   serializeBuildingDraft,
@@ -105,7 +107,9 @@ import { getCitiesForCountry } from "@shared/city-climate";
 import { createLoadScale } from "@shared/load-color-scale";
 import { buildLoadSynthesis, loadFamilyLabel } from "@shared/load-synthesis";
 import { buildAnalyticalModel, DEFAULT_NODE_MERGE_TOLERANCE_M, type AnalyticalModel, type AnalyticalPrecheck } from "@shared/analytical-model";
+import { meshAnalyticalSurfaces } from "@shared/analytical-surface-mesh";
 import { createDefaultLoadProgram, evaluateLoadProgram, normalizeLoadProgram, validateLoadProgram, type LoadProgram } from "@shared/load-case-program";
+import { FRENCH_PROJECT_USAGE_CATALOG, type FrenchProjectUsage } from "@shared/french-load-catalog";
 import { buildGravityMemberLoads, solveAnalyticalPlane, type FramePlane, type PlaneFrameResult } from "@shared/frame-solver-2d";
 import { solveGlobal3D, type Spatial3DStoryLateralLoad, type Spatial3DResult } from "@shared/frame-solver-3d";
 import { runProfessionalAnalysis } from "@shared/professional-analysis";
@@ -147,6 +151,14 @@ type Level = {
 };
 type GridPoint = { x: number; y: number };
 type SurfaceRunRow = { elementId: string; levelLabel: string; areaM2: number; openingCount: number; spanXM: number; spanYM: number; spanDirection: "X" | "Y"; thicknessMm: number; uniformLoadKnM2: number; columnWidthMm: number; columnDepthMm: number; negativeMxKnMPerM: number; negativeMyKnMPerM: number; floorType: FloorConfig["type"]; analysis: SurfaceAnalysis; supportErrors: string[] };
+type LoadApplicationReport = {
+  errors: string[];
+  warnings: string[];
+  surfaceRows: Array<{ id: string; loadName: string; sourceType: string; kind: string; areaM2: number; gkKnM2: number; qkKnM2: number; gk: number; qk: number; transferred: boolean }>;
+  skeletonRows: Array<{ id: string; loadName: string; type: string; gk: number; qk: number; sources: string[] }>;
+  combinationRows: Array<{ id: string; name: string; category: string; formula: string; status: string; lineLoadCount: number }>;
+  lineLoadCount: number;
+};
 type ClimateDraft = {
   schemaVersion: 1;
   sourceReference: string;
@@ -416,14 +428,11 @@ type ProjectSettingsDraft = {
   regulatoryCatalogId: ProjectStandardId;
   materials: ProjectMaterialSelection;
 };
-type ProjectUsage = "habitation" | "logement" | "bureau" | "commerce";
-const PROJECT_USAGE_OPTIONS: Array<{ id: ProjectUsage; label: string; load: number; stairLoad: number }> = [
-  { id: "habitation", label: "Habitation individuelle", load: 2, stairLoad: 3 },
-  { id: "logement", label: "Logement collectif", load: 2, stairLoad: 3 },
-  { id: "bureau", label: "Bureaux", load: 2.5, stairLoad: 3 },
-  { id: "commerce", label: "Commerce", load: 5, stairLoad: 4 },
-];
-const usageProfile = (usage: ProjectUsage = "habitation") => PROJECT_USAGE_OPTIONS.find(item => item.id === usage) ?? PROJECT_USAGE_OPTIONS[0];
+type ProjectUsage = FrenchProjectUsage;
+const PROJECT_USAGE_OPTIONS = Object.values(FRENCH_PROJECT_USAGE_CATALOG);
+const usageProfile = (usage: ProjectUsage = "habitation") => FRENCH_PROJECT_USAGE_CATALOG[usage] ?? FRENCH_PROJECT_USAGE_CATALOG.habitation;
+const LOAD_PROGRAM_STATUS_LABELS: Record<string, string> = { catalogued: "catalogué", ready: "validé", provisional: "à vérifier", calculated: "calculé", "default-provisional": "défaut provisoire", "to-confirm": "à confirmer", "user-input": "saisi" };
+const loadProgramStatusLabel = (status: string) => LOAD_PROGRAM_STATUS_LABELS[status] ?? status;
 type BuildingWorkspaceSnapshot = {
   buildingConfig: Record<string, unknown>;
   customModels: ModelSpec[];
@@ -459,22 +468,27 @@ const initialLevels = (): Level[] => [
   },
   { id: "rdc", label: "RDC", elevation: "0.00", height: "3.20", kind: "habitation", elements: [] },
 ];
-const normalizeProjectMetadata = (project: Project): Project => ({
-  ...project,
-  soil: project.soil?.status === "geotechnical_confirmed" && project.soil.bearingCapacityAdmissibleKPa > 0
-    ? project.soil
-    : {
-        bearingCapacityAdmissibleKPa: DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
-        unit: "kPa",
-        status: "default_preliminary",
-        requiresGeotechnicalConfirmation: true,
-        source: DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE,
-      },
-  levels: project.levels.map(level => {
-    const isEdicule = level.kind === "edicule" || /^(r\+3|édifice|edifice)$/i.test(level.label.trim());
-    return { ...level, label: isEdicule ? "Édifice" : level.label, kind: isEdicule ? "edicule" : (level.kind ?? (level.id === "foundation" ? "foundation" : "habitation")) };
-  }),
-});
+const normalizeProjectMetadata = (project: Project): Project => {
+  const norm = normalizeProjectStandard(project.norm);
+  return {
+    ...project,
+    norm,
+    regulatoryCatalogId: getProjectStandardId(norm),
+    soil: project.soil?.status === "geotechnical_confirmed" && project.soil.bearingCapacityAdmissibleKPa > 0
+      ? project.soil
+      : {
+          bearingCapacityAdmissibleKPa: DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
+          unit: "kPa",
+          status: "default_preliminary",
+          requiresGeotechnicalConfirmation: true,
+          source: DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE,
+        },
+    levels: project.levels.map(level => {
+      const isEdicule = level.kind === "edicule" || /^(r\+3|édifice|edifice)$/i.test(level.label.trim());
+      return { ...level, label: isEdicule ? "Édifice" : level.label, kind: isEdicule ? "edicule" : (level.kind ?? (level.id === "foundation" ? "foundation" : "habitation")) };
+    }),
+  };
+};
 const menuItems = [
   "Grille de trame",
   "Mes modèles",
@@ -689,6 +703,9 @@ export default function BuildingCreateFlow({
   const [showCalculationPreflight, setShowCalculationPreflight] = useState(false);
   const [meshPrerequisiteReady, setMeshPrerequisiteReady] = useState(false);
   const [loadCasesPrerequisiteReady, setLoadCasesPrerequisiteReady] = useState(false);
+  const [analyticalSurfaceMesh, setAnalyticalSurfaceMesh] = useState<ReturnType<typeof meshAnalyticalSurfaces> | null>(null);
+  const [loadApplicationReport, setLoadApplicationReport] = useState<LoadApplicationReport | null>(null);
+  const [reinforcementPlanRequestToken, setReinforcementPlanRequestToken] = useState(0);
   const [analysisPlane, setAnalysisPlane] = useState<FramePlane>("XZ");
   const [solverCombinationId, setSolverCombinationId] = useState("comb:uls-gravity");
   const [planeAnalysis, setPlaneAnalysis] = useState<{ result: PlaneFrameResult | null; errors: string[]; warnings: string[]; combinationId?: string; combinationName?: string; memberLoads: ReturnType<typeof buildGravityMemberLoads>["memberLoads"]; comparison?: { expectedReactionKn: number; solverReactionKn: number; differencePercent: number } } | null>(null);
@@ -710,6 +727,7 @@ export default function BuildingCreateFlow({
   const [showLoadValues, setShowLoadValues] = useState(false);
   const dragSnapshot = useRef<Project | null>(null);
   const beamTraceRef = useRef(false);
+  const noteReportButtonRef = useRef<HTMLButtonElement | null>(null);
   const analysisRows = buildingCalculation?.rows ?? [];
   const loadProgramPatternValues = {
     ...Object.fromEntries(loadProgram.patterns.map(pattern => [pattern.id, pattern.value])),
@@ -921,6 +939,11 @@ export default function BuildingCreateFlow({
     city || selected?.city || "",
     location || selected?.location || ""
   );
+  const projectBearingKPa = selected?.soil?.bearingCapacityAdmissibleKPa ?? Number.parseFloat(soilProposal.qadm);
+  const projectSoilConfirmed = selected?.soil?.status === "geotechnical_confirmed";
+  const projectSoilName = projectSoilConfirmed ? "Profil défini par l’étude géotechnique" : soilProposal.soil;
+  const projectSoilSource = selected?.soil?.source || soilProposal.basis;
+  const projectSoilStatus = projectSoilConfirmed ? "confirmé par étude géotechnique" : "provisoire — à confirmer";
   const regulatoryProfile = getRegulatorySiteProfile(country, city);
   const projectSetupProfile = getRegulatorySiteProfile(projectSettingsDraft.country, projectSettingsDraft.city);
   const projectSetupMaterials = getProjectMaterialSummary(projectSettingsDraft.materials);
@@ -1278,7 +1301,7 @@ export default function BuildingCreateFlow({
     setShowCalculationPreflight(false);
     setMeshPrerequisiteReady(false);
     setLoadCasesPrerequisiteReady(false);
-  }, [selected?.levels, selected?.structure, xDistances, yDistances, floorConfig, analyticalTolerance, customModels]);
+  }, [selected?.levels, selected?.structure, selected?.norm, xDistances, yDistances, floorConfig, analyticalTolerance, customModels]);
 
   useEffect(() => {
     setPlaneAnalysis(null);
@@ -1293,11 +1316,11 @@ export default function BuildingCreateFlow({
     try {
       const raw = sessionStorage.getItem(key);
       const restored = raw ? JSON.parse(raw) as LoadProgram : null;
-      setLoadProgram(restored?.schemaVersion === 1 ? restored : createDefaultLoadProgram(selected.norm || norm, selected.projectUsage ?? "habitation"));
+      setLoadProgram(restored?.schemaVersion === 1 ? normalizeLoadProgram(restored, selected.norm, selected.projectUsage ?? "habitation") : createDefaultLoadProgram(selected.norm || norm, selected.projectUsage ?? "habitation"));
     } catch {
       setLoadProgram(createDefaultLoadProgram(selected.norm || norm, selected.projectUsage ?? "habitation"));
     }
-  }, [selected?.id, authResolved, cloudAccountId]);
+  }, [selected?.id, selected?.norm, selected?.projectUsage, authResolved, cloudAccountId]);
 
   useEffect(() => {
     if (!authResolved || !selected) return;
@@ -1372,7 +1395,7 @@ export default function BuildingCreateFlow({
       if (typeof config.analyticalTolerance === "string") setAnalyticalTolerance(config.analyticalTolerance);
       if (typeof config.activeLevelId === "string" && normalized.levels.some(level => level.id === config.activeLevelId)) setActiveLevelId(config.activeLevelId);
       setCustomModels(Array.isArray(workspace.customModels) ? workspace.customModels : []);
-      const restoredLoadProgram = workspace.loadProgram?.schemaVersion === 1 ? normalizeLoadProgram(workspace.loadProgram) : createDefaultLoadProgram(normalized.norm, normalized.projectUsage ?? "habitation");
+      const restoredLoadProgram = workspace.loadProgram?.schemaVersion === 1 ? normalizeLoadProgram(workspace.loadProgram, normalized.norm, normalized.projectUsage ?? "habitation") : createDefaultLoadProgram(normalized.norm, normalized.projectUsage ?? "habitation");
       setLoadProgram(restoredLoadProgram);
       const storyCount = Math.max(1, normalized.levels.filter(level => level.id !== "foundation").length);
       setClimateDraft(normalizeClimateDraft(workspace.climateDraft, storyCount));
@@ -1650,8 +1673,8 @@ export default function BuildingCreateFlow({
     URL.revokeObjectURL(url);
   };
   const executeBuildingCalculation = () => {
-    if (!meshPrerequisiteReady) {
-      toast.error("Le maillage des dalles est obligatoire avant le recalcul.");
+    if (!meshPrerequisiteReady || !loadCasesPrerequisiteReady) {
+      toast.error("Le calcul est verrouillé : validez le maillage de toutes les surfaces puis l’application des charges.");
       setShowCalculationPreflight(true);
       return;
     }
@@ -1662,6 +1685,18 @@ export default function BuildingCreateFlow({
     if (!analytical) return;
     setAnalyticalModel(analytical.model);
     setAnalyticalPrecheck(analytical.precheck);
+    const latestStructuralValidation = validateStructuralModel(selected.levels);
+    setStructuralValidation(latestStructuralValidation);
+    const structuralErrors = latestStructuralValidation.issues.filter(item => item.severity === "error");
+    if (structuralErrors.length) {
+      setBuildingCalculation(null);
+      setBuildingLoadModel(null);
+      setPlaneAnalysis(null);
+      setSpatial3DResult(null);
+      setShowCalculationPreflight(true);
+      toast.error(`Calcul bloqué : ${structuralErrors.length} erreur(s) structurelle(s) à corriger avant le solveur.`);
+      return;
+    }
     if (!analytical.precheck.ok) {
       setBuildingCalculation(null);
       setBuildingLoadModel(null);
@@ -1741,10 +1776,11 @@ export default function BuildingCreateFlow({
     });
     setBuildingLoadModel(model);
     setBuildingCalculation(summarizeBuildingLoads(model));
+    setAnalyticalSurfaceMesh(null);
+    setSurfaceAnalysis(null);
+    setLoadApplicationReport(null);
     setMeshPrerequisiteReady(false);
-    // Les cas actifs et leurs combinaisons sont déjà enregistrés dans le
-    // programme de charges : aucune seconde validation manuelle n’est requise.
-    setLoadCasesPrerequisiteReady(true);
+    setLoadCasesPrerequisiteReady(false);
     setShowCalculationPreflight(true);
     setPanel("Calculer la descente");
   };
@@ -1875,6 +1911,103 @@ export default function BuildingCreateFlow({
     else if (!errors.length && rows.length) toast.success(`Maillage et zones de charges de ${rows.length} surface(s) calculés.`);
     else toast.error(`Aucune surface calculée : ${errors[0] ?? "géométrie ou appuis incompatibles"}`);
     return errors.length === 0 && rows.length > 0;
+  };
+  const runAllSurfaceMeshing = () => {
+    if (!selected) return;
+    const analytical = analyticalModel ? { model: analyticalModel, precheck: analyticalPrecheck } : buildCurrentAnalytical();
+    if (!analytical) return;
+    setAnalyticalModel(analytical.model);
+    if (analytical.precheck) setAnalyticalPrecheck(analytical.precheck);
+    const size = Number(surfaceMeshSizeM.replace(",", "."));
+    const mesh = meshAnalyticalSurfaces(analytical.model, size);
+    setAnalyticalSurfaceMesh(mesh);
+    const hasRectangularPlates = selected.levels.some(level => level.elements.some(element => isSlabElementType(element.type) && element.x2 !== undefined && element.y2 !== undefined));
+    if (hasRectangularPlates) runSurfaceAnalysis();
+    else setSurfaceAnalysis(null);
+    const ready = mesh.errors.length === 0 && mesh.surfaces.every(surface => surface.triangleCount > 0);
+    setMeshPrerequisiteReady(ready);
+    setLoadCasesPrerequisiteReady(false);
+    setLoadApplicationReport(null);
+    if (ready) toast.success(`${mesh.surfaces.length} surface(s) géométrique(s) maillée(s) · ${mesh.nodes.length} nœud(s) · ${mesh.triangles.length} triangle(s)`);
+    else toast.error(`Maillage incomplet : ${mesh.errors[0] ?? "une ou plusieurs surfaces n’ont pas produit de triangles"}`);
+  };
+  const applyBuildingLoads = () => {
+    if (!selected || !analyticalModel || !buildingLoadModel) return;
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    if (!meshPrerequisiteReady || !analyticalSurfaceMesh) errors.push("Faire et valider le maillage de toutes les surfaces avant d’appliquer les charges.");
+    if (!analyticalPrecheck?.ok) errors.push(...(analyticalPrecheck?.errors.map(item => item.message) ?? ["Le pré-contrôle géométrique est absent ou invalide."]));
+    const structural = validateStructuralModel(selected.levels);
+    setStructuralValidation(structural);
+    errors.push(...structural.issues.filter(item => item.severity === "error").map(item => item.message));
+    const diagnostics = validateLoadProgram(loadProgram);
+    errors.push(...diagnostics.filter(item => item.severity === "error").map(item => item.message));
+    warnings.push(...diagnostics.filter(item => item.severity === "warning").map(item => item.message));
+    warnings.push(...analyticalPrecheck?.warnings.map(item => item.message) ?? []);
+    warnings.push(...buildingLoadModel.warnings);
+    warnings.push(...analyticalSurfaceMesh?.warnings ?? []);
+    const enabledCombinations = loadProgram.combinations.filter(item => item.enabled);
+    const hasUls = enabledCombinations.some(item => item.category === "ULS");
+    const hasSls = enabledCombinations.some(item => item.category.startsWith("SLS-"));
+    if (!hasUls) errors.push("Aucune combinaison ELU active n’est définie.");
+    if (!hasSls) errors.push("Aucune combinaison ELS active n’est définie.");
+    const floors = buildingLoadModel.floors;
+    const floorsById = new Map(floors.map(floor => [floor.id, floor]));
+    const assignments = buildingLoadModel.surfaceAssignments;
+    const meshBySourceElement = new Map((analyticalSurfaceMesh?.surfaces ?? []).map(surface => [surface.sourceElementId, surface]));
+    const parentElementIds = new Set(floors.map(floor => floor.id));
+    const missingAssignments = analyticalModel.surfaces.filter(surface => parentElementIds.has(surface.sourceElementId.split(":")[0]) && !assignments.some(assignment => assignment.meshSurfaceId === surface.sourceElementId));
+    for (const surface of missingAssignments) errors.push(`Aucune charge propre n’est affectée à la surface maillée ${surface.sourceElementId}.`);
+    const surfaceRows = assignments.map(assignment => {
+      const floor = floorsById.get(assignment.parentElementId);
+      const mesh = meshBySourceElement.get(assignment.meshSurfaceId);
+      if (!floor) errors.push(`Surface ${assignment.id} sans élément porteur dans le modèle de charges.`);
+      if (!mesh || mesh.triangleCount <= 0 || mesh.areaM2 <= 0) errors.push(`Surface chargée ${assignment.meshSurfaceId} absente ou non valide dans le maillage analytique.`);
+      if (![assignment.areaM2, assignment.gkKnM2, assignment.qkKnM2, assignment.gkKn, assignment.qkKn].every(value => Number.isFinite(value) && value >= 0) || assignment.areaM2 <= 0)
+        errors.push(`Affectation Gk/Qk invalide sur ${assignment.loadName}.`);
+      const floorContributions = floor ? buildingLoadModel.contributions.filter(item => item.floorId === floor.id) : [];
+      return { id: assignment.id, loadName: assignment.loadName, sourceType: assignment.sourceType, kind: assignment.kind, areaM2: assignment.areaM2, gkKnM2: assignment.gkKnM2, qkKnM2: assignment.qkKnM2, gk: assignment.gkKn, qk: assignment.qkKn, transferred: floorContributions.length > 0 };
+    });
+    for (const floor of floors) {
+      const floorAssignments = assignments.filter(assignment => assignment.parentElementId === floor.id);
+      const assignedGk = floorAssignments.reduce((sum, assignment) => sum + assignment.gkKn, 0);
+      const assignedQk = floorAssignments.reduce((sum, assignment) => sum + assignment.qkKn, 0);
+      const floorContributions = buildingLoadModel.contributions.filter(item => item.floorId === floor.id);
+      const transferredGk = floorContributions.reduce((sum, item) => sum + item.gk, 0);
+      const transferredQk = floorContributions.reduce((sum, item) => sum + item.qk, 0);
+      if (!floorAssignments.length) errors.push(`Aucune charge propre n’est attribuée à l’élément porteur ${floor.id}.`);
+      if (Math.abs(assignedGk - floor.gk) > Math.max(0.05, floor.gk * 0.01) || Math.abs(assignedQk - floor.qk) > Math.max(0.05, floor.qk * 0.01))
+        errors.push(`Les affectations par surface de ${floor.id} ne rejoignent pas Gk/Qk de l’élément (résidus ${(assignedGk - floor.gk).toFixed(2)}/${(assignedQk - floor.qk).toFixed(2)} kN).`);
+      if ((floor.gk > 1e-6 || floor.qk > 1e-6) && !floorContributions.length) errors.push(`Aucun transfert vers un appui réel n’est calculé pour la surface ${floor.id}.`);
+      const gResidual = Math.abs(transferredGk - floor.gk), qResidual = Math.abs(transferredQk - floor.qk);
+      if (floorContributions.length && (gResidual > Math.max(0.05, floor.gk * 0.01) || qResidual > Math.max(0.05, floor.qk * 0.01))) errors.push(`Le transfert de ${floor.id} ne conserve pas Gk/Qk (résidus ${gResidual.toFixed(2)}/${qResidual.toFixed(2)} kN).`);
+    }
+    const skeletonRows = buildingLoadModel.rows.filter(row => ["Poutre", "Voile", "Longrine de redressement", "Poteau", "Semelle"].includes(row.type)).map(row => ({
+      id: row.id,
+      loadName: row.type === "Semelle" ? `Fondation · résultante G/Q · ${row.id}` : `Squelette · ${row.type} · ${row.id}`,
+      type: row.type,
+      gk: row.gk,
+      qk: row.qk,
+      sources: row.sources,
+    }));
+    for (const row of skeletonRows) if (![row.gk, row.qk].every(value => Number.isFinite(value) && value >= 0)) errors.push(`Charges Gk/Qk invalides sur l’élément de squelette ${row.id}.`);
+    const plateErrors = surfaceAnalysis?.errors ?? [];
+    if (plateErrors.length) errors.push(...plateErrors.map(message => `Dalle / balcon · ${message}`));
+    const combinationRows: LoadApplicationReport["combinationRows"] = [];
+    for (const combination of enabledCombinations) {
+      const gravity = buildGravityMemberLoads(analyticalModel, buildingLoadModel, combination, loadProgram);
+      errors.push(...gravity.errors.map(message => `${combination.name} · ${message}`));
+      warnings.push(...gravity.warnings.map(message => `${combination.name} · ${message}`));
+      combinationRows.push({ id: combination.id, name: combination.name, category: combination.category, formula: combination.formula ?? combination.note, status: combination.status, lineLoadCount: gravity.memberLoads.filter(item => item.elementId && Number.isFinite(item.qyKnM) && Math.abs(item.qyKnM ?? 0) > 1e-9).length });
+    }
+    if (enabledCombinations.some(item => item.status === "provisional")) warnings.push("Une combinaison active a été modifiée manuellement ou ne provient pas du catalogue NF EN/NA; ses coefficients doivent être vérifiés.");
+    if (loadProgram.massSource.status !== "ready") warnings.push("La source de masse sismique reste une pré-étude : l’application complète de ψE=φ·ψ2 selon l’EC8 et sa distribution par niveau doivent être vérifiées.");
+    const report: LoadApplicationReport = { errors: Array.from(new Set(errors)), warnings: Array.from(new Set(warnings)), surfaceRows, skeletonRows, combinationRows, lineLoadCount: combinationRows.reduce((sum, item) => sum + item.lineLoadCount, 0) };
+    setLoadApplicationReport(report);
+    const ready = report.errors.length === 0;
+    setLoadCasesPrerequisiteReady(ready);
+    if (ready) toast.success(`Charges appliquées et contrôlées · ${surfaceRows.length} surface(s) · ${enabledCombinations.length} combinaison(s) · ${report.lineLoadCount} charge(s) linéaire(s) générée(s) sur les combinaisons actives.`);
+    else toast.error(`Application des charges bloquée : ${report.errors[0]}`);
   };
   const downloadSurfaceAnalysis = () => {
     if (!surfaceAnalysis) return;
@@ -2134,6 +2267,42 @@ export default function BuildingCreateFlow({
       prev.map(project => (project.id === next.id ? next : project))
     );
   };
+  useEffect(() => {
+    if (!selected) return;
+    let changed = false;
+    const levels = selected.levels.map(level => ({
+      ...level,
+      elements: level.elements.map(element => {
+        if (element.type !== "Escaliers") return element;
+        const absolute = element.absoluteStairGeometry;
+        const geometry = absolute ?? element.stairGeometry;
+        const scale = absolute ? 1 : numericGridDistance(gridDistance, 4);
+        const flight = geometry?.flight1;
+        if (!flight) return element;
+        const edgeWidth = (Math.hypot(flight.lowerA.x - flight.lowerB.x, flight.lowerA.y - flight.lowerB.y) + Math.hypot(flight.upperA.x - flight.upperB.x, flight.upperA.y - flight.upperB.y)) / 2 * scale;
+        const centerLower = { x: (flight.lowerA.x + flight.lowerB.x) / 2, y: (flight.lowerA.y + flight.lowerB.y) / 2 };
+        const centerUpper = { x: (flight.upperA.x + flight.upperB.x) / 2, y: (flight.upperA.y + flight.upperB.y) / 2 };
+        const measuredRun = Math.hypot(centerUpper.x - centerLower.x, centerUpper.y - centerLower.y) * scale;
+        if (!(edgeWidth > 0) || !(measuredRun > 0)) return element;
+        const config = normalizeFloorConfig({ ...defaultFloorConfig, ...element.floorConfig, type: "Dalle pleine", thickness: element.floorConfig?.thickness ?? "15 cm" });
+        const savedDepth = Number(String(config.stairLandingDepthM ?? "").replace(",", "."));
+        const savedRun = Number(String(config.stairRun ?? "").replace(",", "."));
+        const depthWrong = !Number.isFinite(savedDepth) || savedDepth <= 0;
+        const runWrong = !Number.isFinite(savedRun) || savedRun <= 0 || (Math.abs(savedRun - 3.6) <= 0.01 && Math.abs(savedRun - measuredRun) > 0.01);
+        const nextConfig: FloorConfig = {
+          ...config,
+          stairLandingDepthM: depthWrong ? edgeWidth.toFixed(2) : config.stairLandingDepthM,
+          stairRun: runWrong ? measuredRun.toFixed(2) : config.stairRun,
+          stairLandingFinishLoad: config.stairLandingFinishLoad ?? config.finishLoad ?? "1.00",
+          stairLandingImposedLoad: config.stairLandingImposedLoad ?? config.characteristicImposedLoad ?? usageProfile(selected.projectUsage).stairLoad.toFixed(2),
+        };
+        if (!depthWrong && !runWrong && element.floorConfig?.stairLandingFinishLoad && element.floorConfig?.stairLandingImposedLoad) return element;
+        changed = true;
+        return { ...element, floorConfig: nextConfig };
+      }),
+    }));
+    if (changed) updateSelected({ levels });
+  }, [selected?.id]);
   const applyOptimizedSection = (elementId: string, type: string, sectionName: string, dimensions: string) => {
     if (!selected) return;
     const modelType = type === "beam" ? "Poutre" : type === "column" ? "Poteau" : type === "slab" ? "Dalle" : type === "wall" ? "Voile" : type === "tie-beam" ? "Longrine de redressement" : "Semelle";
@@ -2214,6 +2383,24 @@ export default function BuildingCreateFlow({
       topB: freezePoint(stairGeometry.topB),
       landingZ: stairGeometry.landingZ,
     } : undefined;
+    const measuredFlight = absoluteStairGeometry?.flight1;
+    const measuredStairWidthM = measuredFlight ? (Math.hypot(measuredFlight.lowerA.x - measuredFlight.lowerB.x, measuredFlight.lowerA.y - measuredFlight.lowerB.y) + Math.hypot(measuredFlight.upperA.x - measuredFlight.upperB.x, measuredFlight.upperA.y - measuredFlight.upperB.y)) / 2 : undefined;
+    const measuredStairRunM = measuredFlight ? Math.hypot((measuredFlight.upperA.x + measuredFlight.upperB.x - measuredFlight.lowerA.x - measuredFlight.lowerB.x) / 2, (measuredFlight.upperA.y + measuredFlight.upperB.y - measuredFlight.lowerA.y - measuredFlight.lowerB.y) / 2) : undefined;
+    const stairFloorConfig = normalizeFloorConfig({
+      ...floorConfig,
+      ...floorOverride,
+      type: "Dalle pleine",
+      thickness: floorOverride?.thickness ?? floorConfig.thickness ?? "15 cm",
+      characteristicImposedLoad: floorOverride?.characteristicImposedLoad ?? floorConfig.characteristicImposedLoad ?? usageProfile(projectUsage).stairLoad.toFixed(2),
+      stairLandingDepthM: floorOverride?.stairLandingDepthM ?? floorConfig.stairLandingDepthM ?? (measuredStairWidthM && measuredStairWidthM > 0 ? measuredStairWidthM.toFixed(2) : "1.00"),
+      stairRun: floorOverride?.stairRun ?? (measuredStairRunM && measuredStairRunM > 0 ? measuredStairRunM.toFixed(2) : floorConfig.stairRun ?? "3.60"),
+      stairLandingFinishLoad: floorOverride?.stairLandingFinishLoad ?? floorConfig.stairLandingFinishLoad ?? floorConfig.finishLoad ?? "1.00",
+      stairLandingImposedLoad: floorOverride?.stairLandingImposedLoad ?? floorConfig.stairLandingImposedLoad ?? floorOverride?.characteristicImposedLoad ?? floorConfig.characteristicImposedLoad ?? usageProfile(projectUsage).stairLoad.toFixed(2),
+      stairRiser: floorOverride?.stairRiser ?? floorConfig.stairRiser ?? "0.17",
+      stairTread: floorOverride?.stairTread ?? floorConfig.stairTread ?? "0.30",
+      stairRise: floorOverride?.stairRise ?? floorConfig.stairRise ?? "2.04",
+      stairFinishLoad: floorOverride?.stairFinishLoad ?? floorConfig.stairFinishLoad ?? "0.00",
+    });
     const nextElement: ElementItem = {
       id: elementLabel(
         selected.levels.flatMap(level => level.elements),
@@ -2240,7 +2427,7 @@ export default function BuildingCreateFlow({
       absoluteStairGeometry,
       floorConfig:
         isSlabElementType(modelType) || modelType === "Escaliers"
-          ? (floorOverride ?? (modelType === "Escaliers" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine", thickness: "15 cm", characteristicImposedLoad: usageProfile(projectUsage).stairLoad.toFixed(2), stairRiser: "0.17", stairTread: "0.30", stairRise: "2.04", stairRun: "3.60", stairFinishLoad: "0.00" }) : modelType === "Balcon" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine", thickness: floorConfig.type === "Dalle pleine" ? floorConfig.thickness : "20 cm" }) : floorConfig))
+          ? (modelType === "Escaliers" ? stairFloorConfig : floorOverride ?? (modelType === "Balcon" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine", thickness: floorConfig.type === "Dalle pleine" ? floorConfig.thickness : "20 cm" }) : floorConfig))
           : undefined,
     };
     if (hasSimilarElementAt(placementLevel.elements, nextElement)) {
@@ -2695,7 +2882,15 @@ export default function BuildingCreateFlow({
     setEditY(String(item.y));
     setEditSurfaceOpenings((item.openings ?? []).map(opening => `${opening.x1M};${opening.y1M};${opening.x2M};${opening.y2M}`).join("\n"));
     setTargetLevelId(levelId);
-    if (isSlabElementType(item.type))
+    if (item.type === "Escaliers") {
+      const absolute = item.absoluteStairGeometry;
+      const flight = absolute?.flight1 ?? item.stairGeometry?.flight1;
+      const scale = absolute?.flight1 ? 1 : numericGridDistance(gridDistance, 4);
+      const widthM = flight ? (Math.hypot(flight.lowerA.x - flight.lowerB.x, flight.lowerA.y - flight.lowerB.y) + Math.hypot(flight.upperA.x - flight.upperB.x, flight.upperA.y - flight.upperB.y)) / 2 * scale : 1;
+      const runM = flight ? Math.hypot((flight.upperA.x + flight.upperB.x - flight.lowerA.x - flight.lowerB.x) / 2, (flight.upperA.y + flight.upperB.y - flight.lowerA.y - flight.lowerB.y) / 2) * scale : 3.6;
+      const config = normalizeFloorConfig({ ...defaultFloorConfig, ...item.floorConfig, type: "Dalle pleine", thickness: item.floorConfig?.thickness ?? "15 cm", characteristicImposedLoad: item.floorConfig?.characteristicImposedLoad ?? usageProfile(projectUsage).stairLoad.toFixed(2) });
+      setFloorConfig({ ...config, stairLandingDepthM: config.stairLandingDepthM ?? widthM.toFixed(2), stairRun: config.stairRun ?? runM.toFixed(2), stairLandingFinishLoad: config.stairLandingFinishLoad ?? config.finishLoad ?? "1.00", stairLandingImposedLoad: config.stairLandingImposedLoad ?? config.characteristicImposedLoad });
+    } else if (isSlabElementType(item.type))
       setFloorConfig(item.type === "Balcon"
         ? normalizeFloorConfig(item.floorConfig ? { ...item.floorConfig, type: "Dalle pleine" } : defaultBalconyFloorConfig())
         : normalizeFloorConfig(item.floorConfig ?? floorConfigForSection(item.section)));
@@ -2721,8 +2916,8 @@ export default function BuildingCreateFlow({
       foundationMode: editType === "Semelle" ? editingElement.foundationMode ?? "centered" : undefined,
       foundationDirection: editType === "Semelle" && editingElement.foundationMode === "eccentric" ? editingElement.foundationDirection : undefined,
       floorConfig:
-        isSlabElementType(editType)
-          ? editType === "Balcon" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine" }) : floorConfigForSection(editSection, floorConfig)
+        isSlabElementType(editType) || editType === "Escaliers"
+          ? editType === "Escaliers" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine" }) : editType === "Balcon" ? normalizeFloorConfig({ ...floorConfig, type: "Dalle pleine" }) : floorConfigForSection(editSection, floorConfig)
           : undefined,
       openings: isSlabElementType(editType) ? parsedOpenings.openings : undefined,
     };
@@ -2784,6 +2979,9 @@ export default function BuildingCreateFlow({
     supports: selectedAnalysisRow.supports,
     sources: selectedAnalysisRow.sources,
   }) : null;
+  const selectedSpatialElement = selectedAnalysisRow ? spatial3DResult?.elements.find(item => item.sourceElementId === selectedAnalysisRow.id) : null;
+  const selectedPlaneElement = selectedAnalysisRow ? planeAnalysis?.result?.elements.find(item => item.elementId === selectedAnalysisRow.id) : null;
+  const selectedSurfaceResult = selectedAnalysisRow ? surfaceAnalysis?.rows.find(item => item.elementId === selectedAnalysisRow.id) : null;
   const analysisScaleColors = Object.fromEntries(
     analysisRows
       .filter(row => row.type === "Poteau")
@@ -2827,7 +3025,7 @@ export default function BuildingCreateFlow({
       showAnalysisMoments={showAnalysisMoments}
       loadVisuals={loadVisuals}
       showLoadValues={showLoadValues}
-      meshedSurfaceIds={surfaceAnalysis?.rows.filter(row => Boolean(row.analysis.mesh)).map(row => row.elementId) ?? []}
+      meshedSurfaceIds={analyticalSurfaceMesh?.surfaces.filter(surface => surface.triangleCount > 0).map(surface => surface.sourceElementId.split(":")[0]) ?? surfaceAnalysis?.rows.filter(row => Boolean(row.analysis.mesh)).map(row => row.elementId) ?? []}
       meshSizeM={Number(surfaceMeshSizeM.replace(",", ".")) || 0.75}
       stairPlacementActive={false}
       stairPlacementStart={placementStart}
@@ -3125,7 +3323,7 @@ export default function BuildingCreateFlow({
                       />
                     </div>
                     <div>
-                      <Label className="text-[11px]">Catalogue de calcul / norme</Label>
+                      <Label className="text-[11px]">Référentiel de calcul du projet</Label>
                       <select
                         className="mt-1.5 h-10 w-full rounded-md border border-[#e2e8eb] bg-white px-3 text-[12px]"
                         value={projectSettingsDraft.norm}
@@ -3137,10 +3335,11 @@ export default function BuildingCreateFlow({
                         {PROJECT_STANDARD_CATALOG.map(item => <option key={item.id} value={item.norm}>{item.label}</option>)}
                       </select>
                       <div className="mt-2 rounded-lg border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] leading-4 text-[#245e60]">
-                        <b>Présélection automatique pour {projectSettingsDraft.country} : {getCountryProjectStandard(projectSettingsDraft.country, projectSettingsDraft.city)}</b>
+                        <b>Profil de calcul GcBtp par défaut : {getCountryProjectStandard(projectSettingsDraft.country, projectSettingsDraft.city)}</b>
                         <div className="mt-1">Référentiel pays : {projectSetupProfile.rule.label} · statut : {projectSetupProfile.rule.status === "national" ? "national" : projectSetupProfile.rule.status === "adopted" ? "adopté / proposé" : projectSetupProfile.rule.status === "adapted" ? "adapté / à confirmer" : "à confirmer"}.</div>
                         <div className="mt-1">{projectSetupProfile.rule.note}</div>
-                        <div className="mt-1 font-medium">Vous pouvez choisir un autre catalogue ; une proposition ou un profil à confirmer ne remplace pas la vérification du référentiel contractuel par le bureau d’études.</div>
+                        <div className="mt-1">{getFrenchCalculationBasisLabel(projectSettingsDraft.norm)}. Pays, ville et emplacement restent utilisés pour les données locales de vent, séisme et géotechnique. Le référentiel français ne remplace pas les obligations locales.</div>
+                        <div className="mt-1 font-medium">Le BAEL 91 mod. 99 est conservé comme option française historique distincte; ne pas mélanger ses coefficients avec ceux des Eurocodes. Les exigences locales restent à vérifier.</div>
                       </div>
                     </div>
                     <div>
@@ -4561,6 +4760,23 @@ export default function BuildingCreateFlow({
                       <p className="text-[9px] text-[#68767d]">Coordonnées locales depuis le coin inférieur gauche de la surface, en mètres; laisser vide si aucune trémie. Exemple : 1;1;2;2.</p>
                     </div>
                   )}
+                  {editType === "Escaliers" && (
+                    <div className="space-y-2 rounded-lg border border-[#e7d2a8] bg-[#fffaf0] p-2">
+                      <div className="text-[10px] font-bold text-[#8a5a21]">Escalier · dimensions et charges propres · m / kN/m²</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label><span className="text-[9px] font-semibold">Profondeur des paliers</span><Input aria-label="Profondeur des paliers en mètres" inputMode="decimal" value={floorConfig.stairLandingDepthM ?? "1.00"} onChange={event => setFloorConfig(current => ({ ...current, stairLandingDepthM: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Course mesurée d’une volée</span><Input aria-label="Course de volée en mètres" inputMode="decimal" value={floorConfig.stairRun ?? "2.00"} onChange={event => setFloorConfig(current => ({ ...current, stairRun: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Dénivelé d’une volée</span><Input aria-label="Dénivelé de volée en mètres" inputMode="decimal" value={floorConfig.stairRise ?? "2.04"} onChange={event => setFloorConfig(current => ({ ...current, stairRise: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Qk · volée</span><Input aria-label="Charge d’exploitation de la volée" inputMode="decimal" value={floorConfig.characteristicImposedLoad ?? "3.00"} onChange={event => setFloorConfig(current => ({ ...current, characteristicImposedLoad: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Finition · volée</span><Input aria-label="Finition de la volée" inputMode="decimal" value={floorConfig.stairFinishLoad ?? "0.00"} onChange={event => setFloorConfig(current => ({ ...current, stairFinishLoad: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Finition · paliers</span><Input aria-label="Finition des paliers" inputMode="decimal" value={floorConfig.stairLandingFinishLoad ?? floorConfig.finishLoad ?? "1.00"} onChange={event => setFloorConfig(current => ({ ...current, stairLandingFinishLoad: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Qk · paliers</span><Input aria-label="Charge d’exploitation des paliers" inputMode="decimal" value={floorConfig.stairLandingImposedLoad ?? floorConfig.characteristicImposedLoad ?? "3.00"} onChange={event => setFloorConfig(current => ({ ...current, stairLandingImposedLoad: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Hauteur de marche</span><Input aria-label="Hauteur de marche en mètres" inputMode="decimal" value={floorConfig.stairRiser ?? "0.17"} onChange={event => setFloorConfig(current => ({ ...current, stairRiser: event.target.value }))} /></label>
+                        <label><span className="text-[9px] font-semibold">Giron</span><Input aria-label="Giron de marche en mètres" inputMode="decimal" value={floorConfig.stairTread ?? "0.30"} onChange={event => setFloorConfig(current => ({ ...current, stairTread: event.target.value }))} /></label>
+                      </div>
+                      <p className="text-[9px] text-[#755d36]">Gk volée : poids propre de paillasse + marches + finition; Gk palier : poids propre de dalle + finition. Les valeurs initialisées depuis la géométrie doivent être confirmées sur le plan d’exécution.</p>
+                    </div>
+                  )}
                   {editType === "Balcon" && (
                     <div className="space-y-2 rounded-lg border border-[#bfe4e2] bg-[#f0faf9] p-2">
                       <div className="text-[10px] font-bold text-[#087f7f]">Charges caractéristiques du balcon · kN/m²</div>
@@ -4647,6 +4863,7 @@ export default function BuildingCreateFlow({
                               </span>
                             </>
                           )}
+                          {item.type === "Escaliers" && item.floorConfig && <><br /><span className="text-[#087f7f]">Palier {item.floorConfig.stairLandingDepthM ?? "à renseigner"} m · course volée {item.floorConfig.stairRun ?? "—"} m · Qk palier {item.floorConfig.stairLandingImposedLoad ?? item.floorConfig.characteristicImposedLoad ?? "—"} kN/m²</span></>}
                           {(() => {
                             const load = elementLoadSummary(
                               item,
@@ -4775,6 +4992,7 @@ export default function BuildingCreateFlow({
                         setCountry(nextCountry);
                         setCity(nextCity);
                         setNorm(nextNorm);
+                        setLoadProgram(current => normalizeLoadProgram(current, nextNorm, projectUsage));
                         updateSelected({
                           country: nextCountry,
                           city: nextCity,
@@ -4782,7 +5000,7 @@ export default function BuildingCreateFlow({
                           regulatoryCatalogId: getProjectStandardId(nextNorm),
                         });
                         toast.success(
-                          `Profil ${nextCountry} activé automatiquement`
+                          `Localisation ${nextCountry} mise à jour — référentiel français appliqué`
                         );
                       }}
                     >
@@ -4836,13 +5054,14 @@ export default function BuildingCreateFlow({
                     </select>
                   </div>
                   <div>
-                    <Label>Norme</Label>
+                    <Label>Référentiel de calcul</Label>
                     <select
                       className="h-10 w-full rounded border bg-white px-2 text-[11px]"
                       value={norm}
                       onChange={event => {
                         const nextNorm = event.target.value as ProjectStandard;
                         setNorm(nextNorm);
+                        setLoadProgram(current => normalizeLoadProgram(current, nextNorm, projectUsage));
                         updateSelected({ norm: nextNorm, regulatoryCatalogId: getProjectStandardId(nextNorm) });
                       }}
                     >
@@ -4850,6 +5069,7 @@ export default function BuildingCreateFlow({
                         <option key={item.id} value={item.norm}>{item.label}</option>
                       ))}
                     </select>
+                    <p className="mt-1 text-[9px] leading-4 text-[#77888d]">{getFrenchCalculationBasisLabel(norm)}. Les données de vent, séisme et sol restent propres à la ville et à l’emplacement du projet; les résultats ne sont pas déclarés conformes si une donnée ou un contrôle manque.</p>
                   </div>
                   <div>
                     <Label>Classe de béton du catalogue</Label>
@@ -5075,11 +5295,11 @@ export default function BuildingCreateFlow({
                     ))}
                   </div>
                   <div className="rounded-lg bg-[#fff5e8] p-3 text-[10px] text-[#8a5a21]">
-                    <b>Sol proposé selon l’emplacement :</b> {soilProposal.soil}{" "}
-                    · qadm {soilProposal.qadm} · {soilProposal.groundwater}.
+                    <b>Paramètres géotechniques du projet :</b> {projectSoilName}{" "}
+                    · qadm {Number.isFinite(projectBearingKPa) ? `${projectBearingKPa} kPa` : "à renseigner"} · {soilProposal.groundwater}.
                     <br />
                     <span className="opacity-80">
-                      Statut {soilProposal.status} — {soilProposal.basis}.
+                      Statut {projectSoilStatus} — {projectSoilSource}. La localisation seule ne permet pas de déduire la portance.
                     </span>
                   </div>
                   <Button
@@ -5114,6 +5334,11 @@ export default function BuildingCreateFlow({
             {panel === "Calculer la descente" && (
               <Card>
                 <CardContent className="space-y-3 p-3">
+                  {buildingCalculation && <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#cbdde1] bg-white p-2">
+                    <Button type="button" className="h-9 bg-[#102f45] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => noteReportButtonRef.current?.click()}>Note de calcul PDF</Button>
+                    <Button type="button" className="h-9 bg-[#8a5b16] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => { setReinforcementPlanRequestToken(value => value + 1); requestAnimationFrame(() => document.getElementById("reinforcement-plan-section")?.scrollIntoView({ behavior: "smooth", block: "center" })); }}>Calculer le ferraillage / plans A4</Button>
+                    <div className="col-span-2 text-[9px] text-[#68767d]">Cliquez sur un élément dans la liste plus bas pour afficher ses charges et sollicitations. Note et plans sont des pré-études non certifiées.</div>
+                  </div>}
                   {analyticalPrecheck && analyticalModel && (
                     <div className={`space-y-2 rounded-lg border p-3 text-[10px] ${analyticalPrecheck.ok ? "border-[#bfe4e2] bg-[#eaf8f7] text-[#245e60]" : "border-[#efc4b9] bg-[#fff1ed] text-[#914d3d]"}`}>
                       <div className="flex items-center justify-between gap-2">
@@ -5177,9 +5402,9 @@ export default function BuildingCreateFlow({
                       <b>Surfaces — maillage triangulaire et plaque</b>
                       <div className="grid grid-cols-[1fr_auto] gap-2">
                         <label className="flex items-center gap-2">Taille cible de maille (m)
-                          <Input aria-label="Taille de maille des surfaces en mètres" inputMode="decimal" value={surfaceMeshSizeM} onChange={event => setSurfaceMeshSizeM(event.target.value)} className="h-8 w-24 bg-white text-[10px]" />
+                          <Input aria-label="Taille de maille des surfaces en mètres" inputMode="decimal" value={surfaceMeshSizeM} onChange={event => { setSurfaceMeshSizeM(event.target.value); setMeshPrerequisiteReady(false); setLoadCasesPrerequisiteReady(false); }} className="h-8 w-24 bg-white text-[10px]" />
                         </label>
-                        <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>Mailler / analyser</Button>
+                        <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={runAllSurfaceMeshing}>Mailler toutes les surfaces</Button>
                       </div>
                       <div className="rounded bg-white p-2 text-[9px] text-[#647087]">Le maillage triangulaire est commun aux surfaces. Les dalles pleines sont résolues sur quatre appuis simples, les corps creux par une plaque orthotrope portée dans le sens des nervures, et les balcons par un encastrement idéal sur la rive choisie/détectée avec trois rives libres. Les trémies, diaphragmes et couplage avec les poutres réelles ne sont pas encore modélisés par le solveur de plaque.</div>
                       {surfaceAnalysis && (
@@ -5211,11 +5436,13 @@ export default function BuildingCreateFlow({
                     </div>
                   )}
                   {selected && buildingCalculation && analyticalPrecheck?.ok && (
+                    <div id="reinforcement-plan-section">
                     <ReinforcedConcretePanel
                       projectId={selected.id}
                       projectNorm={selected.norm ?? norm}
                       projectConcreteFckMpa={selectedProjectMaterials.concrete.fck}
                       projectRebarFykMpa={selectedProjectMaterials.rebar.fykMpa}
+                      runRequestToken={reinforcementPlanRequestToken}
                       members={rcMemberExtraction.demands}
                       slabs={rcSlabDemands}
                       foundations={rcFoundationDemands}
@@ -5226,6 +5453,7 @@ export default function BuildingCreateFlow({
                       onApplySection={applyOptimizedSection}
                       optimizedElementIds={optimizationLockedElementIds}
                     />
+                    </div>
                   )}
                   {selected && buildingCalculation && analyticalPrecheck?.ok && (
                     <FoundationReactionPanel
@@ -5234,9 +5462,9 @@ export default function BuildingCreateFlow({
                       result={planeAnalysis?.result ?? null}
                       gravityResult={automaticFoundationResult}
                       plane={analysisPlane}
-                      soilName={soilProposal.soil}
-                      suggestedBearingKPa={Number.parseFloat(soilProposal.qadm)}
-                      suggestedSource={`${soilProposal.basis} · ${soilProposal.groundwater}`}
+                      soilName={projectSoilName}
+                      suggestedBearingKPa={Number.isFinite(projectBearingKPa) ? projectBearingKPa : null}
+                      suggestedSource={`${projectSoilSource} · ${soilProposal.groundwater}`}
                       onResultChange={setFoundationEvaluation}
                     />
                   )}
@@ -5333,6 +5561,9 @@ export default function BuildingCreateFlow({
                           <div className="mt-2 grid gap-1 rounded-lg bg-white p-2">
                             {renderStructuralPassport(selectedPassport).map((line, index) => <div key={index}>{line}</div>)}
                           </div>
+                          {selectedSpatialElement && <div className="mt-2 space-y-1 rounded-lg border border-[#d9e4e5] bg-white p-2"><b>Efforts du solveur spatial 3D · extrémités i / j</b><div>N : {selectedSpatialElement.start.axialKn.toFixed(2)} / {selectedSpatialElement.end.axialKn.toFixed(2)} kN</div><div>Vy / Vz : {selectedSpatialElement.start.shearYKn.toFixed(2)} / {selectedSpatialElement.start.shearZKn.toFixed(2)} · {selectedSpatialElement.end.shearYKn.toFixed(2)} / {selectedSpatialElement.end.shearZKn.toFixed(2)} kN</div><div>My / Mz : {selectedSpatialElement.start.momentYKnM.toFixed(2)} / {selectedSpatialElement.start.momentZKnM.toFixed(2)} · {selectedSpatialElement.end.momentYKnM.toFixed(2)} / {selectedSpatialElement.end.momentZKnM.toFixed(2)} kN·m</div><div>T : {selectedSpatialElement.start.torsionKnM.toFixed(2)} / {selectedSpatialElement.end.torsionKnM.toFixed(2)} kN·m</div><div>Moments globaux au départ Mx/My/Mz : {selectedSpatialElement.startGlobal.mxKnM.toFixed(2)} / {selectedSpatialElement.startGlobal.myKnM.toFixed(2)} / {selectedSpatialElement.startGlobal.mzKnM.toFixed(2)} kN·m</div></div>}
+                          {selectedPlaneElement && <div className="mt-2 space-y-1 rounded-lg border border-[#d9e4e5] bg-white p-2"><b>Efforts du solveur plan · extrémités i / j</b><div>N : {selectedPlaneElement.localEndForces.axialIKn.toFixed(2)} / {selectedPlaneElement.localEndForces.axialJKn.toFixed(2)} kN · V : {selectedPlaneElement.localEndForces.shearIKn.toFixed(2)} / {selectedPlaneElement.localEndForces.shearJKn.toFixed(2)} kN · M : {selectedPlaneElement.localEndForces.momentIKnM.toFixed(2)} / {selectedPlaneElement.localEndForces.momentJKnM.toFixed(2)} kN·m</div></div>}
+                          {selectedSurfaceResult?.analysis.plate && <div className="mt-2 space-y-1 rounded-lg border border-[#d9e4e5] bg-white p-2"><b>Résultats de plaque / surface · {selectedSurfaceResult.analysis.plate.boundary}</b><div>Flèche max : {(selectedSurfaceResult.analysis.plate.maximumDeflectionM * 1000).toFixed(2)} mm · Mx : {selectedSurfaceResult.analysis.plate.maximumMxKnMPerM.toFixed(2)} kN·m/m · My : {selectedSurfaceResult.analysis.plate.maximumMyKnMPerM.toFixed(2)} kN·m/m</div>{selectedSurfaceResult.analysis.plate.edgeReactions.map(edge=><div key={edge.edge}>Réaction {edge.edge} : {edge.totalKn.toFixed(2)} kN · charge linéaire {edge.lineLoadKnM.toFixed(2)} kN/m</div>)}</div>}
                         </div>
                       )}
                       {buildingCalculation.warnings.length > 0 && (
@@ -5347,6 +5578,7 @@ export default function BuildingCreateFlow({
                     </div>
                   )}
                   <Button
+                    ref={noteReportButtonRef}
                     className="w-full bg-[#049b9b] text-white"
                     onClick={() => {
                       const analytical = buildCurrentAnalytical();
@@ -5426,9 +5658,9 @@ export default function BuildingCreateFlow({
                         ),
                         "",
                         "CAS DE CHARGES, COMBINAISONS ET SOURCE DE MASSE — PRÉ-ÉTUDE",
-                        `Référentiel déclaré : ${selected.norm} · coefficients génériques provisoires, non validés pour une annexe nationale`,
+                        `Référentiel déclaré : ${selected.norm} · combinaisons automatiques issues de ${loadProgram.combinations.find(combination => combination.origin === "automatic")?.reference ?? "NF EN/NA français"}`,
                         `Source de masse : ${reportLoadProgramEvaluation.massTonnes.toFixed(3)} t équivalentes · ${loadProgram.massSource.note}`,
-                        ...reportLoadProgramEvaluation.combinations.filter(item=>item.enabled).map(item=>`${item.name} : ${item.value.toFixed(2)} kN globaux · ${item.status} · ${loadProgram.combinations.find(combination=>combination.id===item.id)?.note ?? ""}`),
+                        ...reportLoadProgramEvaluation.combinations.filter(item=>item.enabled).map(item=>`${item.name} : ${item.value.toFixed(2)} kN globaux · ${loadProgramStatusLabel(item.status)} · ${loadProgram.combinations.find(combination=>combination.id===item.id)?.note ?? ""}`),
                         ...reportLoadProgramWarnings.map(item=>`Avertissement : ${item.message}`),
                         "",
                         "ANALYSE STRUCTURALE 2D — RÉSULTATS À L’ÉCHELLE D’UN PORTIQUE",
@@ -5513,8 +5745,8 @@ export default function BuildingCreateFlow({
                         });
                       }));
                       const foundationReportLines = [
-                        `Provenance : ${foundationEvaluation?.basis.source || "non renseignée"} · sol proposé ${foundationEvaluation?.basis.soilName || soilProposal.soil}`,
-                        `qadm déclaré : ${foundationEvaluation?.basis.allowableBearingKPa?.toFixed(2) ?? "non renseigné"} kPa · coefficients portance/glissement ${foundationEvaluation?.basis.bearingSafetyFactor ?? "—"}/${foundationEvaluation?.basis.slidingSafetyFactor ?? "—"}`,
+                        `Provenance : ${foundationEvaluation?.basis.source || "non renseignée"} · profil ${foundationEvaluation?.basis.soilName || projectSoilName}`,
+                        `qadm déclaré : ${foundationEvaluation?.basis.allowableBearingKPa?.toFixed(2) ?? "non renseigné"} kPa · facteurs additionnels de screening portance/glissement ${foundationEvaluation?.basis.bearingSafetyFactor ?? "—"}/${foundationEvaluation?.basis.slidingSafetyFactor ?? "—"}`,
                         ...(foundationEvaluation?.rows.length ? foundationEvaluation.rows.flatMap(row => [
                           `${row.footingId} · poteau ${row.columnId} · appui ${row.reaction.nodeId} · N ${row.reaction.verticalReactionKn.toFixed(2)} kN · H ${row.reaction.horizontalReactionKn.toFixed(2)} kN · M ${row.reaction.momentReactionKnM.toFixed(2)} kN·m · axe ${row.reaction.momentAxis.toUpperCase()}`,
                           ...(row.result ? [
@@ -5573,26 +5805,40 @@ export default function BuildingCreateFlow({
           </div>
         </div>
       )}
-      {showCalculationPreflight && (
+      {showCalculationPreflight && createPortal((
         <div className="fixed inset-0 z-[80] grid place-items-center bg-[#102f45]/45 p-4" role="dialog" aria-modal="true" aria-labelledby="calculation-preflight-title">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-2xl border border-[#cbdde1] bg-[#f8fbfc] p-4 shadow-2xl">
             <div className="mb-3 flex items-start justify-between gap-3">
-              <div><h2 id="calculation-preflight-title" className="text-base font-bold text-[#173b50]">Préparer le recalcul</h2><p className="mt-1 text-[11px] text-[#63777f]">Commencez par mailler les dalles, puis lancez le recalcul de la structure.</p></div>
+              <div><h2 id="calculation-preflight-title" className="text-base font-bold text-[#173b50]">Préparer le calcul structurel</h2><p className="mt-1 text-[11px] text-[#63777f]">Le solveur reste verrouillé jusqu’à la validation du maillage et de l’application des charges.</p></div>
               <button type="button" className="grid h-8 w-8 place-items-center rounded-full bg-white text-[#718083]" onClick={() => setShowCalculationPreflight(false)} aria-label="Fermer"><X className="h-4 w-4" /></button>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className={`rounded-xl border p-3 ${meshPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : "border-[#dce7eb] bg-white"}`}>
-                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">1. Maillage des dalles</b><span className="text-[10px] font-bold">{meshPrerequisiteReady ? "OK" : "À faire"}</span></div>
-                <p className="mt-1 text-[10px] text-[#68767d]">Le maillage calcule les triangles, l’aire nette et les charges. L’aperçu 3D affichera ensuite les lignes du maillage.</p>
-                <Button type="button" className="mt-3 h-9 w-full bg-[#087f7f] text-[10px] text-white" disabled={!analyticalModel} onClick={() => { const ready = runSurfaceAnalysis(); setMeshPrerequisiteReady(ready); }}>{meshPrerequisiteReady ? "Refaire le maillage" : "Faire le maillage"}</Button>
-                {surfaceAnalysis && <div className="mt-2 text-[9px] text-[#536b70]">{surfaceAnalysis.rows.length} surface(s) · {surfaceAnalysis.errors.length} erreur(s) · charge nette {surfaceAnalysis.rows.reduce((sum, row) => sum + (row.analysis.mesh?.totalUniformLoadKn ?? 0), 0).toFixed(2)} kN</div>}
+                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">1. Faire le maillage</b><span className="text-[10px] font-bold">{meshPrerequisiteReady ? "VALIDÉ" : "À FAIRE"}</span></div>
+                <p className="mt-1 text-[10px] text-[#68767d]">Maillage triangulaire de toutes les surfaces analytiques du modèle (dalles, balcons, voiles, escaliers et semelles). Ce maillage géométrique n’implique pas à lui seul la rigidité de coque ni le couplage coque/barres dans le solveur.</p>
+                <div className="mt-2 grid grid-cols-[1fr_auto] gap-2"><label className="flex items-center gap-2 text-[9px]">Taille cible (m)<Input aria-label="Taille de maille des surfaces en mètres" inputMode="decimal" value={surfaceMeshSizeM} onChange={event => { setSurfaceMeshSizeM(event.target.value); setMeshPrerequisiteReady(false); setLoadCasesPrerequisiteReady(false); }} className="h-8 w-24 bg-white text-[10px]" /></label><Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={runAllSurfaceMeshing}>{meshPrerequisiteReady ? "Refaire le maillage" : "Faire le maillage"}</Button></div>
+                {analyticalSurfaceMesh && <div className="mt-2 space-y-1 text-[9px] text-[#536b70]"><div className="rounded bg-white p-2">{analyticalSurfaceMesh.surfaces.length} surface(s) · {analyticalSurfaceMesh.nodes.length} nœud(s) partagés · {analyticalSurfaceMesh.triangles.length} triangle(s) · {analyticalSurfaceMesh.errors.length} erreur(s)</div>{analyticalSurfaceMesh.surfaces.map(surface => <div key={surface.surfaceId} className="rounded bg-white px-2 py-1">{surface.sourceElementId} · {surface.kind} · {surface.nodeCount} nœuds / {surface.triangleCount} triangles · {surface.areaM2.toFixed(2)} m²{surface.errors.length ? ` · ${surface.errors.join("; ")}` : ""}</div>)}{analyticalSurfaceMesh.errors.map((message,index)=><div key={`mesh-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}{analyticalSurfaceMesh.warnings.map((message,index)=><div key={`mesh-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">Limite · {message}</div>)}</div>}
+                {surfaceAnalysis?.errors.map((message,index)=><div key={`plate-mesh-error-${index}`} className="mt-1 rounded bg-[#fff1ed] p-2 text-[9px] text-[#914d3d]">Contrôle plaque · {message}</div>)}
               </div>
-              <div className="rounded-xl border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] text-[#245e60]"><b>2. Recalcul</b><p className="mt-1">Les cas de charges actifs et leurs combinaisons seront repris automatiquement au recalcul.</p><div className="mt-2 rounded bg-white p-2">Gk : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b></div></div>
+              <div className={`rounded-xl border p-3 ${loadCasesPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : loadApplicationReport?.errors.length ? "border-[#efc4b9] bg-[#fff1ed]" : "border-[#dce7eb] bg-white"}`}>
+                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">2. Appliquer les charges</b><span className="text-[10px] font-bold">{loadCasesPrerequisiteReady ? "VALIDÉ" : loadApplicationReport?.errors.length ? "BLOQUÉ" : "À FAIRE"}</span></div>
+                <p className="mt-1 text-[10px] text-[#68767d]">Chaque dalle, volée et palier reçoit une ligne Gk/Qk nommée selon son type; les éléments du squelette (poutres, voiles, poteaux) gardent leurs propres poids et sources. Le contrôle vérifie aussi le transfert aux appuis et les combinaisons ELU/ELS.</p>
+                <div className="mt-2 rounded bg-white p-2 text-[9px]">Gk : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b> · combinaisons actives : <b>{loadProgram.combinations.filter(item=>item.enabled).length}</b></div>
+                <Button type="button" className="mt-2 h-9 w-full bg-[#087f7f] text-[10px] text-white disabled:opacity-40" disabled={!meshPrerequisiteReady} onClick={applyBuildingLoads}>Appliquer les charges</Button>
+                {loadApplicationReport && <div className="mt-2 space-y-1 text-[9px]">
+                  <div className="rounded bg-[#eef6f7] px-2 py-1 font-bold text-[#245e60]">SURFACES — affectation individuelle</div>
+                  {loadApplicationReport.surfaceRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.loadName}</b> · {row.areaM2.toFixed(2)} m² · Gk {row.gkKnM2.toFixed(2)} / Qk {row.qkKnM2.toFixed(2)} kN/m² → {row.gk.toFixed(2)} / {row.qk.toFixed(2)} kN · transfert vers appui {row.transferred ? "contrôlé" : "absent"}</div>)}
+                  <div className="mt-2 rounded bg-[#eef6f7] px-2 py-1 font-bold text-[#245e60]">SQUELETTE — poids propres et charges propagées</div>
+                  {loadApplicationReport.skeletonRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.loadName}</b> · Gk {row.gk.toFixed(2)} / Qk {row.qk.toFixed(2)} kN{row.sources.length ? <div className="mt-0.5 text-[#6f7f83]">Sources : {row.sources.slice(0,4).join("; ")}{row.sources.length > 4 ? `; … ${row.sources.length-4} autre(s)` : ""}</div> : null}</div>)}
+                  {loadApplicationReport.combinationRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.name}</b> · {row.category} · {row.formula} · {row.status} · {row.lineLoadCount} charge(s) linéaire(s)</div>)}
+                  {loadApplicationReport.errors.map((message,index)=><div key={`load-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}{loadApplicationReport.warnings.slice(0,12).map((message,index)=><div key={`load-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">Avertissement · {message}</div>)}{loadApplicationReport.warnings.length>12 && <div className="text-[#8a5a21]">… {loadApplicationReport.warnings.length-12} autre(s) avertissement(s)</div>}
+                </div>}
+              </div>
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce7eb] bg-white p-3"><span className="text-[10px] text-[#68767d]">{meshPrerequisiteReady ? "Maillage validé. Vous pouvez recalculer." : "Faites le maillage des dalles pour continuer."}</span><Button type="button" className="h-9 bg-[#102f45] px-4 text-[10px] text-white" disabled={!analyticalPrecheck?.ok || !meshPrerequisiteReady} onClick={executeBuildingCalculation}>Recalculer maintenant</Button></div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce7eb] bg-white p-3"><span className="text-[10px] text-[#68767d]">{loadCasesPrerequisiteReady ? "Maillage et charges validés. Le calcul reste une pré-étude tant que les paramètres de norme et l’annexe nationale ne sont pas confirmés." : "Terminez les deux étapes et corrigez les erreurs affichées pour déverrouiller le calcul."}</span><Button type="button" className="h-9 bg-[#102f45] px-4 text-[10px] text-white" disabled={!analyticalPrecheck?.ok || !meshPrerequisiteReady || !loadCasesPrerequisiteReady || Boolean(structuralValidation?.issues.some(item => item.severity === "error"))} onClick={executeBuildingCalculation}>Lancer les calculs</Button></div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }
@@ -5665,38 +5911,38 @@ function LoadProgramEditor({
   });
   const updateMassFactor = (patternId: string, value: number) => onChange({
     ...program,
-    massSource: { ...program.massSource, patternFactors: { ...program.massSource.patternFactors, [patternId]: value }, status: "provisional" },
+    massSource: { ...program.massSource, patternFactors: { ...program.massSource.patternFactors, [patternId]: value }, status: "provisional", provenance: "manual" },
   });
   const warnings = diagnostics.filter(item=>item.severity === "warning");
   return <details className="rounded-lg border border-[#dce7eb] bg-white p-3 text-[10px] text-[#3d4b50]">
     <summary className="cursor-pointer font-bold text-[#27358f]">Cas de charges, combinaisons et source de masse — {program.cases.length} cas / {program.combinations.filter(item=>item.enabled).length} combinaisons actives</summary>
     <div className="mt-2 space-y-2">
       <div className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">
-        <b>Statut pré-étude.</b> Référentiel déclaré : {projectNorm || program.selectedStandard}. Les coefficients sont provisoires et non vérifiés pour une annexe nationale. G/Q proviennent de la descente tributaire ; les autres valeurs saisies sont des résultantes globales non distribuées spatialement et ne constituent pas des cas dimensionnants.
+        <b>Statut pré-étude / non certifié.</b> Référentiel déclaré : {projectNorm || program.selectedStandard}. Les combinaisons automatiques et leurs coefficients proviennent du catalogue français NF EN 1990/NA et NF EN 1991-1-1/NA, selon la catégorie {program.projectUsage ?? "habitation"}. Les actions climatiques et les données du site restent à déterminer; la source de masse sismique requiert les facteurs EC8 par niveau. G/Q proviennent de la descente tributaire; les autres valeurs globales ne sont pas encore distribuées spatialement et ne constituent pas des cas dimensionnants.
       </div>
       <div className="space-y-1">
         <div className="font-semibold">Actions / patterns</div>
         {program.patterns.filter(pattern => pattern.enabled).map(pattern => {
           const value = patternValues[pattern.id] ?? pattern.value;
           return <div key={pattern.id} className="grid grid-cols-[1fr_90px] items-center gap-2 rounded border border-[#edf1f1] p-2">
-            <div><b>{pattern.name}</b><div className="text-[9px] text-[#74858c]">{pattern.source} · {pattern.status}{pattern.selfWeightMultiplier ? ` · poids propre × ${pattern.selfWeightMultiplier}` : ""}</div></div>
+            <div><b>{pattern.name}</b><div className="text-[9px] text-[#74858c]">{pattern.source} · {loadProgramStatusLabel(pattern.status)}{pattern.selfWeightMultiplier ? ` · poids propre × ${pattern.selfWeightMultiplier}` : ""}</div></div>
             <div className="text-right font-semibold">{value.toFixed(2)} kN</div>
           </div>;
         })}
       </div>
       <div className="grid gap-1 rounded border border-[#edf1f1] p-2">
         <div className="font-semibold">Source de masse : {evaluation.massTonnes.toFixed(3)} t équivalentes</div>
-        <div className="text-[9px] text-[#74858c]">Σ poids des actions × fractions de masse ÷ g ; statut {program.massSource.status}. Fraction Q provisoire, à confirmer selon l’usage et la norme.</div>
+        <div className="text-[9px] text-[#74858c]">Σ poids des actions × fractions de masse ÷ g ; statut {loadProgramStatusLabel(program.massSource.status)}. ψ2(Q) vient du catalogue d’usage; le calcul EC8 complet utilise ψE=φ·ψ2 par niveau.</div>
         <label className="flex items-center gap-2">Fraction de Q incluse dans la masse
           <input className="h-7 w-20 rounded border px-1" type="number" min="0" max="1" step="0.05" value={program.massSource.patternFactors.Q ?? 0} onChange={event=>updateMassFactor("Q",Number(event.target.value))} />
         </label>
       </div>
       <div className="space-y-1">
-        <div className="font-semibold">Combinaisons — valeurs globales indicatives</div>
+        <div className="font-semibold">Combinaisons — facteurs catalogués, résultantes globales de pré-étude</div>
         {evaluation.combinations.filter(item=>item.enabled).map(result=>{
           const combination=program.combinations.find(item=>item.id===result.id)!;
           return <details key={result.id} className="rounded border border-[#edf1f1] p-2">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2"><span><b>{result.name}</b> · {combination.status}</span><span className="font-bold">{result.value.toFixed(2)} kN</span></summary>
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2"><span><b>{result.name}</b> · {loadProgramStatusLabel(combination.status)}</span><span className="font-bold">{result.value.toFixed(2)} kN</span></summary>
             <div className="mt-2 grid grid-cols-2 gap-2">
               {Object.entries(combination.caseFactors).map(([caseId,factor])=>{
                 const analysisCase=program.cases.find(item=>item.id===caseId);

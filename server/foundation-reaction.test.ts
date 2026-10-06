@@ -32,6 +32,28 @@ describe("foundation checks from solver reactions", () => {
     expect(result.status).toBe("pré-étude — incomplet");
   });
 
+  it("leaves sliding unverified without a geotechnically supplied friction angle", () => {
+    const result = checkFoundationReaction({ ...base, frictionAngleDeg: null });
+    const sliding = result.checks.find(check => check.id === "sliding");
+    expect(sliding?.status).toBe("non vérifié");
+    expect(sliding?.resistance).toBeNull();
+    expect(sliding?.note).toMatch(/étude géotechnique/i);
+    expect(result.checks.find(check => check.id === "bearing")?.status).toBe("satisfaisant");
+  });
+
+  it("compares qmax directly to qadm when no additional screening factor is applied", () => {
+    const result = checkFoundationReaction({
+      ...base,
+      verticalReactionKn: 900,
+      allowableBearingKPa: 200,
+      bearingSafetyFactor: 1,
+      frictionAngleDeg: null,
+    });
+    const bearing = result.checks.find(check => check.id === "bearing");
+    expect(bearing?.resistance).toBe(200);
+    expect(bearing?.status).toBe("insuffisant");
+  });
+
   it("identifies partial contact when eccentricity exceeds the kern limit", () => {
     const result = checkFoundationReaction({ ...base, momentReactionKnM: 40 });
     expect(result.eccentricityM).toBeCloseTo(0.4, 8);
@@ -60,13 +82,14 @@ describe("foundation checks from solver reactions", () => {
     expect(() => checkFoundationReaction({ ...base, allowableBearingKPa: 0 })).toThrow(/portance géotechnique/i);
   });
 
-  it("maps reaction node IDs to the corresponding footing and section geometry", () => {
+  it("maps real column-footing reactions and ignores internal stair contacts", () => {
     const model: AnalyticalModel = {
       schemaVersion: 1,
       units: { length: "m", force: "kN", stress: "kN/m²", moment: "kN·m" },
       nodeMergeToleranceM: 0.01,
       nodes: [
         { id: "base", x: 0, y: 0, z: 0, levelIds: ["foundation"], sourceElementIds: ["C1"] },
+        { id: "stair-contact", x: 2, y: 0, z: 0, levelIds: ["rdc"], sourceElementIds: ["ES1"] },
         { id: "f1", x: -1, y: -1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S1"] },
         { id: "f2", x: 1, y: -1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S1"] },
         { id: "f3", x: 1, y: 1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S1"] },
@@ -74,19 +97,22 @@ describe("foundation checks from solver reactions", () => {
       ],
       frames: [{ id: "F:C1", sourceElementId: "C1", sourceType: "Poteau", startNodeId: "base", endNodeId: "top", sectionId: "col", materialId: "concrete", levelId: "rdc", releases: { start: [], end: [] }, eccentricityM: { start: [0, 0, 0], end: [0, 0, 0] } }],
       surfaces: [{ id: "S:S1:1", sourceElementId: "S1", sourceType: "Semelle", kind: "footing", nodeIds: ["f1", "f2", "f3", "f4"], sectionId: "footing", materialId: "concrete", levelId: "foundation", openings: [] }],
-      supports: [{ id: "SUP:S1:C1", sourceElementId: "S1", nodeId: "base", kind: "fixed-base", restrainedDofs: ["ux", "uy", "uz", "rx", "ry", "rz"], status: "inferred-from-footing" }],
+      supports: [
+        { id: "SUP:S1:C1", sourceElementId: "S1", nodeId: "base", kind: "fixed-base", role: "column-base", restrainedDofs: ["ux", "uy", "uz", "rx", "ry", "rz"], status: "inferred-from-footing" },
+        { id: "SUP:ES1:dallage", sourceElementId: "ES1", nodeId: "stair-contact", kind: "contact", role: "stair-slab-contact", restrainedDofs: ["uz"], status: "declared" },
+      ],
       materials: [],
       sections: [
         { id: "footing", name: "S1", shape: "rectangle", dimensionsM: [2, 2, 0.4], areaM2: 4, inertiaY4M4: 1, inertiaZ4M4: 1, provenance: "model-catalog" },
         { id: "col", name: "Pot_30", shape: "rectangle", dimensionsM: [0.3, 0.3], areaM2: 0.09, inertiaY4M4: 0.000675, inertiaZ4M4: 0.000675, provenance: "model-catalog" },
       ],
       mesh: { globalSizeM: 1, maxAspectRatio: 5, refinementRegions: [] },
-      sourceElementIds: ["S1", "C1"],
+      sourceElementIds: ["S1", "C1", "ES1"],
     };
     const result: PlaneFrameResult = {
       plane: "XZ",
       displacements: [],
-      reactions: [{ nodeId: "base", fxKn: 4, fzKn: 100, momentKnM: 12 }],
+      reactions: [{ nodeId: "base", fxKn: 4, fzKn: 100, momentKnM: 12 }, { nodeId: "stair-contact", fxKn: 0, fzKn: 0, momentKnM: 0 }],
       elements: [],
       equilibrium: { appliedFxKn: -4, appliedFzKn: -100, appliedMomentKnM: -12, reactionFxKn: 4, reactionFzKn: 100, reactionMomentKnM: 12 },
       warnings: [],
@@ -94,6 +120,8 @@ describe("foundation checks from solver reactions", () => {
     const mapped = mapFoundationReactions(model, result, "XZ");
     expect(mapped.records).toHaveLength(1);
     expect(mapped.records[0]).toMatchObject({ footingId: "S1", columnId: "C1", nodeId: "base", verticalReactionKn: 100, horizontalReactionKn: 4, momentReactionKnM: 12, momentAxis: "x", widthXM: 2, widthYM: 2, thicknessM: 0.4, columnWidthM: 0.3, columnDepthM: 0.3 });
+    expect(mapped.records.some(record => record.footingId === "ES1")).toBe(false);
+    expect(mapped.warnings.some(warning => warning.includes("Semelle analytique absente pour l’appui SUP:ES1:dallage"))).toBe(false);
     expect(mapped.warnings).toContain("Réactions projetées depuis le plan XZ uniquement.");
   });
 
@@ -111,7 +139,7 @@ describe("foundation checks from solver reactions", () => {
       ],
       frames: [{ id: "F:C1", sourceElementId: "C1", sourceType: "Poteau", startNodeId: "base", endNodeId: "top", sectionId: "col", materialId: "concrete", levelId: "rdc", releases: { start: [], end: [] }, eccentricityM: { start: [0, 0, 0], end: [0, 0, 0] } }],
       surfaces: [{ id: "S:S1:1", sourceElementId: "S1", sourceType: "Semelle", kind: "footing", nodeIds: ["f1", "f2", "f3", "f4"], sectionId: "footing", materialId: "concrete", levelId: "foundation", openings: [] }],
-      supports: [{ id: "SUP:S1:C1", sourceElementId: "S1", nodeId: "base", kind: "fixed-base", restrainedDofs: ["ux", "uy", "uz", "rx", "ry", "rz"], status: "inferred-from-footing" }],
+      supports: [{ id: "SUP:S1:C1", sourceElementId: "S1", nodeId: "base", kind: "fixed-base", role: "column-base", restrainedDofs: ["ux", "uy", "uz", "rx", "ry", "rz"], status: "inferred-from-footing" }],
       materials: [],
       sections: [
         { id: "footing", name: "S1", shape: "rectangle", dimensionsM: [2, 2, 0.4], areaM2: 4, inertiaY4M4: 1, inertiaZ4M4: 1, provenance: "model-catalog" },

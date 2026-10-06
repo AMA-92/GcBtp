@@ -4,10 +4,14 @@ import { restoreBuildingDraft, serializeBuildingDraft, type BuildingDraft } from
 import { moveElement } from "../shared/building-elements";
 
 describe("refonte bâtiment — contexte et persistance", () => {
-  it("propose des profils provisoires différents selon la localisation", () => {
-    expect(proposeSoil("Côte d’Ivoire", "Abidjan", "Cocody").soil).toContain("latéritique");
-    expect(proposeSoil("Sénégal", "Dakar", "Almadies").soil).toContain("sableux");
-    expect(proposeSoil("Rwanda", "Kigali", "Site inconnu").status).toBe("provisoire");
+  it("ne déduit pas le profil géotechnique à partir de la localisation", () => {
+    const abidjan = proposeSoil("Côte d’Ivoire", "Abidjan", "Cocody");
+    const dakar = proposeSoil("Sénégal", "Dakar", "Almadies");
+    const kigali = proposeSoil("Rwanda", "Kigali", "Site inconnu");
+    expect(abidjan.soil).toBe("Sol non caractérisé");
+    expect(dakar.soil).toBe("Sol non caractérisé");
+    expect(abidjan.qadm).toBe(dakar.qadm);
+    expect(kigali.status).toBe("provisoire");
   });
 
   it("conserve un élément et les réglages de grille dans un projet sauvegardé", () => {

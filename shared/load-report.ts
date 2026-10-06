@@ -1,6 +1,7 @@
 import type { FloorConfig } from "./floor-config";
 import { elementLoadSummary } from "./element-loads";
 import { modelLegendText } from "./model-legend";
+import { FRENCH_EUROCODE_ACTION_CATALOG, formatFrenchCoefficient } from "./french-load-catalog";
 
 type ReportElement = { id: string; type: string; section: string; color?: string; x: number; y: number; x2?: number; y2?: number; floorConfig?: FloorConfig };
 
@@ -28,7 +29,7 @@ export function buildLoadDescentReport(input: LoadReportInput): string {
     ...rows,
     "",
     `Total ELU indicatif du niveau : ${total.toFixed(2)} kN`,
-    `Hypothèses : γG = 1.35 ; γQ = 1.50 ; charges en kN ; calcul indicatif selon les paramètres saisis.`,
+    `Hypothèses : γG = ${formatFrenchCoefficient(FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.permanentUnfavourable)} ; γQ = ${formatFrenchCoefficient(FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.variableUnfavourable)} ; ${FRENCH_EUROCODE_ACTION_CATALOG.combinationsReference}, expression ${FRENCH_EUROCODE_ACTION_CATALOG.equation} ; charges en kN, calcul indicatif selon les paramètres saisis.`,
     "Avertissement : les résultats doivent être vérifiés, complétés et validés par un ingénieur habilité avant toute exécution.",
   ].join("\n");
 }

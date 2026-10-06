@@ -35,6 +35,7 @@ export type AnalyticalGraphicElement = {
     flight2?: { lowerA: {x:number;y:number}; lowerB: {x:number;y:number}; upperA: {x:number;y:number}; upperB: {x:number;y:number}; lowerLevelId: string; upperLevelId: string };
     landingZ?: number;
   };
+  floorConfig?: { stairLandingDepthM?: string };
 };
 export type AnalyticalGraphicLevel = { id: string; label: string; elevation: string; height?: string; elements: AnalyticalGraphicElement[] };
 export type AnalyticalModelInput = {
@@ -55,6 +56,13 @@ const DOFS: DegreeOfFreedom[] = ["ux", "uy", "uz", "rx", "ry", "rz"];
 const finite = (value: unknown, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const positive = (value: number, fallback: number) => Number.isFinite(value) && value > 0 ? value : fallback;
 const pointDistance = (a: Pick<AnalyticalNode,"x"|"y"|"z">, b: Pick<AnalyticalNode,"x"|"y"|"z">) => Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+const polygonArea3D = (points: Array<[number, number, number]>) => {
+  const normal = points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return [sum[0] + point[1] * next[2] - point[2] * next[1], sum[1] + point[2] * next[0] - point[0] * next[2], sum[2] + point[0] * next[1] - point[1] * next[0]];
+  }, [0, 0, 0]);
+  return Math.hypot(...normal) / 2;
+};
 
 function coordinateAt(index: number, positions: number[]) {
   if (!positions.length) return index;
@@ -259,38 +267,71 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
       if (flights.length >= 2) {
         const first = flights[0];
         const second = flights[1];
+        const absoluteFirst = element.absoluteStairGeometry?.flight1;
+        const absoluteSecond = element.absoluteStairGeometry?.flight2;
+        const firstGeometry = absoluteFirst ?? first;
+        const secondGeometry = absoluteSecond ?? second;
+        const configuredLandingDepth = Number(String(element.floorConfig?.stairLandingDepthM ?? "").replace(",", "."));
+        const hasConfiguredLandingDepth = Number.isFinite(configuredLandingDepth) && configuredLandingDepth > 0;
+        const metricPoint = (value: { x: number; y: number }, absolute?: typeof absoluteFirst) => absolute
+          ? { x: value.x, y: value.y }
+          : { x: coordinateAt(value.x, xPositions), y: coordinateAt(value.y, yPositions) };
         const middle = levelById.get(first.upperLevelId);
         const upper = levelById.get(second.upperLevelId);
         if (middle) {
           const z = singleFloorStair && singleFloorLower
             ? floorTopElevation(singleFloorLower.level, singleFloorLower.index) + (element.stairGeometry?.landingZ ?? 0)
             : elementElevation(middle.level, middle.index, "Dalle");
-          addSurface({...element, id: `${element.id}:palier-intermediaire`} as AnalyticalGraphicElement & { levelId: string }, "stair-flight", [
-            [element.absoluteStairGeometry?.flight1?.upperA.x ?? coordinateAt(first.upperA.x, xPositions), element.absoluteStairGeometry?.flight1?.upperA.y ?? coordinateAt(first.upperA.y, yPositions), z],
-            [element.absoluteStairGeometry?.flight1?.upperB.x ?? coordinateAt(first.upperB.x, xPositions), element.absoluteStairGeometry?.flight1?.upperB.y ?? coordinateAt(first.upperB.y, yPositions), z],
-            [element.absoluteStairGeometry?.flight2?.lowerB.x ?? coordinateAt(second.lowerB.x, xPositions), element.absoluteStairGeometry?.flight2?.lowerB.y ?? coordinateAt(second.lowerB.y, yPositions), z],
-            [element.absoluteStairGeometry?.flight2?.lowerA.x ?? coordinateAt(second.lowerA.x, xPositions), element.absoluteStairGeometry?.flight2?.lowerA.y ?? coordinateAt(second.lowerA.y, yPositions), z],
-          ], sectionFor(element.type, element.section));
+          const firstUpperA = metricPoint(firstGeometry.upperA, absoluteFirst);
+          const firstUpperB = metricPoint(firstGeometry.upperB, absoluteFirst);
+          const secondLowerA = metricPoint(secondGeometry.lowerA, absoluteSecond);
+          const secondLowerB = metricPoint(secondGeometry.lowerB, absoluteSecond);
+          const landingPoints: Array<[number, number, number]> = [[firstUpperA.x, firstUpperA.y, z], [firstUpperB.x, firstUpperB.y, z], [secondLowerB.x, secondLowerB.y, z], [secondLowerA.x, secondLowerA.y, z]];
+          const uniqueLandingPoints = landingPoints.filter((point, pointIndex) => landingPoints.findIndex(other => Math.hypot(point[0] - other[0], point[1] - other[1], point[2] - other[2]) <= 1e-8) === pointIndex);
+          if (polygonArea3D(uniqueLandingPoints) <= 1e-8) {
+            const firstLowerA = metricPoint(firstGeometry.lowerA, absoluteFirst);
+            const edgeX = secondLowerB.x - firstUpperA.x;
+            const edgeY = secondLowerB.y - firstUpperA.y;
+            const edgeLength = Math.hypot(edgeX, edgeY);
+            const runX = firstUpperA.x - firstLowerA.x;
+            const runY = firstUpperA.y - firstLowerA.y;
+            const runLength = Math.hypot(runX, runY);
+            const widthM = Math.hypot(firstUpperA.x - firstUpperB.x, firstUpperA.y - firstUpperB.y);
+            const offsetDirection = edgeLength > 1e-8 ? { x: -edgeY / edgeLength, y: edgeX / edgeLength } : runLength > 1e-8 ? { x: runX / runLength, y: runY / runLength } : null;
+            if (offsetDirection && widthM > 1e-8) {
+              const landingDepthM = hasConfiguredLandingDepth ? configuredLandingDepth : widthM;
+              const offsetX = offsetDirection.x * landingDepthM;
+              const offsetY = offsetDirection.y * landingDepthM;
+              landingPoints.splice(0, landingPoints.length,
+                [firstUpperA.x, firstUpperA.y, z],
+                [secondLowerB.x, secondLowerB.y, z],
+                [secondLowerB.x + offsetX, secondLowerB.y + offsetY, z],
+                [firstUpperA.x + offsetX, firstUpperA.y + offsetY, z],
+              );
+              if (!hasConfiguredLandingDepth) diagnostics.push({ severity: "warning", code: "stair-intermediate-landing-auto-repaired", message: `Escalier ${element.id} : contour dégénéré du palier intermédiaire reconstruit automatiquement ; profondeur par défaut ${widthM.toFixed(2)} m, égale à la largeur de la première volée. Enregistrer la dimension du palier et confirmer sur plan.`, elementIds: [element.id], levelId: middle.level.id });
+            }
+          }
+          addSurface({...element, id: `${element.id}:palier-intermediaire`} as AnalyticalGraphicElement & { levelId: string }, "stair-flight", landingPoints, sectionFor(element.type, element.section));
         }
         if (upper) {
-          const absoluteSecond = element.absoluteStairGeometry?.flight2;
-          const secondGeometry = absoluteSecond ?? second;
-          const run = { x: secondGeometry.upperA.x - secondGeometry.lowerA.x, y: secondGeometry.upperA.y - secondGeometry.lowerA.y };
+          const runStart = metricPoint(secondGeometry.lowerA, absoluteSecond);
+          const arrivalA = metricPoint(secondGeometry.upperA, absoluteSecond);
+          const arrivalB = metricPoint(secondGeometry.upperB, absoluteSecond);
+          const run = { x: arrivalA.x - runStart.x, y: arrivalA.y - runStart.y };
           const runLength = Math.max(Math.hypot(run.x, run.y), 0.001);
           const depth = { x: run.x / runLength, y: run.y / runLength };
-          const edge = { x: secondGeometry.upperB.x - secondGeometry.upperA.x, y: secondGeometry.upperB.y - secondGeometry.upperA.y };
-          const edgeLength = Math.max(Math.hypot(edge.x, edge.y), 0.001);
-          const lateral = { x: -edge.y / edgeLength, y: edge.x / edgeLength };
-          const start = secondGeometry.upperB;
+          const widthM = Math.max(Math.hypot(arrivalB.x - arrivalA.x, arrivalB.y - arrivalA.y), 0.001);
+          const landingDepthM = hasConfiguredLandingDepth ? configuredLandingDepth : widthM;
           const z = singleFloorStair
             ? floorTopElevation(upper.level, upper.index)
             : elementElevation(upper.level, upper.index, "Dalle");
-          const corner = (x: number, y: number): [number, number, number] => absoluteSecond ? [x, y, z] : [coordinateAt(x, xPositions), coordinateAt(y, yPositions), z];
+          const corner = (x: number, y: number): [number, number, number] => [x, y, z];
+          if (!hasConfiguredLandingDepth) diagnostics.push({ severity: "warning", code: "stair-arrival-landing-width-assumed", message: `Escalier ${element.id} : profondeur du palier d’arrivée par défaut à ${landingDepthM.toFixed(2)} m, égale à la largeur de la volée. Enregistrer la dimension du palier et confirmer sur plan.`, elementIds: [element.id], levelId: upper.level.id });
           addSurface({...element, id: `${element.id}:palier-arrivee`} as AnalyticalGraphicElement & { levelId: string }, "stair-flight", [
-            corner(start.x, start.y),
-            corner(start.x + lateral.x * 2, start.y + lateral.y * 2),
-            corner(start.x + lateral.x * 2 + depth.x, start.y + lateral.y * 2 + depth.y),
-            corner(start.x + depth.x, start.y + depth.y),
+            corner(arrivalA.x, arrivalA.y),
+            corner(arrivalB.x, arrivalB.y),
+            corner(arrivalB.x + depth.x * landingDepthM, arrivalB.y + depth.y * landingDepthM),
+            corner(arrivalA.x + depth.x * landingDepthM, arrivalA.y + depth.y * landingDepthM),
           ], sectionFor(element.type, element.section));
         }
       }

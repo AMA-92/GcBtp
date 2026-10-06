@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis, type RCDesignOverrides, type RCElementDesign, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RCStairDemand, type RebarOverride, type RCOptimizationProposal } from "@shared/rc-design";
 import { designWall, type WallDemand } from "@shared/wall-design";
@@ -6,6 +6,7 @@ import { downloadReinforcementA4Pdf, downloadReinforcementGroupA4Pdf } from "@sh
 import { groupReinforcementElements, loadReinforcementTemplate } from "@shared/reinforcement-report";
 import { CONCRETE_MATERIAL_CATALOG } from "@shared/model-catalog";
 import { resolveRCStandardProfile, sameRCStandardFamily } from "@shared/rc-standard-profile";
+import { FRENCH_BAEL_LEGACY_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD, FRENCH_EUROCODE_PROFILE } from "@shared/french-standard-profile";
 
 type Draft = {
   standard: string;
@@ -33,7 +34,7 @@ type Draft = {
 };
 
 const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRebarFykMpa?: number): Draft => {
-  const normalizedStandard = standard || "Eurocode 2";
+  const normalizedStandard = standard || FRENCH_EUROCODE_DEFAULT_STANDARD;
   const standardProfile = resolveRCStandardProfile(normalizedStandard);
   const isBael = standardProfile.family === "bael-91-99";
   const isEurocode = standardProfile.family === "eurocode-2";
@@ -41,14 +42,14 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   return {
   standard: normalizedStandard,
   nationalAnnex: isBael
-    ? "BAEL 91 mod. 99 · règles locales et prescriptions du projet à confirmer"
+    ? `${FRENCH_BAEL_LEGACY_STANDARD} — édition et domaine d’application à confirmer; actions et géotechnique définies séparément`
     : isEurocode
-      ? "France · NF EN 1990/1991/1992/1997/1998 · annexes nationales, éditions à confirmer"
+      ? FRENCH_EUROCODE_PROFILE.nationalAnnex
       : `${normalizedStandard} · édition et règles d’application à confirmer`,
   sourceReference: isBael
-    ? `Catalogue GcBtp · ${concrete.concreteClass} · BAEL 91 mod. 99 · paramètres du projet à vérifier`
+    ? `Catalogue GcBtp · ${concrete.concreteClass} · ${FRENCH_BAEL_LEGACY_STANDARD} · paramètres du projet à vérifier`
     : isEurocode
-      ? `Dossier projet France · ${concrete.concreteClass} · NF EN 1990/1991/1992/1997/1998 · annexes nationales et éditions à confirmer`
+      ? `${FRENCH_EUROCODE_PROFILE.sourceReference} · ${concrete.concreteClass} · ${FRENCH_EUROCODE_PROFILE.concreteReference}`
       : `Catalogue GcBtp · ${concrete.concreteClass} · référentiel sélectionné : ${normalizedStandard}`,
   basisConfirmed: false,
   fckMpa: String(projectConcreteFckMpa ?? concrete.fck),
@@ -90,15 +91,18 @@ type Props = {
   onResultChange: (result: RCDesignResult | null) => void;
   onApplySection?: (elementId: string, type: string, sectionName: string, dimensions: string) => void;
   optimizedElementIds?: Set<string>;
+  runRequestToken?: number;
 };
 
-export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set() }: Props) {
+export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set(), runRequestToken = 0 }: Props) {
   const [draft, setDraft] = useState<Draft>(() => createDraft(projectNorm, projectConcreteFckMpa, projectRebarFykMpa));
   const [overrides, setOverrides] = useState<RCDesignOverrides>({});
   const [result, setResult] = useState<RCDesignResult | null>(null);
   const [optimizationProposals, setOptimizationProposals] = useState<RCOptimizationProposal[]>([]);
   const [templateCompany, setTemplateCompany] = useState("");
   const [dirty, setDirty] = useState(false);
+  const lastRunRequestToken = useRef(0);
+  const runRef = useRef<() => void>(() => undefined);
   const sourceSignature = useMemo(() => JSON.stringify({ members, slabs, foundations, stairs, walls, sourceWarnings }), [members, slabs, foundations, stairs, walls, sourceWarnings]);
 
   useEffect(() => {
@@ -199,6 +203,13 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     setDirty(false);
     onResultChange(next);
   };
+  runRef.current = run;
+  useEffect(() => {
+    if (runRequestToken > 0 && runRequestToken !== lastRunRequestToken.current) {
+      lastRunRequestToken.current = runRequestToken;
+      runRef.current();
+    }
+  }, [runRequestToken]);
   const runOptimization = () => {
     if (!resolveRCStandardProfile(projectNorm).supportedForPreDesign) {
       toast.error("Optimisation bloquée : le référentiel du projet n’est pas pris en charge par le moteur BA.");

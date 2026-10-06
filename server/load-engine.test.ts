@@ -11,7 +11,7 @@ describe("load descent engine", () => {
     levels: 3,
     tributaryArea: 20,
     slabThickness: 0.15,
-    selectedCases: { permanent: true, exploitation: true, partitions: true, roof: true, wind: false, seismic: false },
+    selectedCases: { permanent: true, exploitation: true, partitions: true, roof: true, wind: false, snow: false, seismic: false },
   };
 
   it("returns transparent intermediate values and a load chain", () => {
@@ -21,14 +21,42 @@ describe("load descent engine", () => {
     expect(result.chain.floor).toBeGreaterThan(0);
     expect(result.chain.foundation).toBeGreaterThan(result.chain.column);
     expect(result.combination).toContain("Gk");
+    expect(result.assumptions.usageCategory).toBe("A");
   });
 
-  it("responds to selected wind and seismic cases", () => {
-    const without = calculateLoadDescent(base);
-    const withActions = calculateLoadDescent({ ...base, selectedCases: { ...base.selectedCases, wind: true, seismic: true } });
-    expect(withActions.assumptions.qk).toBe(without.assumptions.qk);
-    expect(withActions.components.windDesign + withActions.components.seismicDesign).toBeGreaterThan(0);
-    expect(withActions.chain.foundation).toBe(without.chain.foundation);
+  it("uses explicit site actions and reports zero when they are missing", () => {
+    const selected = { ...base.selectedCases, wind: true, seismic: true };
+    const withoutSiteData = calculateLoadDescent({ ...base, selectedCases: selected });
+    expect(withoutSiteData.components.wind).toBe(0);
+    expect(withoutSiteData.components.seismic).toBe(0);
+    expect(withoutSiteData.warnings.some(warning => warning.includes("pression de site confirmée"))).toBe(true);
+    const withSiteData = calculateLoadDescent({ ...base, selectedCases: selected, actions: { windPressure: 1.2, seismicCoefficient: 0.25 } });
+    expect(withSiteData.components.wind).toBeGreaterThan(0);
+    expect(withSiteData.components.seismic).toBeGreaterThan(0);
+    expect(withSiteData.components.windDesign).toBeGreaterThan(0);
+    expect(withSiteData.components.seismicDesign).toBeGreaterThan(0);
+  });
+
+  it("uses the French category and partial-factor catalog", () => {
+    const housing = calculateLoadDescent(base);
+    const office = calculateLoadDescent({ ...base, usage: "bureau" });
+    expect(housing.assumptions.qkFloorKnM2).toBe(1.5);
+    expect(office.assumptions.qkFloorKnM2).toBe(2.5);
+    expect(office.assumptions.usageCategory).toBe("B");
+    expect(housing.assumptions.gammaG).toBe(1.35);
+    expect(housing.assumptions.gammaQ).toBe(1.5);
+    expect(office.assumptions.psi0).toBe(housing.assumptions.psi0);
+    expect(office.assumptions.qk).toBeGreaterThan(housing.assumptions.qk);
+  });
+
+  it("does not infer climate action factors from a country or city name", () => {
+    const active = { ...base.selectedCases, wind: true, seismic: true };
+    const abidjan = calculateLoadDescent({ ...base, selectedCases: active });
+    const dakar = calculateLoadDescent({ ...base, country: "Sénégal", city: "Dakar", selectedCases: active });
+    expect(dakar.components.wind).toBe(abidjan.components.wind);
+    expect(dakar.components.seismic).toBe(abidjan.components.seismic);
+    expect(dakar.context.city).toBe("Dakar");
+    expect(dakar.context.country).toBe("Sénégal");
   });
 
   it("uses the selected material density", () => {
@@ -37,21 +65,15 @@ describe("load descent engine", () => {
     expect(concrete.assumptions.gk).toBeGreaterThan(masonry.assumptions.gk);
   });
 
-  it("changes outputs when country and mapped city context change", () => {
-    const abidjan = calculateLoadDescent({ ...base, selectedCases: { ...base.selectedCases, wind: true, seismic: true } });
-    const dakar = calculateLoadDescent({ ...base, country: "Sénégal", city: "Dakar", selectedCases: { ...base.selectedCases, wind: true, seismic: true } });
-    expect(dakar.context.cityFactor.siteFactor).not.toBe(abidjan.context.cityFactor.siteFactor);
-    expect(dakar.components.seismicDesign).not.toBe(abidjan.components.seismicDesign);
-  });
-
-  it("builds a dedicated note with assumptions and no generic fields", () => {
+  it("builds a dedicated pre-study note with assumptions and no generic fields", () => {
     const result = calculateLoadDescent(base);
     const foundation = calculateFoundation({ axialLoad: result.chain.foundation, soil: "argile", foundation: "semelle isolée", safetyFactor: 2.5, depth: 1.2, groundwaterDepth: 3 });
     const note = buildLoadDescentNote(result, foundation);
     expect(note).toContain("Gk :");
     expect(note).toContain("Qk :");
-    expect(note).toContain("γG :");
-    expect(note).toContain("γQ :");
+    expect(note).toContain("ψ0/ψ1/ψ2");
+    expect(note).toContain("NF EN 1990/NA:2011");
+    expect(note).toContain("pré-étude non certifiée");
     expect(note).toContain("Surface tributaire :");
     expect(note).toContain("Épaisseur dalle :");
     expect(note).toContain("Matériau :");
@@ -63,19 +85,19 @@ describe("load descent engine", () => {
     expect(note).not.toContain("Acier indicatif");
   });
 
-  it("changes permanent actions when the structural system changes", () => {
+  it("changes permanent actions when the selected material changes, without a hidden system multiplier", () => {
     const concrete = calculateLoadDescent(base);
     const masonry = calculateLoadDescent({ ...base, structure: "Maçonnerie porteuse", material: "maçonnerie" });
-    expect(masonry.context.structureFactor).toBeGreaterThan(concrete.context.structureFactor);
+    expect(masonry.context.structureFactor).toBe(1);
+    expect(masonry.assumptions.gk).toBeLessThan(concrete.assumptions.gk);
     expect(masonry.chain.foundation).not.toBe(concrete.chain.foundation);
   });
-
 
   it("intègre le poids propre et la charge d’exploitation d’un escalier", () => {
     const withoutStairs = calculateLoadDescent(base);
     const withStairs = calculateLoadDescent({
       ...base,
-      stairs: { flights: 2, width: 1.2, horizontalRun: 3, rise: 2, slabThickness: 0.15, finishLoad: 1, imposedLoad: 3 },
+      stairs: { flights: 2, width: 1.2, horizontalRun: 3, rise: 2, slabThickness: 0.15, finishLoad: 1 },
     });
     expect(withStairs.assumptions.stairArea).toBeGreaterThan(0);
     expect(withStairs.assumptions.stairsPermanent).toBeGreaterThan(0);
@@ -104,7 +126,7 @@ describe("load descent engine", () => {
       ...base,
       location: { altitude: 420, zone: "Côte" },
       soil: { profile: "sable dense", allowableBearing: 220, foundationDepth: 1.5, groundwaterDepth: 8, seismicClass: "C" },
-      reference: { code: "EN 1990/1991", status: "à confirmer", source: "Annexe nationale à renseigner" },
+      reference: { code: "NF EN 1990/NA:2011", status: "adapted", source: "Annexe nationale française" },
     });
     expect(result.context.location.altitude).toBe(420);
     expect(result.context.soil.allowableBearing).toBe(220);

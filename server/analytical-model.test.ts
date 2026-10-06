@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildAnalyticalModel, validateAnalyticalModel, type AnalyticalGraphicLevel } from "@shared/analytical-model";
+import { meshAnalyticalSurfaces } from "@shared/analytical-surface-mesh";
 import { MODEL_CATALOG } from "@shared/model-catalog";
 
 const footing = (id: string, x: number) => ({ id, type: "Semelle", section: "S1", x, y: 0 });
@@ -152,6 +153,38 @@ describe("priority 1 — analytical model", () => {
     ];
     const { model } = buildAnalyticalModel(input(levels));
     expect(model.surfaces.filter(surface => surface.kind === "stair-flight").every(surface => new Set(surface.nodeIds).size === surface.nodeIds.length)).toBe(true);
+    const mesh = meshAnalyticalSurfaces(model, 0.75);
+    expect(mesh.errors).toEqual([]);
+    expect(mesh.surfaces.filter(surface => surface.kind === "stair-flight").every(surface => surface.triangleCount > 0 && surface.areaM2 > 0)).toBe(true);
+  });
+
+  it("reconstruit les contours nuls des paliers et maille la géométrie réelle des escaliers", () => {
+    const levels: AnalyticalGraphicLevel[] = [
+      { id: "foundation", label: "Fondation", elevation: "-1", height: "1", elements: [] },
+      { id: "rdc", label: "RDC", elevation: "0", height: "3.2", elements: [{
+        id: "ES1", type: "Escaliers", section: "Escalier BA 15 cm", x: 0, y: 0,
+        stairGeometry: {
+          flight1: { lowerA: { x: 0, y: 0.75 }, lowerB: { x: 0.5, y: 0.75 }, upperA: { x: 0, y: 0.25 }, upperB: { x: 0.5, y: 0.25 }, lowerLevelId: "foundation", upperLevelId: "rdc" },
+          flight2: { lowerA: { x: 0.5, y: 0.25 }, lowerB: { x: 1, y: 0.25 }, upperA: { x: 0.5, y: 0.75 }, upperB: { x: 1, y: 0.75 }, lowerLevelId: "rdc", upperLevelId: "rdc" },
+        },
+        absoluteStairGeometry: {
+          flight1: { lowerA: { x: 0, y: 3 }, lowerB: { x: 1, y: 3 }, upperA: { x: 0, y: 1 }, upperB: { x: 1, y: 1 }, lowerLevelId: "foundation", upperLevelId: "rdc" },
+          flight2: { lowerA: { x: 1, y: 1 }, lowerB: { x: 2, y: 1 }, upperA: { x: 1, y: 3 }, upperB: { x: 2, y: 3 }, lowerLevelId: "rdc", upperLevelId: "rdc" },
+        },
+      }] },
+      { id: "r1", label: "R+1", elevation: "3.2", height: "3.2", elements: [] },
+      { id: "r2", label: "R+2", elevation: "6.4", height: "3.2", elements: [] },
+    ];
+    const { model, precheck } = buildAnalyticalModel(input(levels));
+    const mesh = meshAnalyticalSurfaces(model, 0.75);
+    const intermediate = mesh.surfaces.find(surface => surface.sourceElementId === "ES1:palier-intermediaire")!;
+    const arrival = mesh.surfaces.find(surface => surface.sourceElementId === "ES1:palier-arrivee")!;
+    expect(mesh.errors).toEqual([]);
+    expect(mesh.surfaces.every(surface => surface.triangleCount > 0 && surface.areaM2 > 0)).toBe(true);
+    expect(intermediate.areaM2).toBeCloseTo(2);
+    expect(arrival.areaM2).toBeCloseTo(1);
+    expect(precheck.warnings.some(item => item.code === "stair-intermediate-landing-auto-repaired")).toBe(true);
+    expect(precheck.warnings.some(item => item.code === "stair-arrival-landing-width-assumed")).toBe(true);
   });
 
   it("validates references and refuses a model with missing frame nodes", () => {
