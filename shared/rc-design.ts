@@ -6,6 +6,7 @@ import type { Spatial3DResult } from "./frame-solver-3d";
 import { designStairV2 } from "./stair-design-v2";
 import { resolveRCStandardProfile } from "./rc-standard-profile";
 import { validateRCNormSelection } from "./rc-norms";
+import { checkColumnSecondOrder, checkCrackWidth, checkRectangularTorsion, checkSeismicDetailing } from "./rc-eurocode-checks";
 
 export type RCDesignBasis = {
   schemaVersion: typeof RC_DESIGN_SCHEMA_VERSION;
@@ -28,6 +29,9 @@ export type RCDesignBasis = {
   maxDeflectionRatio: number;
   maxColumnSlenderness: number;
   availableBarDiametersMm: number[];
+  maxCrackWidthMm?: number;
+  seismicDetailingEnabled?: boolean;
+  seismicDuctilityClass?: "DCL" | "DCM" | "DCH";
 };
 
 export type RebarOverride = { diameterMm: number; count: number };
@@ -50,6 +54,7 @@ export type RCMemberDemand = {
   momentYKnM?: number;
   serviceMomentKnM?: number;
   serviceDeflectionMm?: number;
+  torsionKnM?: number;
   memberSubtype?: "beam" | "tie-beam";
 };
 export type RCSlabDemand = {
@@ -215,6 +220,7 @@ export function deriveRCMemberDemandsFromPlane(input: {
       axialKn,
       shearKn,
       momentKnM,
+      torsionKnM: 0,
     };
     if (frame.sourceType === "Poteau") {
       demands.push({ ...common, type: "column", momentXKnM: input.result.plane === "YZ" ? momentKnM : 0, momentYKnM: input.result.plane === "XZ" ? momentKnM : 0 });
@@ -254,6 +260,7 @@ export function deriveRCMemberDemandsFromSpatial(input: {
       sectionWidthMm: section.dimensionsM[0] * 1000, sectionDepthMm: section.dimensionsM[1] * 1000, lengthMm: lengthM * 1000,
       axialKn: Math.max(Math.abs(solved.start.axialKn), Math.abs(solved.end.axialKn)),
       shearKn: solved.maxAbsShearKn, momentKnM: governingMoment,
+      torsionKnM: solved.maxAbsTorsionKnM,
       momentXKnM: Math.max(...momentsLocalZ.map(Math.abs)),
       momentYKnM: Math.max(...momentsLocalY.map(Math.abs)),
       memberSubtype: (frame.sourceType === "Longrine de redressement" ? "tie-beam" : frame.sourceType === "Poutre" ? "beam" : undefined) as "beam" | "tie-beam" | undefined,
@@ -378,10 +385,26 @@ function designBeam(demand: RCMemberDemand, basis: RCDesignBasis, overrides: RCD
   if (demand.serviceDeflectionMm !== undefined && Number.isFinite(demand.serviceDeflectionMm)) {
     checks.push(check("deflection", "Flèche de service", Math.abs(demand.serviceDeflectionMm), demand.lengthMm / basis.maxDeflectionRatio, "mm", "δser ≤ L/limite saisie", combinationId, combinationName));
   } else checks.push(emptyCheck("deflection", "Flèche de service", "mm", combinationId, combinationName, "Résultat ELS requis"));
-  if (demand.serviceMomentKnM !== undefined && bottom) {
+  if (demand.serviceMomentKnM !== undefined && bottom && basis.maxCrackWidthMm && basis.maxCrackWidthMm > 0) {
+    const crack = checkCrackWidth({ MserKnM: demand.serviceMomentKnM, AsTensionMm2: bottom.areaMm2, effectiveDepthMm: effectiveDepth, widthMm: width, heightMm: height, coverMm: basis.coverMm, barDiameterMm: bottom.diameterMm, fykMpa: basis.fykMpa, maxCrackWidthMm: basis.maxCrackWidthMm });
+    checks.push({ ...check("cracking-wk", "Ouverture de fissures wk", crack.wkMm, basis.maxCrackWidthMm, "mm", "wk = sr,max·(εsm−εcm) selon méthode des déformations moyennes", combinationId, combinationName), status: crack.passes ? "satisfaisant" : "non satisfaisant" });
+    if (crack.warnings.length) limitations.push(...crack.warnings);
+  } else if (demand.serviceMomentKnM !== undefined && bottom) {
     const steelStress = Math.abs(demand.serviceMomentKnM) * 1e6 / Math.max(bottom.areaMm2 * z, 1e-9);
-    checks.push({ ...check("crack-proxy", "Contrainte acier ELS (proxy fissuration)", steelStress, basis.fykMpa * 0.6, "MPa", "σs≈Mser/(As·z) ; ne calcule pas wk", combinationId, combinationName), status: "à vérifier" });
+    checks.push({ ...check("crack-proxy", "Contrainte acier ELS (proxy fissuration)", steelStress, basis.fykMpa * 0.6, "MPa", "σs≈Mser/(As·z) ; limite wk,max requise pour conclure", combinationId, combinationName), status: "à vérifier" });
   } else checks.push(emptyCheck("cracking", "Ouverture de fissures wk", "mm", combinationId, combinationName, "Calcul de fissuration selon norme non implémenté"));
+  if (demand.torsionKnM && Math.abs(demand.torsionKnM) > 1e-9 && bottom && top) {
+    const torsion = checkRectangularTorsion({ TEdKnM: demand.torsionKnM, bMm: width, hMm: height, coverMm: basis.coverMm, stirrupDiameterMm: linkDiameter, longitudinalDiameterMm: Math.max(bottom.diameterMm, top.diameterMm), fckMpa: basis.fckMpa, fykMpa: basis.fykMpa, gammaC: basis.gammaC, gammaS: basis.gammaS, alphaCC: basis.alphaCC, AswPerSMm2PerMm: linkArea / Math.max(recommendedLinkSpacing, 1), AslMm2: bottom.areaMm2 + top.areaMm2 });
+    checks.push(check("torsion-concrete", "Torsion · bielles comprimées", Math.abs(demand.torsionKnM), torsion.TRdMaxKnM, "kN·m", "TEd ≤ TRd,max selon modèle de treillis spatial", combinationId, combinationName));
+    checks.push(check("torsion-transverse", "Torsion · armatures transversales", Math.abs(demand.torsionKnM), torsion.TRdSKnM, "kN·m", "TEd ≤ TRd,s ; cadres fermés et Asw/s", combinationId, combinationName));
+    checks.push(check("torsion-longitudinal", "Torsion · armatures longitudinales", torsion.AslReqMm2, bottom.areaMm2 + top.areaMm2, "mm²", "Asl,req = TEd/(2·Ak·fyd·cotθ)", combinationId, combinationName));
+    if (torsion.warnings.length) limitations.push(...torsion.warnings);
+  } else checks.push(emptyCheck("torsion", "Vérification de torsion BA", "kN·m", combinationId, combinationName, "Effort de torsion et armatures fermées requis pour conclure"));
+  if (basis.seismicDetailingEnabled && basis.seismicDuctilityClass && bottom && top) {
+    const seismic = checkSeismicDetailing({ ductilityClass: basis.seismicDuctilityClass, member: "beam", widthMm: width, depthMm: height, clearHeightMm: demand.lengthMm, longitudinalRatio: (bottom.areaMm2 + top.areaMm2) / Math.max(width * height, 1), transverseDiameterMm: linkDiameter, transverseSpacingMm: recommendedLinkSpacing, coverMm: basis.coverMm, fykMpa: basis.fykMpa });
+    checks.push(check("beam-seismic-detailing", "Détail sismique poutre", Math.max(seismic.rhoMin / Math.max((bottom.areaMm2 + top.areaMm2) / Math.max(width * height, 1), 1e-9), recommendedLinkSpacing / Math.max(seismic.spacingLimitMm, 1)), 1, "—", "ρ et espacement de confinement selon classe de ductilité déclarée", combinationId, combinationName));
+    if (seismic.warnings.length) limitations.push(...seismic.warnings);
+  } else if (basis.seismicDetailingEnabled) checks.push(emptyCheck("beam-seismic-detailing", "Détail sismique poutre", "—", combinationId, combinationName, "Classe de ductilité EN 1998 et paramètres de détail requis"));
   checks.push(emptyCheck("anchorage", "Ancrage et recouvrement", "mm", combinationId, combinationName, "Longueur normalisée selon adhérence, position et confinement non implémentée"));
   return { elementId: demand.id, type: "beam", combinationId, combinationName, checks, reinforcement, limitations };
 }
@@ -503,9 +526,17 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     check("column-steel-min", "Armatures longitudinales minimales", minSteel, asProvided, "mm²", "As,prov ≥ ρmin·Ag", combinationId, combinationName),
     check("column-steel-max", "Armatures longitudinales maximales", asProvided, maxSteel, "mm²", "As,prov ≤ ρmax·Ag", combinationId, combinationName),
     check("column-bar-spacing", "Espacement libre des barres", basis.minClearSpacingMm, clearFaceSpacing, "mm", "Disposition symétrique indicative ; sclair ≥ minimum déclaré", combinationId, combinationName),
-    check("column-slenderness", "Élancement géométrique", slenderness, basis.maxColumnSlenderness, "—", "λ = L0/i ; seuil déclaré, second ordre non calculé", combinationId, combinationName),
-    emptyCheck("column-ties", "Cadres, confinement et continuité", "mm", combinationId, combinationName, "Détail normatif non implémenté"),
+    check("column-slenderness", "Élancement géométrique", slenderness, basis.maxColumnSlenderness, "—", "λ = L0/i ; seuil déclaré avant contrôle de second ordre", combinationId, combinationName),
   ];
+  const secondOrder = checkColumnSecondOrder({ NEdKn: Math.abs(demand.axialKn), M0EdKnM: Math.max(momentX, momentY), bMm: width, hMm: height, L0Mm: demand.lengthMm, dMm: Math.max(50, Math.min(width, height) - basis.coverMm - tieDiameter - diameter / 2), AsMm2: asProvided, fykMpa: basis.fykMpa, gammaS: basis.gammaS });
+  checks.push(check("column-second-order", "Second ordre · moment amplifié", secondOrder.amplification, 5, "—", "MEd = M0Ed + NEd·e2 ; courbure nominale paramétrée", combinationId, combinationName));
+  if (secondOrder.warnings.length) limitations.push(...secondOrder.warnings);
+  if (basis.seismicDetailingEnabled && basis.seismicDuctilityClass) {
+    const seismic = checkSeismicDetailing({ ductilityClass: basis.seismicDuctilityClass, member: "column", widthMm: width, depthMm: height, clearHeightMm: demand.lengthMm, longitudinalRatio: asProvided / Math.max(areaGross, 1), transverseDiameterMm: tieDiameter, transverseSpacingMm: demand.lengthMm / Math.max(1, tieCount - 1), coverMm: basis.coverMm, fykMpa: basis.fykMpa });
+    checks.push(check("column-seismic-detailing", "Détail sismique poteau", Math.max(seismic.rhoMin / Math.max(asProvided / Math.max(areaGross, 1), 1e-9), (demand.lengthMm / Math.max(1, tieCount - 1)) / Math.max(seismic.spacingLimitMm, 1)), 1, "—", "ρ et espacement de confinement selon classe de ductilité déclarée", combinationId, combinationName));
+    if (seismic.warnings.length) limitations.push(...seismic.warnings);
+  } else if (basis.seismicDetailingEnabled) checks.push(emptyCheck("column-seismic-detailing", "Détail sismique poteau", "—", combinationId, combinationName, "Classe de ductilité EN 1998 et paramètres de détail requis"));
+  checks.push(emptyCheck("column-ties", "Cadres, confinement et continuité", "mm", combinationId, combinationName, "Crochets, zones critiques et continuité selon EN 1998 restent à documenter"));
   if (ignoredLongitudinalOverride) checks.push(emptyCheck("column-longitudinal-override", "Override longitudinal ignoré", "mm", combinationId, combinationName, "Override ignoré : le diamètre longitudinal doit être disponible au catalogue et supérieur ou égal à 10 mm."));
   return { elementId: demand.id, type: "column", combinationId, combinationName, checks, reinforcement, limitations };
 }

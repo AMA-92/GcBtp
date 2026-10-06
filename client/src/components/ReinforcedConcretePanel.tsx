@@ -27,6 +27,9 @@ type Draft = {
   maxDeflectionRatio: string;
   maxColumnSlenderness: string;
   availableBarDiametersMm: string;
+  maxCrackWidthMm: string;
+  seismicDetailingEnabled: boolean;
+  seismicDuctilityClass: "DCL" | "DCM" | "DCH";
 };
 
 const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRebarFykMpa?: number): Draft => {
@@ -64,6 +67,9 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   maxDeflectionRatio: "250",
   maxColumnSlenderness: "15",
   availableBarDiametersMm: "8, 10, 12, 16, 20, 25",
+  maxCrackWidthMm: "0.30",
+  seismicDetailingEnabled: false,
+  seismicDuctilityClass: "DCM",
   };
 };
 
@@ -107,7 +113,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       const savedDraft = parsed.draft ?? {};
       const merged: Draft = { ...base, ...savedDraft, standard: base.standard };
       if (savedDraft.standard && !sameRCStandardFamily(savedDraft.standard, base.standard)) {
-        (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'bondStressMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness'] as const).forEach(key => { merged[key] = base[key] as never; });
+        (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'bondStressMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness', 'maxCrackWidthMm', 'seismicDetailingEnabled', 'seismicDuctilityClass'] as const).forEach(key => { merged[key] = base[key] as never; });
       }
       // Les anciennes sessions contenaient des champs vides : reprendre le catalogue
       // plutôt que conserver silencieusement une base de calcul incomplète.
@@ -161,6 +167,9 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     maxDeflectionRatio: numeric(draft.maxDeflectionRatio),
     maxColumnSlenderness: numeric(draft.maxColumnSlenderness),
     availableBarDiametersMm: draft.availableBarDiametersMm.split(/[;,\s]+/).map(numeric).filter(Number.isFinite),
+    maxCrackWidthMm: numeric(draft.maxCrackWidthMm),
+    seismicDetailingEnabled: draft.seismicDetailingEnabled,
+    seismicDuctilityClass: draft.seismicDuctilityClass,
   }), [draft]);
 
   const update = (key: keyof Draft, value: string | boolean) => {
@@ -265,7 +274,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     ["coverMm", "Enrobage nominal", "mm"], ["minReinforcementPercent", "ρ armatures min.", "%"], ["maxReinforcementPercent", "ρ armatures max.", "%"],
     ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"], ["bondStressMpa", "Adhérence τbd déclarée", "MPa"],
     ["minClearSpacingMm", "Espacement libre min.", "mm"], ["maxLinkSpacingMm", "Espacement cadres max.", "mm"],
-    ["maxDeflectionRatio", "Limite de flèche L/", "—"], ["maxColumnSlenderness", "Limite d’élancement λ", "—"],
+    ["maxDeflectionRatio", "Limite de flèche L/", "—"], ["maxColumnSlenderness", "Limite d’élancement λ", "—"], ["maxCrackWidthMm", "wk,max", "mm"],
   ];
   const selectedStandardProfile = resolveRCStandardProfile(projectNorm);
 
@@ -285,8 +294,9 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       {fields.map(([key, label, unit]) => <label key={key}>{label} <span className="text-[#93856d]">{unit}</span><input type="number" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft[key] as string} onChange={event => update(key, event.target.value)} /></label>)}
       <label className="col-span-2">Diamètres d’acier disponibles · mm<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.availableBarDiametersMm} onChange={event => update("availableBarDiametersMm", event.target.value)} /><span className="text-[8px]">Séparer par virgule, espace ou point-virgule.</span></label>
     </div>
-    <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[9px] text-amber-950">Règle de projet : <b>HA8 est interdit comme armature longitudinale principale d’un poteau</b> (il peut rester admissible en cadre/étrier). La norme est reprise des paramètres du projet et conservée dans le résultat. Le moteur utilise des coefficients de pré-étude déclarés, mais ne réalise pas toutes les clauses BAEL/Eurocode, annexes, effets du second ordre, ancrages ou dispositions sismiques.</div>
-    <label className="flex items-start gap-2 rounded bg-white p-2"><input type="checkbox" checked={draft.basisConfirmed} onChange={event => update("basisConfirmed", event.target.checked)} /><span>J’ai vérifié ces paramètres contre les documents du projet. Cette attestation de saisie ne transforme pas le calcul générique en vérification normative.</span></label>
+    <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[9px] text-amber-950">Règle de projet : <b>HA8 est interdit comme armature longitudinale principale d’un poteau</b> (il peut rester admissible en cadre/étrier). Les contrôles wk, torsion, second ordre nominal et détail sismique activables restent soumis à l’édition exacte des Eurocodes et à la revue d’un ingénieur.</div>
+      <label className="flex items-start gap-2 rounded bg-white p-2"><input type="checkbox" checked={draft.basisConfirmed} onChange={event => update("basisConfirmed", event.target.checked)} /><span>J’ai vérifié ces paramètres contre les documents du projet. Cette attestation de saisie ne transforme pas le calcul générique en vérification normative.</span></label>
+    <div className="grid grid-cols-2 gap-2 rounded bg-white p-2"><label className="flex items-center gap-2"><input type="checkbox" checked={draft.seismicDetailingEnabled} onChange={event => update("seismicDetailingEnabled", event.target.checked)} /> Activer le détail sismique EN 1998</label><label>Classe de ductilité<select className="ml-2 rounded border px-1" value={draft.seismicDuctilityClass} onChange={event => update("seismicDuctilityClass", event.target.value as Draft["seismicDuctilityClass"])}><option value="DCL">DCL</option><option value="DCM">DCM</option><option value="DCH">DCH</option></select></label></div>
     <button type="button" className="h-9 w-full rounded bg-[#8a5b16] px-3 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" disabled={!selectedStandardProfile.supportedForPreDesign || (!members.length && !slabs.length && !foundations.length && !stairs.length)} onClick={run}>Calculer / recalculer les armatures proposées</button>
     {!selectedStandardProfile.supportedForPreDesign && <div className="rounded bg-red-50 p-2 text-red-900">Le calcul est bloqué : le moteur ne prend en charge que les pré-études génériques Eurocode 2 et BAEL 91 mod. 99. Aucun résultat d’armature ne sera présenté sous une autre norme.</div>}
     {!members.length && !slabs.length && !foundations.length && !stairs.length && <div className="rounded bg-white p-2">Aucune demande de calcul disponible : lancez d’abord les solveurs ou renseignez la géométrie et les charges des escaliers.</div>}
