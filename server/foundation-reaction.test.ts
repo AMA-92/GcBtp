@@ -21,6 +21,15 @@ const base = {
 };
 
 describe("foundation checks from solver reactions", () => {
+  it("computes reactions without inventing geotechnical capacity", () => {
+    const result = checkFoundationReaction({ ...base, allowableBearingKPa: null, frictionAngleDeg: null });
+    expect(result.maximumPressureKPa).toBeGreaterThan(0);
+    expect(result.checks.find(check => check.id === "bearing")?.status).toBe("non vérifié");
+    expect(result.checks.find(check => check.id === "bearing")?.resistance).toBeNull();
+    expect(result.checks.find(check => check.id === "contact")?.status).toBe("satisfaisant");
+    expect(result.status).toBe("pré-étude — incomplet");
+  });
+
   it("checks a centered footing and leaves unavailable punching/settlement explicitly unverified", () => {
     const result = checkFoundationReaction(base);
     expect(result.eccentricityM).toBe(0);

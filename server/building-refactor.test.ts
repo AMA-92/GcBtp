@@ -8,9 +8,10 @@ describe("refonte bâtiment — contexte et persistance", () => {
     const abidjan = proposeSoil("Côte d’Ivoire", "Abidjan", "Cocody");
     const dakar = proposeSoil("Sénégal", "Dakar", "Almadies");
     const kigali = proposeSoil("Rwanda", "Kigali", "Site inconnu");
-    expect(abidjan.soil).toBe("Sol non caractérisé");
-    expect(dakar.soil).toBe("Sol non caractérisé");
-    expect(abidjan.qadm).toBe(dakar.qadm);
+    expect(abidjan.soil).toBe("Profil géotechnique non renseigné");
+    expect(dakar.soil).toBe("Profil géotechnique non renseigné");
+    expect(abidjan.qadm).toBe("à saisir depuis l’étude");
+    expect(abidjan.basis).toMatch(/aucune portance/i);
     expect(kigali.status).toBe("provisoire");
   });
 

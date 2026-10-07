@@ -11,7 +11,7 @@ export type FoundationReactionInput = {
   thicknessM: number;
   columnWidthM: number;
   columnDepthM: number;
-  allowableBearingKPa: number;
+  allowableBearingKPa: number | null;
   bearingSafetyFactor: number;
   slidingSafetyFactor: number;
   frictionAngleDeg: number | null;
@@ -60,7 +60,8 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
   if (!finite(input.verticalReactionKn) || !finite(input.horizontalReactionKn) || !finite(input.momentReactionKnM)) validation.push("Réactions du solveur absentes ou non finies.");
   if (!positive(effectiveAxialKn)) validation.push("La réaction verticale nette n’est pas en compression ; le contact de la semelle ne peut pas être vérifié par ce modèle.");
   if (![input.widthXM, input.widthYM, input.thicknessM, input.columnWidthM, input.columnDepthM].every(positive)) validation.push("Dimensions de semelle, épaisseur ou poteau manquantes.");
-  if (!positive(input.allowableBearingKPa) || !positive(input.bearingSafetyFactor) || !positive(input.slidingSafetyFactor)) validation.push("Portance géotechnique et coefficients de sécurité positifs requis.");
+  if (input.allowableBearingKPa !== null && !positive(input.allowableBearingKPa)) validation.push("La portance géotechnique, si elle est saisie, doit être positive et provenir de l’étude du site.");
+  if (!positive(input.bearingSafetyFactor) || !positive(input.slidingSafetyFactor)) validation.push("Les facteurs de calcul appliqués doivent être positifs.");
   if (input.frictionAngleDeg !== null && (!finite(input.frictionAngleDeg) || input.frictionAngleDeg < 0 || input.frictionAngleDeg >= 60)) validation.push("L’angle de frottement φ doit provenir de l’étude géotechnique et être compris entre 0° et 60°.");
   if (validation.length) throw new Error(validation.join(" "));
 
@@ -77,8 +78,10 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
       ? meanPressureKPa * (1 + 6 * eccentricityRatio)
       : (2 * effectiveAxialKn) / (transverseDimension * effectiveContactWidthM);
   const minimumPressureKPa = fullContact ? meanPressureKPa * (1 - 6 * eccentricityRatio) : 0;
-  const designBearingKPa = input.allowableBearingKPa / input.bearingSafetyFactor;
-  const bearingStatus = maximumPressureKPa <= designBearingKPa ? "satisfaisant" : "insuffisant";
+  const designBearingKPa = input.allowableBearingKPa === null ? null : input.allowableBearingKPa / input.bearingSafetyFactor;
+  const bearingStatus = designBearingKPa === null
+    ? "non vérifié"
+    : maximumPressureKPa <= designBearingKPa ? "satisfaisant" : "insuffisant";
   const contactStatus = contactPossible ? (fullContact ? "satisfaisant" : "insuffisant") : "insuffisant";
 
   const frictionResistanceKn = input.frictionAngleDeg === null
@@ -108,7 +111,7 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
     ? "non vérifié"
     : estimatedSettlementMm <= (input.allowableSettlementMm as number) ? "satisfaisant" : "insuffisant";
   const checks: FoundationCheck[] = [
-    { id: "bearing", label: "Portance avec moment", demand: maximumPressureKPa, resistance: designBearingKPa, unit: "kPa", status: bearingStatus, note: `qmin ${minimumPressureKPa.toFixed(2)} kPa · qadm/sécurité ${designBearingKPa.toFixed(2)} kPa.` },
+    { id: "bearing", label: "Pression du sol · screening", demand: maximumPressureKPa, resistance: designBearingKPa, unit: "kPa", status: bearingStatus, note: designBearingKPa === null ? "qadm absent : saisir la valeur et sa base de comparaison depuis le rapport géotechnique." : `qmin ${minimumPressureKPa.toFixed(2)} kPa · qadm déclaré ${designBearingKPa.toFixed(2)} kPa; ce screening ne remplace pas la justification NF EN 1997-1/NA et NF P 94-261/A1.` },
     { id: "contact", label: "Excentricité et décollement", demand: eccentricityM, resistance: momentDimension / 6, unit: "m", status: contactStatus, note: contactPossible ? (fullContact ? "Contact théorique intégral (e ≤ B/6)." : `Décollement partiel estimé ; largeur comprimée ${effectiveContactWidthM.toFixed(3)} m.`) : "Le résultant sort du noyau central élargi ; pas d’équilibre de contact dans ce modèle." },
     { id: "sliding", label: "Glissement", demand: Math.abs(input.horizontalReactionKn), resistance: frictionResistanceKn, unit: "kN", status: slidingStatus, note: slidingNote },
     { id: "punching", label: "Poinçonnement — screening", demand: punchingDemandKPa, resistance: positive(punchingCapacity ?? 0) ? punchingCapacity as number : null, unit: "kPa", status: punchingStatus, note: "La capacité doit provenir d’un détail BA et d’un référentiel vérifiés ; d = 0,8h est une approximation de pré-étude." },

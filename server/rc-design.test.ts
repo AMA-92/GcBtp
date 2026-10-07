@@ -239,6 +239,20 @@ it("ferraille une semelle à partir de la réaction et produit le métré acier"
   expect(result.status).toBe("calculé numériquement — non certifié");
 });
 
+it("dimensionne les armatures de la semelle par les efforts sans qadm et laisse le sol non vérifié", () => {
+  const result = designReinforcedConcrete({
+    basis: basis(), members: [], slabs: [],
+    foundations: [{ id: "S2", combinationId: "comb:uls", combinationName: "ELU fondation", widthM: 2, lengthM: 2, thicknessM: 0.45, columnWidthM: 0.30, columnDepthM: 0.30, axialKn: 500, shearKn: 20, momentXKnM: 20, momentYKnM: 15, soilBearingKPa: null }],
+  });
+  const footing = result.elements[0];
+  const bearing = footing.checks.find(item => item.id === "bearing-screen");
+  expect(footing.reinforcement.map(item => item.id)).toEqual(expect.arrayContaining(["S2:x", "S2:y"]));
+  expect(bearing?.status).toBe("à vérifier");
+  expect(bearing?.blocking).toBe(false);
+  expect(result.numericalSummary.blockedCheckCount).not.toBeGreaterThan(footing.checks.filter(item => item.status === "bloqué").length);
+  expect(result.status).toBe("calculé numériquement — non certifié");
+});
+
 describe("RC section optimization", () => {
   it("finds a smaller footing when the available checks pass", () => {
     const basis = { schemaVersion: 1 as const, standard: "Eurocode 2 — test", nationalAnnex: "test", sourceReference: "test", basisConfirmed: true, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, alphaCC: 0.85, coverMm: 50, minReinforcementRatio: 0.0015, maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.8, bondStressMpa: 2.0, minClearSpacingMm: 20, maxLinkSpacingMm: 250, maxDeflectionRatio: 250, maxColumnSlenderness: 30, availableBarDiametersMm: [8,10,12,16,20,25] };

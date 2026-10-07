@@ -24,7 +24,7 @@ export type LoadInput = {
   selectedCases: Partial<Record<LoadCase, boolean>>;
   usage?: FrenchProjectUsage;
   location?: { latitude?: number; longitude?: number; altitude?: number; zone?: string };
-  soil?: { profile?: string; allowableBearing?: number; groundwaterDepth?: number; foundationDepth?: number; seismicClass?: string };
+  soil?: { profile?: string; allowableBearing?: number; groundwaterDepth?: number; foundationDepth?: number; seismicClass?: string; source?: string };
   actions?: { windPressure?: number; snowPressure?: number; seismicCoefficient?: number; exploitationLoad?: number; partitionLoad?: number; roofLoad?: number };
   stairs?: { flights?: number; width: number; horizontalRun: number; rise: number; slabThickness: number; finishLoad?: number; imposedLoad?: number; stepLoad?: number; stepHeight?: number; tread?: number; landingCount?: number; landingLength?: number; landingWidth?: number; landingThickness?: number; landingFinishLoad?: number; landingImposedLoad?: number; supportReactions?: Array<{ id: string; gk: number; qk: number; source?: string }> };
   reference?: { code?: string; status?: string; source?: string };
@@ -79,7 +79,7 @@ export function calculateLoadDescent(input: LoadInput) {
   const seismicDesign = input.selectedCases.seismic ? factors.seismicPermanent * gk + factors.seismicAction * seismic + psi.psi2 * qk : 0;
   const beam = designFloor;
   const column = beam * Math.max(1, input.levels);
-  const foundation = column * 1.15;
+  const foundation = column;
   const warnings = [
     ...(input.soil?.allowableBearing === undefined ? ["qadm non renseigné : fournir une étude géotechnique avant validation."] : []),
     ...(input.selectedCases.partitions && input.actions?.partitionLoad === undefined ? ["Cloisons : 1,00 kN/m² repris du défaut de catalogue, à remplacer par le poids réel des parois."] : []),
@@ -88,7 +88,7 @@ export function calculateLoadDescent(input: LoadInput) {
     ...(input.selectedCases.snow && snowPressure === 0 ? ["Neige active sans pression de site confirmée : contribution nulle, fournir la charge selon NF EN 1991-1-3/NA."] : []),
     ...(input.selectedCases.seismic && seismicCoefficient === 0 ? ["Séisme actif sans coefficient confirmé : contribution nulle, fournir les paramètres NF EN 1998/NA et l’étude de sol."] : []),
     "La chaîne poutre–poteau–fondation est un dépistage global simplifié, pas un modèle spatial ni une justification réglementaire.",
-    "La fondation reçoit une majoration de transfert 1,15 de pré-étude; les réactions et la portance doivent provenir du modèle et de l’étude géotechnique.",
+    "La réaction transmise à la fondation reprend l’effort du poteau dans ce modèle simplifié; le poids propre, les moments et la portance du sol doivent être traités avec le modèle détaillé et l’étude géotechnique.",
   ];
   const rule = getRegulatoryRule(input.country);
   return {
@@ -106,7 +106,7 @@ export function calculateLoadDescent(input: LoadInput) {
   };
 }
 
-export function buildLoadDescentNote(result: ReturnType<typeof calculateLoadDescent>, foundation?: { soil: { label: string }; foundation: { label: string }; designBearing: number; requiredArea: number; width: number; length: number; pressure: number; utilization: number; status: string; assumptions: { depth: number; groundwaterDepth: number } }) {
+export function buildLoadDescentNote(result: ReturnType<typeof calculateLoadDescent>, foundation?: ReturnType<typeof import("./foundation-engine").calculateFoundation>) {
   const active = Object.entries(result.assumptions)
     .filter(([key]) => ["permanent", "partitions", "roof", "exploitation", "stairsPermanent", "stairsExploitation", "wind", "snow", "seismic"].includes(key))
     .map(([key, value]) => `${key}=${Number(value).toFixed(2)} kN`)
@@ -124,6 +124,7 @@ export function buildLoadDescentNote(result: ReturnType<typeof calculateLoadDesc
     `Source / note : ${result.context.reference.source ?? result.rule.note}`,
     `Altitude du site : ${Number(result.context.location.altitude ?? 0).toFixed(0)} m`,
     `Sol déclaré : ${result.context.soil.profile ?? "non renseigné"}`,
+    `Source géotechnique : ${result.context.soil.source ?? "non renseignée"}`,
     `Gk : ${result.assumptions.gk.toFixed(2)} kN`,
     `Qk : ${result.assumptions.qk.toFixed(2)} kN`,
     `γG : ${formatFrenchCoefficient(result.assumptions.gammaG)}`,
@@ -141,7 +142,7 @@ export function buildLoadDescentNote(result: ReturnType<typeof calculateLoadDesc
     `Chaîne gravitaire : plancher ${result.chain.floor.toFixed(2)} kN → poutre ${result.chain.beam.toFixed(2)} kN → poteau ${result.chain.column.toFixed(2)} kN → fondation ${result.chain.foundation.toFixed(2)} kN`,
     `Combinaison gravitaire ELU : ${result.combination}`,
     ...result.warnings.map(warning => `Avertissement : ${warning}`),
-    ...(foundation ? [`Sol : ${foundation.soil.label}`, `Fondation : ${foundation.foundation.label}`, `Assise : ${foundation.assumptions.depth.toFixed(2)} m`, `Nappe : ${foundation.assumptions.groundwaterDepth.toFixed(2)} m`, `q admissible de calcul : ${foundation.designBearing.toFixed(2)} kPa`, `Surface requise : ${foundation.requiredArea.toFixed(2)} m²`, `Dimensions proposées : ${foundation.width.toFixed(2)} × ${foundation.length.toFixed(2)} m`, `Pression moyenne : ${foundation.pressure.toFixed(2)} kPa`, `Taux d’utilisation : ${(foundation.utilization * 100).toFixed(0)}%`, `Statut fondation : ${foundation.status}`] : []),
+    ...(foundation ? [`Sol : ${foundation.soilDescription}`, `Fondation : ${foundation.foundation.label}`, `Portance déclarée depuis l’étude : ${foundation.allowableBearingKPa === null ? "non renseignée" : `${foundation.allowableBearingKPa.toFixed(2)} kPa`}`, `Surface requise : ${foundation.requiredArea === null ? "non calculée — donnée géotechnique manquante" : `${foundation.requiredArea.toFixed(2)} m²`}`, `Dimensions proposées : ${foundation.width === null || foundation.length === null ? "non calculées" : `${foundation.width.toFixed(2)} × ${foundation.length.toFixed(2)} m`}`, `Pression moyenne : ${foundation.pressure === null ? "non calculée" : `${foundation.pressure.toFixed(2)} kPa`}`, `Taux d’utilisation : ${foundation.utilization === null ? "non calculé" : `${(foundation.utilization * 100).toFixed(0)}%`}`, `Statut fondation : ${foundation.status}`] : []),
     "Avertissement : pré-étude non certifiée; référentiel, données locales et vérifications détaillées à valider par un ingénieur.",
   ].join("\n");
 }

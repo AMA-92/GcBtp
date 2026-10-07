@@ -90,6 +90,8 @@ export type RCCheck = {
   utilization: number | null;
   unit: string;
   status: RCCheckStatus;
+  /** false = contrôle complémentaire non bloquant pour le calcul structurel de pré-étude. */
+  blocking?: boolean;
   formula: string;
   combinationId: string;
   combinationName: string;
@@ -128,7 +130,7 @@ export type RCFootingDemand = {
   shearKn: number;
   momentXKnM: number;
   momentYKnM: number;
-  soilBearingKPa: number;
+  soilBearingKPa: number | null;
 };
 
 export type RCTieBeamDemand = RCMemberDemand & { type: "beam" };
@@ -173,6 +175,7 @@ export type RCDesignResult = {
     passedCheckCount: number;
     failedCheckCount: number;
     blockedCheckCount: number;
+    unverifiedCheckCount: number;
   };
 };
 
@@ -305,6 +308,9 @@ export function validateRCDesignBasis(basis: RCDesignBasis): string[] {
 
 function emptyCheck(id: string, label: string, unit: string, combinationId: string, combinationName: string, formula: string): RCCheck {
   return { id, label, demand: null, resistance: null, utilization: null, unit, status: "bloqué", formula, combinationId, combinationName };
+}
+function unverifiedCheck(id: string, label: string, demand: number, unit: string, formula: string, combinationId: string, combinationName: string): RCCheck {
+  return { id, label, demand, resistance: null, utilization: null, unit, status: "à vérifier", blocking: false, formula, combinationId, combinationName };
 }
 function check(id: string, label: string, demand: number, resistance: number, unit: string, formula: string, combinationId: string, combinationName: string): RCCheck {
   const utilization = resistance > 0 ? demand / resistance : Number.POSITIVE_INFINITY;
@@ -446,7 +452,9 @@ function designFooting(demand: RCFootingDemand, basis: RCDesignBasis, overrides:
   const oneWayStressX=oneWayShearX*1000/Math.max(demand.lengthM*1000*d, 1);
   const oneWayStressY=oneWayShearY*1000/Math.max(demand.widthM*1000*d, 1);
   const checks=[
-    check("bearing-screen","Pression moyenne sous semelle",qAvg,demand.soilBearingKPa,"kPa","q = N/(B·L) ≤ qadm géotechnique",combinationId,combinationName),
+    positive(demand.soilBearingKPa ?? 0)
+      ? check("bearing-screen","Pression du sol · screening",Math.max(qx,qy),demand.soilBearingKPa as number,"kPa","qmax estimé depuis N, Mx/My et B/L ≤ valeur déclarée dans l’étude; screening uniquement",combinationId,combinationName)
+      : unverifiedCheck("bearing-screen","Pression du sol · qadm non fourni",Math.max(qx,qy),"kPa","Donnée géotechnique absente : contrôle du sol séparé; la flexion BA indicative reste calculée depuis les réactions et la géométrie.",combinationId,combinationName),
     check("flexion-x","Flexion X · As",asXReq,dx.areaMm2,"mm²","As,prov ≥ max(As,req; As,min)",combinationId,combinationName),
     check("flexion-y","Flexion Y · As",asYReq,dy.areaMm2,"mm²","As,prov ≥ max(As,req; As,min)",combinationId,combinationName),
     check("punching","Poinçonnement",punchingStress,punchingResistance,"MPa","vEd ≤ vRd,c selon base BA déclarée",combinationId,combinationName),
@@ -816,7 +824,8 @@ export function designReinforcedConcrete(input: { basis: RCDesignBasis; members:
     checkCount: checks.length,
     passedCheckCount: checks.filter(item => item.status === "satisfaisant").length,
     failedCheckCount: checks.filter(item => item.status === "non satisfaisant").length,
-    blockedCheckCount: checks.filter(item => item.status === "bloqué" || item.status === "à vérifier").length,
+    blockedCheckCount: checks.filter(item => item.status === "bloqué" || (item.status === "à vérifier" && item.blocking !== false)).length,
+    unverifiedCheckCount: checks.filter(item => item.status === "à vérifier").length,
   };
   const missingAdmissibleColumnDiameter = elements.some(element => element.type === "column" && element.checks.some(item => item.id === "column-longitudinal-diameter" && item.status === "bloqué"));
   if (numericalSummary.checkCount === 0 || numericalSummary.blockedCheckCount > 0) blockers.push("Le calcul numérique est incomplet : chaque contrôle requis doit produire une valeur numérique et un verdict exploitable.");

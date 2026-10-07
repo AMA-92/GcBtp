@@ -1,17 +1,12 @@
-import { DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA, DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE } from "./foundation-engine";
-
 export type SoilProposal = { soil: string; qadm: string; groundwater: string; status: "provisoire"; basis: string };
 
-/**
- * Une ville ou une région ne suffit pas à déduire les paramètres géotechniques.
- * GcBtp ne fournit donc qu'une hypothèse de projet explicitement provisoire.
- */
+/** La localisation ne fournit aucune donnée géotechnique : chaque valeur doit venir du rapport réel du site. */
 export function proposeSoil(_country: string, _city: string, _location: string): SoilProposal {
   return {
-    soil: "Sol non caractérisé",
-    qadm: `${DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA} kPa`,
-    groundwater: "Nappe et paramètres à confirmer par l'étude géotechnique",
+    soil: "Profil géotechnique non renseigné",
+    qadm: "à saisir depuis l’étude",
+    groundwater: "niveau de nappe à saisir depuis l’étude",
     status: "provisoire",
-    basis: `${DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE} — la localisation seule ne permet pas de déduire la portance du sol`,
+    basis: "Aucune portance, stratigraphie ou nappe n’est déduite de la localisation; saisir les valeurs du rapport géotechnique du site.",
   };
 }

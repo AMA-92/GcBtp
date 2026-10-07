@@ -19,7 +19,8 @@ describe("load descent engine", () => {
     expect(result.assumptions.gk).toBeGreaterThan(0);
     expect(result.assumptions.qk).toBeGreaterThan(0);
     expect(result.chain.floor).toBeGreaterThan(0);
-    expect(result.chain.foundation).toBeGreaterThan(result.chain.column);
+    expect(result.chain.foundation).toBe(result.chain.column);
+    expect(result.warnings.some(warning => warning.includes("majoration de transfert 1,15"))).toBe(false);
     expect(result.combination).toContain("Gk");
     expect(result.assumptions.usageCategory).toBe("A");
   });

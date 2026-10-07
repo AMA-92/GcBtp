@@ -119,7 +119,7 @@ import { deriveStoryMassesFromCumulativeLoads, generateClimateActions, parseClim
 import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RCStairDemand } from "@shared/rc-design";
 import { calculateStairPermanentLoad } from "@shared/stair-load";
 import { mapFoundationReactions } from "@shared/foundation-reaction";
-import { DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA, DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE } from "@shared/foundation-engine";
+import { EMPTY_PROJECT_GEOTECHNICAL_PROFILE, normalizeProjectGeotechnicalProfile, type ProjectGeotechnicalProfile } from "@shared/geotechnical-profile";
 import { validateStructuralModel, type StructuralValidationResult } from "@shared/structural-validation";
 import type { WallDemand } from "@shared/wall-design";
 import ReinforcedConcretePanel from "@/components/ReinforcedConcretePanel";
@@ -411,13 +411,7 @@ type Project = {
   regulatoryCatalogId?: ProjectStandardId;
   materials?: ProjectMaterialSelection;
   optimizationLockedElementIds?: string[];
-  soil?: {
-    bearingCapacityAdmissibleKPa: number;
-    unit: "kPa";
-    status: "default_preliminary" | "geotechnical_confirmed";
-    requiresGeotechnicalConfirmation: boolean;
-    source: string;
-  };
+  soil?: ProjectGeotechnicalProfile;
 };
 type ProjectSettingsDraft = {
   country: string;
@@ -433,6 +427,11 @@ const PROJECT_USAGE_OPTIONS = Object.values(FRENCH_PROJECT_USAGE_CATALOG);
 const usageProfile = (usage: ProjectUsage = "habitation") => FRENCH_PROJECT_USAGE_CATALOG[usage] ?? FRENCH_PROJECT_USAGE_CATALOG.habitation;
 const LOAD_PROGRAM_STATUS_LABELS: Record<string, string> = { catalogued: "catalogué", ready: "validé", provisional: "à vérifier", calculated: "calculé", "default-provisional": "défaut provisoire", "to-confirm": "à confirmer", "user-input": "saisi" };
 const loadProgramStatusLabel = (status: string) => LOAD_PROGRAM_STATUS_LABELS[status] ?? status;
+const optionalGeotechnicalNumber = (value: string): number | null => {
+  if (!value.trim()) return null;
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+};
 type BuildingWorkspaceSnapshot = {
   buildingConfig: Record<string, unknown>;
   customModels: ModelSpec[];
@@ -474,15 +473,7 @@ const normalizeProjectMetadata = (project: Project): Project => {
     ...project,
     norm,
     regulatoryCatalogId: getProjectStandardId(norm),
-    soil: project.soil?.status === "geotechnical_confirmed" && project.soil.bearingCapacityAdmissibleKPa > 0
-      ? project.soil
-      : {
-          bearingCapacityAdmissibleKPa: DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
-          unit: "kPa",
-          status: "default_preliminary",
-          requiresGeotechnicalConfirmation: true,
-          source: DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE,
-        },
+    soil: normalizeProjectGeotechnicalProfile(project.soil),
     levels: project.levels.map(level => {
       const isEdicule = level.kind === "edicule" || /^(r\+3|édifice|edifice)$/i.test(level.label.trim());
       return { ...level, label: isEdicule ? "Édifice" : level.label, kind: isEdicule ? "edicule" : (level.kind ?? (level.id === "foundation" ? "foundation" : "habitation")) };
@@ -863,8 +854,7 @@ export default function BuildingCreateFlow({
       shearKn: Math.abs(record.horizontalReactionKn),
       momentXKnM: record.momentAxis === "x" ? Math.abs(record.momentReactionKnM) : 0,
       momentYKnM: record.momentAxis === "y" ? Math.abs(record.momentReactionKnM) : 0,
-      // Valeur projet imposée par l'étude géotechnique moyenne commune.
-      soilBearingKPa: selected?.soil?.bearingCapacityAdmissibleKPa ?? DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
+      soilBearingKPa: normalizeProjectGeotechnicalProfile(selected?.soil).bearingCapacityAdmissibleKPa,
     }));
   }, [analyticalModel, automaticFoundationResult, solverCombinationId, loadProgram.combinations, selected, country, city, location]);
 
@@ -939,11 +929,11 @@ export default function BuildingCreateFlow({
     city || selected?.city || "",
     location || selected?.location || ""
   );
-  const projectBearingKPa = selected?.soil?.bearingCapacityAdmissibleKPa ?? Number.parseFloat(soilProposal.qadm);
-  const projectSoilConfirmed = selected?.soil?.status === "geotechnical_confirmed";
-  const projectSoilName = projectSoilConfirmed ? "Profil défini par l’étude géotechnique" : soilProposal.soil;
-  const projectSoilSource = selected?.soil?.source || soilProposal.basis;
-  const projectSoilStatus = projectSoilConfirmed ? "confirmé par étude géotechnique" : "provisoire — à confirmer";
+  const projectGeotechnical = normalizeProjectGeotechnicalProfile(selected?.soil);
+  const projectBearingKPa = projectGeotechnical.bearingCapacityAdmissibleKPa;
+  const projectSoilName = projectGeotechnical.soilDescription || soilProposal.soil;
+  const projectSoilSource = [projectGeotechnical.source, projectGeotechnical.reportDate, projectGeotechnical.reportPage ? `p. ${projectGeotechnical.reportPage}` : ""].filter(Boolean).join(" · ") || "aucun rapport renseigné";
+  const projectSoilStatus = projectGeotechnical.status === "not_provided" ? "données géotechniques non renseignées" : projectGeotechnical.status === "geotechnical_confirmed" ? "données déclarées confirmées par l’utilisateur" : "données saisies — à vérifier sur le rapport";
   const regulatoryProfile = getRegulatorySiteProfile(country, city);
   const projectSetupProfile = getRegulatorySiteProfile(projectSettingsDraft.country, projectSettingsDraft.city);
   const projectSetupMaterials = getProjectMaterialSummary(projectSettingsDraft.materials);
@@ -1471,13 +1461,7 @@ export default function BuildingCreateFlow({
       projectUsage,
       regulatoryCatalogId: projectSettingsDraft.regulatoryCatalogId,
       materials: { ...projectSettingsDraft.materials },
-      soil: {
-        bearingCapacityAdmissibleKPa: DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA,
-        unit: "kPa",
-        status: "default_preliminary",
-        requiresGeotechnicalConfirmation: true,
-        source: DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE,
-      },
+      soil: { ...EMPTY_PROJECT_GEOTECHNICAL_PROFILE },
     };
     setProjects(prev => [project, ...prev]);
     setSelected(project);
@@ -2266,6 +2250,12 @@ export default function BuildingCreateFlow({
     setProjects(prev =>
       prev.map(project => (project.id === next.id ? next : project))
     );
+  };
+  const updateGeotechnicalProfile = (patch: Partial<ProjectGeotechnicalProfile>) => {
+    if (!selected) return;
+    const current = normalizeProjectGeotechnicalProfile(selected.soil);
+    const next = normalizeProjectGeotechnicalProfile({ ...current, ...patch, status: "entered" });
+    updateSelected({ soil: next });
   };
   useEffect(() => {
     if (!selected) return;
@@ -5102,6 +5092,60 @@ export default function BuildingCreateFlow({
                       {STRUCTURAL_STEEL_CATALOG.map(item => <option key={item.id} value={item.id}>{item.label} · fy {item.fyMpa} MPa nominal</option>)}
                     </select>
                   </div>
+                  <section className="space-y-2 rounded-lg border border-[#e4d6b5] bg-[#fffaf0] p-3">
+                    <div>
+                      <b className="text-[11px] text-[#6d5426]">Données géotechniques du rapport réel</b>
+                      <p className="mt-1 text-[9px] leading-4 text-[#786a51]">Aucune valeur n’est déduite du pays ou de la ville. Saisissez les paramètres effectivement fournis pour ce site, avec leur provenance. Leur saisie n’est pas une certification; les vérifications NF EN 1997-1/NA et NF P 94-261/A1 restent une pré-étude.</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[9px]">Description / couche d’assise
+                        <Input className="mt-1 h-8 bg-white text-[10px]" value={projectGeotechnical.soilDescription} onChange={event => updateGeotechnicalProfile({ soilDescription: event.target.value })} placeholder="Selon stratigraphie" />
+                      </label>
+                      <label className="text-[9px]">Classe de sol sismique · EC8
+                        <Input className="mt-1 h-8 bg-white text-[10px]" value={projectGeotechnical.seismicSoilClass} onChange={event => updateGeotechnicalProfile({ seismicSoilClass: event.target.value })} placeholder="Selon rapport (A, B, C, D, E, S1, S2)" />
+                      </label>
+                      <label className="text-[9px]">qadm déclaré · kPa
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.bearingCapacityAdmissibleKPa ?? ""} onChange={event => updateGeotechnicalProfile({ bearingCapacityAdmissibleKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Valeur du rapport" />
+                      </label>
+                      <label className="text-[9px]">Angle φ · degrés
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" max="59.99" step="any" value={projectGeotechnical.frictionAngleDeg ?? ""} onChange={event => updateGeotechnicalProfile({ frictionAngleDeg: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Cohésion c′ · kPa
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.cohesionKPa ?? ""} onChange={event => updateGeotechnicalProfile({ cohesionKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Poids volumique γ · kN/m³
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.unitWeightKnM3 ?? ""} onChange={event => updateGeotechnicalProfile({ unitWeightKnM3: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Module du sol E · kPa
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.youngModulusKPa ?? ""} onChange={event => updateGeotechnicalProfile({ youngModulusKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Coefficient de Poisson ν
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" max="0.49" step="any" value={projectGeotechnical.poissonRatio ?? ""} onChange={event => updateGeotechnicalProfile({ poissonRatio: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Module de réaction k · kN/m³
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.subgradeModulusKnM3 ?? ""} onChange={event => updateGeotechnicalProfile({ subgradeModulusKnM3: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Profondeur de base de semelle · m
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.foundationDepthM ?? ""} onChange={event => updateGeotechnicalProfile({ foundationDepthM: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Profondeur de nappe · m
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.groundwaterDepthM ?? ""} onChange={event => updateGeotechnicalProfile({ groundwaterDepthM: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Tassement admissible · mm
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.allowableSettlementMm ?? ""} onChange={event => updateGeotechnicalProfile({ allowableSettlementMm: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Référence / source de l’étude
+                        <Input className="mt-1 h-8 bg-white text-[10px]" value={projectGeotechnical.source} onChange={event => updateGeotechnicalProfile({ source: event.target.value })} placeholder="N° du rapport, bureau" />
+                      </label>
+                      <label className="text-[9px]">Date du rapport
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="date" value={projectGeotechnical.reportDate} onChange={event => updateGeotechnicalProfile({ reportDate: event.target.value })} />
+                      </label>
+                      <label className="col-span-2 text-[9px]">Page / référence précise
+                        <Input className="mt-1 h-8 bg-white text-[10px]" value={projectGeotechnical.reportPage} onChange={event => updateGeotechnicalProfile({ reportPage: event.target.value })} placeholder="Page, tableau ou sondage" />
+                      </label>
+                    </div>
+                    <div className="rounded bg-white p-2 text-[9px] text-[#786a51]">État géotechnique : <b>{projectSoilStatus}</b>. Les champs laissés vides demeurent non vérifiés; la portance saisie est comparée directement comme screening, sans coefficient caché.</div>
+                  </section>
                   <div>
                     <Label>Tolérance de fusion analytique (m)</Label>
                     <Input
@@ -5358,7 +5402,7 @@ export default function BuildingCreateFlow({
                         <b>Vérification du modèle · {structuralValidation.status === "conforme" ? "🟢 CONFORME" : structuralValidation.status === "a_verifier" ? "🟠 À VÉRIFIER" : "🔴 NON CONFORME"}</b>
                         <span>{structuralValidation.checkedLevels} niveau(x) · {structuralValidation.checkedElements} élément(s)</span>
                       </div>
-                      <div>qadm projet : <b>{selected?.soil?.bearingCapacityAdmissibleKPa ?? DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA} kPa (≈ 2,0 bar)</b> · valeur de pré-dimensionnement à confirmer par étude géotechnique.</div>
+                      <div>qadm du rapport : <b>{projectBearingKPa === null ? "non renseigné" : `${projectBearingKPa} kPa`}</b> · aucun qadm par défaut; le contrôle du sol reste non vérifié tant que la donnée réelle manque.</div>
                       {structuralValidation.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className="rounded bg-white/80 p-2">{issue.severity === "error" ? "Erreur" : "Avertissement"} · {issue.message}</div>)}
                       {!structuralValidation.issues.length && <div className="rounded bg-white/80 p-2">Aucune discontinuité verticale, semelle orpheline ou duplication détectée dans le contrôle automatique.</div>}
                     </div>
@@ -5462,9 +5506,7 @@ export default function BuildingCreateFlow({
                       result={planeAnalysis?.result ?? null}
                       gravityResult={automaticFoundationResult}
                       plane={analysisPlane}
-                      soilName={projectSoilName}
-                      suggestedBearingKPa={Number.isFinite(projectBearingKPa) ? projectBearingKPa : null}
-                      suggestedSource={`${projectSoilSource} · ${soilProposal.groundwater}`}
+                      soilProfile={projectGeotechnical}
                       onResultChange={setFoundationEvaluation}
                     />
                   )}
@@ -5693,7 +5735,7 @@ export default function BuildingCreateFlow({
                         "DIMENSIONNEMENT NUMÉRIQUE BÉTON ARMÉ — NON CERTIFIÉ",
                         ...(rcDesignResult ? [
                           `Statut : ${rcDesignResult.status} · référentiel ${rcDesignResult.standard || "non renseigné"} · annexe ${rcDesignResult.nationalAnnex || "non renseignée"} · source ${rcDesignResult.sourceReference || "non renseignée"}`,
-                          `Couverture numérique : ${rcDesignResult.numericalSummary.memberCount} membre(s) · ${rcDesignResult.numericalSummary.slabCount} dalle(s) · ${rcDesignResult.numericalSummary.footingCount} semelle(s) · ${rcDesignResult.numericalSummary.stairCount} escalier(s) · ${rcDesignResult.numericalSummary.passedCheckCount}/${rcDesignResult.numericalSummary.checkCount} contrôles satisfaisants · ${rcDesignResult.numericalSummary.failedCheckCount} non satisfaisant(s) · ${rcDesignResult.numericalSummary.blockedCheckCount} bloqué(s)/à vérifier`,
+                          `Couverture numérique : ${rcDesignResult.numericalSummary.memberCount} membre(s) · ${rcDesignResult.numericalSummary.slabCount} dalle(s) · ${rcDesignResult.numericalSummary.footingCount} semelle(s) · ${rcDesignResult.numericalSummary.stairCount} escalier(s) · ${rcDesignResult.numericalSummary.passedCheckCount}/${rcDesignResult.numericalSummary.checkCount} contrôles satisfaisants · ${rcDesignResult.numericalSummary.failedCheckCount} non satisfaisant(s) · ${rcDesignResult.numericalSummary.blockedCheckCount} bloquant(s) · ${rcDesignResult.numericalSummary.unverifiedCheckCount} à vérifier`,
                           `Matériaux/détails saisis : fck ${rcDesignResult.materialBasis.fckMpa} MPa · fyk ${rcDesignResult.materialBasis.fykMpa} MPa · γc ${rcDesignResult.materialBasis.gammaC} · γs ${rcDesignResult.materialBasis.gammaS} · αcc ${rcDesignResult.materialBasis.alphaCC} · enrobage ${rcDesignResult.materialBasis.coverMm} mm · ρmin/max ${rcDesignResult.materialBasis.minReinforcementRatio}/${rcDesignResult.materialBasis.maxReinforcementRatio} · τRd,c ${rcDesignResult.materialBasis.concreteShearStressLimitMpa} MPa · τbd ${rcDesignResult.materialBasis.bondStressMpa} MPa · saisie confirmée ${rcDesignResult.materialBasis.basisConfirmed}`,
                           ...rcDesignResult.elements.flatMap(item => [
                             `${item.type} ${item.elementId} · combinaison gouvernante déclarée ${item.combinationName} (${item.combinationId})`,
@@ -5835,7 +5877,7 @@ export default function BuildingCreateFlow({
                 </div>}
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce7eb] bg-white p-3"><span className="text-[10px] text-[#68767d]">{loadCasesPrerequisiteReady ? "Maillage et charges validés. Le calcul reste une pré-étude tant que les paramètres de norme et l’annexe nationale ne sont pas confirmés." : "Terminez les deux étapes et corrigez les erreurs affichées pour déverrouiller le calcul."}</span><Button type="button" className="h-9 bg-[#102f45] px-4 text-[10px] text-white" disabled={!analyticalPrecheck?.ok || !meshPrerequisiteReady || !loadCasesPrerequisiteReady || Boolean(structuralValidation?.issues.some(item => item.severity === "error"))} onClick={executeBuildingCalculation}>Lancer les calculs</Button></div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dce7eb] bg-white p-3"><span className="text-[10px] text-[#68767d]">{loadCasesPrerequisiteReady ? "Maillage et charges catalogués selon les références françaises validés. Les résultats restent une pré-étude non certifiée; les données du site, du sol et le modèle doivent être vérifiés par un ingénieur." : "Terminez les deux étapes et corrigez les erreurs affichées pour déverrouiller le calcul."}</span><Button type="button" className="h-9 bg-[#102f45] px-4 text-[10px] text-white" disabled={!analyticalPrecheck?.ok || !meshPrerequisiteReady || !loadCasesPrerequisiteReady || Boolean(structuralValidation?.issues.some(item => item.severity === "error"))} onClick={executeBuildingCalculation}>Lancer les calculs</Button></div>
           </div>
         </div>
       ), document.body)}

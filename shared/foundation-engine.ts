@@ -1,62 +1,50 @@
-export type SoilType = "roche" | "gravier" | "sable" | "argile" | "remblai";
 export type FoundationType = "semelle isolée" | "semelle filante" | "radier" | "pieux";
 
-export const SOILS: Record<SoilType, { label: string; allowableBearing: number; frictionAngle: number; note: string }> = {
-  roche: { label: "Roche saine — 500 kPa", allowableBearing: 500, frictionAngle: 38, note: "Valeur indicative à confirmer par reconnaissance et essais." },
-  gravier: { label: "Gravier compact — 300 kPa", allowableBearing: 300, frictionAngle: 34, note: "Valeur indicative à confirmer par étude géotechnique." },
-  sable: { label: "Sable compact — 200 kPa", allowableBearing: 200, frictionAngle: 30, note: "Valeur indicative sensible à la compacité et à la nappe." },
-  argile: { label: "Argile ferme — 150 kPa", allowableBearing: 150, frictionAngle: 22, note: "Valeur indicative : vérifier tassements et retrait-gonflement." },
-  remblai: { label: "Remblai — 100 kPa", allowableBearing: 100, frictionAngle: 18, note: "Ne pas retenir sans caractérisation géotechnique." },
-};
-
-/** Valeur de pré-étude commune du projet ; elle n'est ni mesurée ni prescrite par une norme. */
-export const DEFAULT_PROJECT_ALLOWABLE_BEARING_KPA = 200;
-export const DEFAULT_PROJECT_ALLOWABLE_BEARING_SOURCE = "Hypothèse provisoire de projet — qadm = 200 kPa (≈ 2,0 bar), à confirmer par une étude géotechnique du site";
-
-export const FOUNDATIONS: Record<FoundationType, { label: string; factor: number; note: string }> = {
-  "semelle isolée": { label: "Semelle isolée", factor: 1, note: "Dimensionnement préliminaire sous poteau." },
-  "semelle filante": { label: "Semelle filante", factor: 1.1, note: "Dimensionnement préliminaire sous mur ou ligne de poteaux." },
-  radier: { label: "Radier général", factor: 1.25, note: "Répartition globale des charges ; vérifier tassements différentiels." },
-  pieux: { label: "Pieux", factor: 1.5, note: "La capacité portante des pieux exige une étude géotechnique dédiée." },
+export const FOUNDATIONS: Record<FoundationType, { label: string; note: string }> = {
+  "semelle isolée": { label: "Semelle isolée", note: "Prédimensionnement surfacique sous poteau, à partir d’une donnée géotechnique fournie." },
+  "semelle filante": { label: "Semelle filante", note: "Prédimensionnement surfacique simplifié; modèle de mur et vérifications détaillées à établir." },
+  radier: { label: "Radier général", note: "Prédimensionnement global non différentiel; interaction sol-structure à vérifier." },
+  pieux: { label: "Pieux", note: "Capacité, frottement négatif et tassements nécessitent une étude géotechnique spécifique." },
 };
 
 export type FoundationInput = {
   axialLoad: number;
-  soil: SoilType;
   foundation: FoundationType;
-  safetyFactor: number;
-  depth: number;
-  groundwaterDepth: number;
-  allowableBearingOverride?: number;
+  /** Valeur de comparaison de portance provenant du rapport géotechnique réel, en kPa. */
+  allowableBearingOverride?: number | null;
   width?: number;
   length?: number;
 };
 
 export function calculateFoundation(input: FoundationInput) {
-  const soil = SOILS[input.soil];
-  const foundation = FOUNDATIONS[input.foundation];
-  const safetyFactor = Math.max(1, input.safetyFactor || 2.5);
-  const allowableBearing = input.allowableBearingOverride && input.allowableBearingOverride > 0 ? input.allowableBearingOverride : soil.allowableBearing;
-  const designBearing = allowableBearing / safetyFactor;
-  const requiredArea = (input.axialLoad * foundation.factor) / designBearing;
-  const side = Math.max(0.6, Math.sqrt(requiredArea));
-  const width = input.width && input.width > 0 ? input.width : side;
-  const length = input.length && input.length > 0 ? input.length : side;
-  const effectiveArea = width * length;
-  const pressure = (input.axialLoad * foundation.factor) / effectiveArea;
-  const utilization = pressure / designBearing;
+  const bearing = input.allowableBearingOverride;
+  const hasBearing = typeof bearing === "number" && Number.isFinite(bearing) && bearing > 0;
+  const validLoad = Number.isFinite(input.axialLoad) && input.axialLoad > 0;
+  const canPredimension = input.foundation !== "pieux" && hasBearing && validLoad;
+  const requiredArea = canPredimension ? input.axialLoad / (bearing as number) : null;
+  const proposedSide = requiredArea === null ? null : Math.max(0.6, Math.sqrt(requiredArea));
+  const width = input.width && input.width > 0 ? input.width : proposedSide;
+  const length = input.length && input.length > 0 ? input.length : proposedSide;
+  const effectiveArea = width !== null && length !== null ? width * length : null;
+  const pressure = effectiveArea !== null && effectiveArea > 0 && validLoad ? input.axialLoad / effectiveArea : null;
+  const utilization = hasBearing && pressure !== null ? pressure / (bearing as number) : null;
+  const status = input.foundation === "pieux"
+    ? "étude géotechnique spécifique requise"
+    : !hasBearing
+      ? "données géotechniques requises"
+      : !validLoad
+        ? "effort vertical non disponible"
+        : utilization !== null && utilization <= 1 ? "satisfaisant" : "à redimensionner";
   return {
-    soil: { ...soil, allowableBearing },
-    foundation,
-    safetyFactor,
-    designBearing,
+    foundation: FOUNDATIONS[input.foundation],
+    soilDescription: "À renseigner depuis le rapport géotechnique",
+    allowableBearingKPa: hasBearing ? bearing as number : null,
     requiredArea,
     width,
     length,
     effectiveArea,
     pressure,
     utilization,
-    status: utilization <= 1 ? "satisfaisant" : "à redimensionner",
-    assumptions: { depth: input.depth, groundwaterDepth: input.groundwaterDepth },
+    status,
   } as const;
 }
