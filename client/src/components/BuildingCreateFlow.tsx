@@ -120,6 +120,7 @@ import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, type 
 import { calculateStairPermanentLoad } from "@shared/stair-load";
 import { mapFoundationReactions } from "@shared/foundation-reaction";
 import { EMPTY_PROJECT_GEOTECHNICAL_PROFILE, normalizeProjectGeotechnicalProfile, type ProjectGeotechnicalProfile } from "@shared/geotechnical-profile";
+import { copyCatalogToProject, DEFAULT_GEOTECHNICAL_CATALOG_ID, GEOTECHNICAL_CATALOG_COUNTRIES, getGeotechnicalCatalogProfile, getGeotechnicalCatalogProfiles } from "@shared/geotechnical-catalog";
 import { validateStructuralModel, type StructuralValidationResult } from "@shared/structural-validation";
 import type { WallDemand } from "@shared/wall-design";
 import ReinforcedConcretePanel from "@/components/ReinforcedConcretePanel";
@@ -469,11 +470,16 @@ const initialLevels = (): Level[] => [
 ];
 const normalizeProjectMetadata = (project: Project): Project => {
   const norm = normalizeProjectStandard(project.norm);
+  const existingSoil = normalizeProjectGeotechnicalProfile(project.soil);
+  const catalogDefault = getGeotechnicalCatalogProfiles(project.country)[0] ?? getGeotechnicalCatalogProfile(DEFAULT_GEOTECHNICAL_CATALOG_ID);
+  const soil = existingSoil.catalogProfileId || existingSoil.bearingCapacityAdmissibleKPa !== null || existingSoil.source
+    ? existingSoil
+    : copyCatalogToProject(catalogDefault);
   return {
     ...project,
     norm,
     regulatoryCatalogId: getProjectStandardId(norm),
-    soil: normalizeProjectGeotechnicalProfile(project.soil),
+    soil,
     levels: project.levels.map(level => {
       const isEdicule = level.kind === "edicule" || /^(r\+3|édifice|edifice)$/i.test(level.label.trim());
       return { ...level, label: isEdicule ? "Édifice" : level.label, kind: isEdicule ? "edicule" : (level.kind ?? (level.id === "foundation" ? "foundation" : "habitation")) };
@@ -560,6 +566,8 @@ export default function BuildingCreateFlow({
           setProjectUsage("habitation");
           setActiveLevelId("rdc");
           setThreeD(false);
+          setModelType("Aucun");
+          setModelSection("");
           setShowLabels(true);
           setGridOpacity("100");
           setSnapToGrid(true);
@@ -606,8 +614,8 @@ export default function BuildingCreateFlow({
   const [showMenu, setShowMenu] = useState(false);
   const [showPersistenceMenu, setShowPersistenceMenu] = useState(false);
   const [panel, setPanel] = useState<string | null>(null);
-  const [modelType, setModelType] = useState("Poteau");
-  const [modelSection, setModelSection] = useState("Pot_20x30");
+  const [modelType, setModelType] = useState("Aucun");
+  const [modelSection, setModelSection] = useState("");
   const [foundationPlacementMode, setFoundationPlacementMode] = useState<FootingLayoutMode>("centered");
   const [foundationPlacementDirection, setFoundationPlacementDirection] = useState<FootingEccentricAxes>({ x: "none", y: "none" });
   const [customModels, setCustomModels] = useState<ModelSpec[]>([]);
@@ -633,6 +641,10 @@ export default function BuildingCreateFlow({
   const [editingElement, setEditingElement] = useState<ElementItem | null>(
     null
   );
+  const [bulkSelectedElementIds, setBulkSelectedElementIds] = useState<string[]>([]);
+  const [bulkElementType, setBulkElementType] = useState("Tous");
+  const [bulkSection, setBulkSection] = useState("");
+  const [bulkSectionPickerOpen, setBulkSectionPickerOpen] = useState(false);
   const [editType, setEditType] = useState("Poteau");
   const [editSection, setEditSection] = useState("Pot_20×30");
   const [editX, setEditX] = useState("0");
@@ -685,6 +697,7 @@ export default function BuildingCreateFlow({
   const [buildingCalculation, setBuildingCalculation] = useState<ReturnType<
     typeof summarizeBuildingLoads
   > | null>(null);
+  const [calculationExecuted, setCalculationExecuted] = useState(false);
   const [optimizationRecalcRequested, setOptimizationRecalcRequested] = useState(false);
   const [optimizationLockedElementIds, setOptimizationLockedElementIds] = useState<Set<string>>(new Set());
   const [analyticalModel, setAnalyticalModel] = useState<AnalyticalModel | null>(null);
@@ -694,6 +707,8 @@ export default function BuildingCreateFlow({
   const [showCalculationPreflight, setShowCalculationPreflight] = useState(false);
   const [meshPrerequisiteReady, setMeshPrerequisiteReady] = useState(false);
   const [loadCasesPrerequisiteReady, setLoadCasesPrerequisiteReady] = useState(false);
+  const [showMeshDetails, setShowMeshDetails] = useState(false);
+  const [showLoadDetails, setShowLoadDetails] = useState(false);
   const [analyticalSurfaceMesh, setAnalyticalSurfaceMesh] = useState<ReturnType<typeof meshAnalyticalSurfaces> | null>(null);
   const [loadApplicationReport, setLoadApplicationReport] = useState<LoadApplicationReport | null>(null);
   const [reinforcementPlanRequestToken, setReinforcementPlanRequestToken] = useState(0);
@@ -930,6 +945,8 @@ export default function BuildingCreateFlow({
     location || selected?.location || ""
   );
   const projectGeotechnical = normalizeProjectGeotechnicalProfile(selected?.soil);
+  const projectGeotechnicalCatalogProfiles = getGeotechnicalCatalogProfiles(selected?.country ?? country);
+  const projectGeotechnicalCatalogProfile = getGeotechnicalCatalogProfile(projectGeotechnical.catalogProfileId ?? projectGeotechnicalCatalogProfiles[0]?.id);
   const projectBearingKPa = projectGeotechnical.bearingCapacityAdmissibleKPa;
   const projectSoilName = projectGeotechnical.soilDescription || soilProposal.soil;
   const projectSoilSource = [projectGeotechnical.source, projectGeotechnical.reportDate, projectGeotechnical.reportPage ? `p. ${projectGeotechnical.reportPage}` : ""].filter(Boolean).join(" · ") || "aucun rapport renseigné";
@@ -1280,6 +1297,7 @@ export default function BuildingCreateFlow({
 
   useEffect(() => {
     setBuildingCalculation(null);
+    setCalculationExecuted(false);
     setAnalyticalModel(null);
     setAnalyticalPrecheck(null);
     setStructuralValidation(null);
@@ -1291,6 +1309,8 @@ export default function BuildingCreateFlow({
     setShowCalculationPreflight(false);
     setMeshPrerequisiteReady(false);
     setLoadCasesPrerequisiteReady(false);
+    setShowMeshDetails(false);
+    setShowLoadDetails(false);
   }, [selected?.levels, selected?.structure, selected?.norm, xDistances, yDistances, floorConfig, analyticalTolerance, customModels]);
 
   useEffect(() => {
@@ -1298,6 +1318,8 @@ export default function BuildingCreateFlow({
     setSurfaceAnalysis(null);
     setRcDesignResult(null);
     setLoadCasesPrerequisiteReady(false);
+    setShowMeshDetails(false);
+    setShowLoadDetails(false);
   }, [loadProgram, surfaceMeshSizeM]);
 
   useEffect(() => {
@@ -1461,7 +1483,7 @@ export default function BuildingCreateFlow({
       projectUsage,
       regulatoryCatalogId: projectSettingsDraft.regulatoryCatalogId,
       materials: { ...projectSettingsDraft.materials },
-      soil: { ...EMPTY_PROJECT_GEOTECHNICAL_PROFILE },
+      soil: copyCatalogToProject(getGeotechnicalCatalogProfiles(projectSettingsDraft.country)[0] ?? getGeotechnicalCatalogProfile(DEFAULT_GEOTECHNICAL_CATALOG_ID)),
     };
     setProjects(prev => [project, ...prev]);
     setSelected(project);
@@ -1664,6 +1686,7 @@ export default function BuildingCreateFlow({
     }
     if (!selected) return;
     setLastStructuralReport("");
+    setCalculationExecuted(false);
     try { sessionStorage.removeItem("gcbtp-last-structural-report"); } catch { /* L’invalidation reste effective en mémoire. */ }
     const analytical = buildCurrentAnalytical();
     if (!analytical) return;
@@ -1737,6 +1760,7 @@ export default function BuildingCreateFlow({
       setAutomaticFoundationResult(null);
     }
     setSelectedAnalysisRow(null);
+    setCalculationExecuted(true);
     setPanel("Calculer la descente");
     const message = `Calcul terminé : ${summary.floorCount} surface(s) (dalles, balcons, escaliers), ${summary.foundationCount} fondation(s) chargée(s)`;
     if (summary.floorCount === 0) toast.info(`${message}. Ajoutez les surfaces porteuses pour inclure les charges d’exploitation et permanentes des niveaux.`);
@@ -1747,6 +1771,7 @@ export default function BuildingCreateFlow({
     if (!selected) return;
     setStructuralValidation(validateStructuralModel(selected.levels));
     setLastStructuralReport("");
+    setCalculationExecuted(false);
     const analytical = buildCurrentAnalytical();
     if (!analytical) return;
     setAnalyticalModel(analytical.model);
@@ -1905,6 +1930,7 @@ export default function BuildingCreateFlow({
     const size = Number(surfaceMeshSizeM.replace(",", "."));
     const mesh = meshAnalyticalSurfaces(analytical.model, size);
     setAnalyticalSurfaceMesh(mesh);
+    setShowMeshDetails(false);
     const hasRectangularPlates = selected.levels.some(level => level.elements.some(element => isSlabElementType(element.type) && element.x2 !== undefined && element.y2 !== undefined));
     if (hasRectangularPlates) runSurfaceAnalysis();
     else setSurfaceAnalysis(null);
@@ -1912,6 +1938,7 @@ export default function BuildingCreateFlow({
     setMeshPrerequisiteReady(ready);
     setLoadCasesPrerequisiteReady(false);
     setLoadApplicationReport(null);
+    setShowLoadDetails(false);
     if (ready) toast.success(`${mesh.surfaces.length} surface(s) géométrique(s) maillée(s) · ${mesh.nodes.length} nœud(s) · ${mesh.triangles.length} triangle(s)`);
     else toast.error(`Maillage incomplet : ${mesh.errors[0] ?? "une ou plusieurs surfaces n’ont pas produit de triangles"}`);
   };
@@ -1988,6 +2015,7 @@ export default function BuildingCreateFlow({
     if (loadProgram.massSource.status !== "ready") warnings.push("La source de masse sismique reste une pré-étude : l’application complète de ψE=φ·ψ2 selon l’EC8 et sa distribution par niveau doivent être vérifiées.");
     const report: LoadApplicationReport = { errors: Array.from(new Set(errors)), warnings: Array.from(new Set(warnings)), surfaceRows, skeletonRows, combinationRows, lineLoadCount: combinationRows.reduce((sum, item) => sum + item.lineLoadCount, 0) };
     setLoadApplicationReport(report);
+    setShowLoadDetails(false);
     const ready = report.errors.length === 0;
     setLoadCasesPrerequisiteReady(ready);
     if (ready) toast.success(`Charges appliquées et contrôlées · ${surfaceRows.length} surface(s) · ${enabledCombinations.length} combinaison(s) · ${report.lineLoadCount} charge(s) linéaire(s) générée(s) sur les combinaisons actives.`);
@@ -2254,8 +2282,19 @@ export default function BuildingCreateFlow({
   const updateGeotechnicalProfile = (patch: Partial<ProjectGeotechnicalProfile>) => {
     if (!selected) return;
     const current = normalizeProjectGeotechnicalProfile(selected.soil);
-    const next = normalizeProjectGeotechnicalProfile({ ...current, ...patch, status: "entered" });
+    const next = normalizeProjectGeotechnicalProfile({ ...current, ...patch, status: "entered", sourceStatus: patch.sourceStatus ?? (current.sourceStatus === "catalog" ? "modified" : current.sourceStatus) });
     updateSelected({ soil: next });
+  };
+  const applyGeotechnicalCatalog = (profileId: string) => {
+    if (!selected) return;
+    const next = copyCatalogToProject(getGeotechnicalCatalogProfile(profileId));
+    updateSelected({ soil: next });
+    toast.success(`Profil « ${next.profileName} » copié dans le projet`);
+  };
+  const restoreGeotechnicalCatalog = () => {
+    if (!selected) return;
+    const current = normalizeProjectGeotechnicalProfile(selected.soil);
+    applyGeotechnicalCatalog(current.catalogProfileId ?? getGeotechnicalCatalogProfiles(selected.country)[0]?.id ?? DEFAULT_GEOTECHNICAL_CATALOG_ID);
   };
   useEffect(() => {
     if (!selected) return;
@@ -2443,6 +2482,12 @@ export default function BuildingCreateFlow({
   };
   const handlePointPlacement = (point: GridPoint) => {
     if (!isGridIntersection(point, xAxes.length, yAxes.length)) return;
+    if (modelType === "Aucun") {
+      setPlacementStart(null);
+      setHoverPoint(null);
+      setFloorPreview(null);
+      return;
+    }
     if (modelType === "Semelle" && foundationPlacementMode === "eccentric" && footingCenterOffset("eccentric", foundationPlacementDirection, 1, 1) === null) {
       toast.info("Choisissez au moins une direction de décalage (X ou Y) avant la pose.");
       return;
@@ -2858,6 +2903,40 @@ export default function BuildingCreateFlow({
     setSelected3DElementKey(null);
     setElementSelectionMode(false);
     setPanel(null);
+  };
+  const bulkLevelElements = activeLevel?.elements ?? [];
+  const bulkVisibleElements = bulkElementType === "Tous"
+    ? bulkLevelElements
+    : bulkLevelElements.filter(item => item.type === bulkElementType);
+  const toggleBulkElement = (id: string) => {
+    setBulkSelectedElementIds(previous => previous.includes(id) ? previous.filter(item => item !== id) : [...previous, id]);
+  };
+  const selectAllBulkElements = () => {
+    setBulkSelectedElementIds(previous => Array.from(new Set([...previous, ...bulkVisibleElements.map(item => item.id)])));
+  };
+  const clearBulkElements = () => setBulkSelectedElementIds([]);
+  const applyBulkSection = (section = bulkSection) => {
+    if (!selected || !activeLevel || bulkElementType === "Tous" || !section) return;
+    const selectedIds = new Set(bulkSelectedElementIds);
+    const matching = activeLevel.elements.filter(item => selectedIds.has(item.id) && item.type === bulkElementType);
+    if (!matching.length) return toast.info("Cochez au moins un élément du type choisi.");
+    const levels = selected.levels.map(level => level.id !== activeLevel.id ? level : {
+      ...level,
+      elements: level.elements.map(item => matching.some(entry => entry.id === item.id)
+        ? { ...item, section, color: colorForModel(item.type, section), floorConfig: isSlabElementType(item.type) ? floorConfigForSection(section, item.floorConfig ?? floorConfig) : item.floorConfig }
+        : item),
+    });
+    updateSelected({ levels });
+    setBulkSection(section);
+    setBulkSectionPickerOpen(false);
+    toast.success(`${matching.length} élément${matching.length > 1 ? "s" : ""} modifié${matching.length > 1 ? "s" : ""} sans recréation.`);
+  };
+  const deleteBulkElements = () => {
+    if (!selected || !activeLevel || !bulkSelectedElementIds.length) return toast.info("Cochez au moins un élément à supprimer.");
+    const ids = new Set(bulkSelectedElementIds);
+    updateSelected({ levels: selected.levels.map(level => level.id === activeLevel.id ? { ...level, elements: level.elements.filter(item => !ids.has(item.id)) } : level) });
+    setBulkSelectedElementIds([]);
+    toast.success(`${ids.size} élément${ids.size > 1 ? "s" : ""} supprimé${ids.size > 1 ? "s" : ""}.`);
   };
   const openElementEditor = (
     item: ElementItem,
@@ -4062,6 +4141,54 @@ export default function BuildingCreateFlow({
     toast.success("Gabarit A4 de ferraillage enregistré.");
   };
 
+  const calculationRecommendations: Array<{ elementId: string; title: string; actions: string[] }> = [];
+  foundationEvaluation?.rows.forEach(row => {
+    row.result?.checks.filter(check => check.status !== "satisfaisant").forEach(check => {
+      const actions = check.id === "bearing"
+        ? ["Augmenter la longueur et la largeur de la semelle depuis la sélection multiple.", "Vérifier qadm, la profondeur d’assise et le rapport géotechnique réel."]
+        : check.id === "contact"
+          ? ["Ajouter une longrine de redressement reliant cette semelle à une autre semelle fondée.", "Ou augmenter la section de la semelle et contrôler e ≤ B/6."]
+          : check.id === "punching"
+            ? ["Augmenter l’épaisseur de la semelle et sa section.", "Renseigner les propriétés béton/armatures et réaliser le détail complet de poinçonnement."]
+            : check.id === "settlement"
+              ? ["Augmenter la surface de la semelle pour réduire la pression transmise.", "Vérifier le module de sol et le tassement admissible avec l’étude géotechnique."]
+              : ["Vérifier les paramètres géotechniques et les efforts horizontaux.", "Ajouter une liaison de redressement ou une solution de fondation adaptée si nécessaire."];
+      calculationRecommendations.push({ elementId: row.footingId, title: `${check.label} · ${check.status}`, actions });
+    });
+    if (row.error) calculationRecommendations.push({ elementId: row.footingId, title: "Fondation non vérifiée", actions: ["Compléter les paramètres géotechniques et les dimensions de la semelle.", "Relancer le calcul après correction."] });
+  });
+  rcDesignResult?.elements.forEach(item => {
+    item.checks.filter(check => check.status !== "satisfaisant").forEach(check => calculationRecommendations.push({
+      elementId: item.elementId,
+      title: `${item.type} · ${check.label} · ${check.status}`,
+      actions: /poin|cisaillement/i.test(check.label)
+        ? ["Augmenter la section ou l’épaisseur de l’élément.", "Vérifier le ferraillage transversal et les paramètres de calcul."]
+        : /flèche|déformation|flexion/i.test(check.label)
+          ? ["Augmenter la hauteur de la section ou réduire la portée.", "Vérifier les charges et le ferraillage longitudinal."]
+          : ["Choisir une section plus résistante dans le catalogue du type concerné.", "Vérifier les charges, les appuis et les matériaux, puis relancer le calcul."],
+    }));
+  });
+  surfaceAnalysis?.rows.forEach(row => {
+    const mechanicalMessages = Array.from(new Set([...row.analysis.errors, ...row.supportErrors]));
+    if (!mechanicalMessages.length) return;
+    const actions = mechanicalMessages.some(message => /appui|rive|poutre|voile|port[éeé]/i.test(message))
+      ? ["Corriger l’appui indiqué dans le message : ajouter ou connecter la poutre/voile continue réellement porteuse.", "Ne pas modifier la surface uniquement pour masquer cette erreur ; relancer le contrôle de transfert après correction."]
+      : mechanicalMessages.some(message => /maill|géométr|rectangle|ouverture|dimension/i.test(message))
+        ? ["Corriger la géométrie, l’ouverture ou la taille de maille indiquée dans le message.", "Relancer le maillage puis vérifier la conservation Gk/Qk de cet élément."]
+        : ["Corriger le message mécanique indiqué ci-dessous sur cet élément.", "Relancer l’analyse de surface et la descente des charges ; aucune augmentation de section n’est proposée sans contrôle de résistance en échec."];
+    calculationRecommendations.push({ elementId: row.elementId, title: `${row.elementId} · descente mécanique bloquée`, actions: [...mechanicalMessages, ...actions] });
+  });
+  loadApplicationReport?.errors.forEach(message => {
+    const elementId = message.match(/\b(?:PL|DAL|BAL|ESC|S|P|B)\d+\b/i)?.[0] ?? "Charges";
+    const actions = /appui|transfert|porteuse|surface/i.test(message)
+      ? ["Corriger l’appui ou le transfert Gk/Qk de l’élément explicitement cité.", "Relancer le maillage et l’application des charges après correction."]
+      : /maill|géométr|dimension|invalide/i.test(message)
+        ? ["Corriger la géométrie ou le maillage de l’élément explicitement cité.", "Relancer le maillage puis l’application des charges."]
+        : ["Corriger exactement l’affectation de charge indiquée dans ce message.", "Relancer l’application des charges et vérifier le résidu Gk/Qk."];
+    calculationRecommendations.push({ elementId, title: "Descente des charges bloquée", actions: [message, ...actions] });
+  });
+  const recommendationItems = calculationRecommendations.filter((item, index, items) => items.findIndex(candidate => candidate.elementId === item.elementId && candidate.title === item.title) === index);
+
   return (
     <div className="pb-4">
       <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
@@ -4255,11 +4382,11 @@ export default function BuildingCreateFlow({
         <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold text-[#59666b]">
           <span
             className="h-3 w-3 rounded-sm"
-            style={{ backgroundColor: colorForModel(modelType, modelSection) }}
+            style={{ backgroundColor: modelType === "Aucun" ? "#aab3b7" : colorForModel(modelType, modelSection) }}
           />
-          Modèle actif : <b className="text-[#27358f]">{modelSection}</b>
+          Modèle actif : <b className="text-[#27358f]">{modelType === "Aucun" ? "Aucun" : modelSection}</b>
           <span className="text-[#8b9498]">
-            ({colorForModel(modelType, modelSection)})
+            ({modelType === "Aucun" ? "aucun placement" : colorForModel(modelType, modelSection)})
           </span>
         </div>
         <div className="grid grid-cols-[.8fr_1.2fr] gap-2">
@@ -4284,6 +4411,7 @@ export default function BuildingCreateFlow({
               setStairPlacementStage(1);
             }}
           >
+            <option value="Aucun">Aucun</option>
             {modelTypes.map(type => (
               <option key={type}>{type}</option>
             ))}
@@ -4291,6 +4419,7 @@ export default function BuildingCreateFlow({
           <select
             className="h-9 rounded-lg border border-[#e2e8eb] bg-white px-2 text-[10px]"
             value={modelSection}
+            disabled={modelType === "Aucun"}
             onChange={event => {
               const nextSection = event.target.value;
               setModelSection(nextSection);
@@ -4305,11 +4434,20 @@ export default function BuildingCreateFlow({
               setStairPlacementStage(1);
             }}
           >
-            {optionsForType(modelType).map(section => (
+            {modelType === "Aucun" ? <option value="">Aucun modèle</option> : optionsForType(modelType).map(section => (
               <option key={section}>{section}</option>
             ))}
           </select>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-2 w-full border-[#087f7f] bg-[#f1fbfa] text-[#087f7f]"
+          onClick={() => setPanel("Éléments du niveau")}
+        >
+          <Table2 className="mr-2 h-4 w-4" />
+          Gérer les éléments du niveau actif ({activeLevel?.label ?? "—"})
+        </Button>
         {modelType === "Semelle" && (
           <div className="mt-2 rounded-md border border-[#e2e8eb] bg-[#f8fafb] p-2">
             <div className="mb-1 text-[9px] font-bold uppercase tracking-wide text-[#68767d]">Implantation de la semelle</div>
@@ -4816,6 +4954,46 @@ export default function BuildingCreateFlow({
             {panel === "Éléments du niveau" && (
               <Card>
                 <CardContent className="space-y-2 p-3">
+                  <div className="space-y-2 rounded-lg border border-[#d7e4e7] bg-[#f7fbfb] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <b className="text-[11px] text-[#166b6b]">Sélection multiple — {activeLevel?.label ?? "niveau actif"}</b>
+                        <p className="text-[9px] text-[#688084]">Cochez les éléments à modifier ou supprimer sans les recréer.</p>
+                      </div>
+                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold text-[#166b6b]">{bulkSelectedElementIds.length} sélectionné{bulkSelectedElementIds.length > 1 ? "s" : ""}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[9px] font-semibold text-[#52656b]">Type à gérer
+                      <select className="mt-1 h-8 w-full rounded border bg-white px-2 text-[10px]" value={bulkElementType} onChange={event => { setBulkElementType(event.target.value); setBulkSection(""); setBulkSectionPickerOpen(false); }}>
+                          <option value="Tous">Tous les types</option>
+                          {modelTypes.map(type => <option key={type} value={type}>{type}</option>)}
+                        </select>
+                      </label>
+                      <div className="flex items-end gap-1">
+                        <Button type="button" variant="outline" className="h-8 flex-1 px-2 text-[9px]" onClick={selectAllBulkElements}>Tout cocher</Button>
+                        <Button type="button" variant="outline" className="h-8 flex-1 px-2 text-[9px]" onClick={clearBulkElements}>Tout décocher</Button>
+                      </div>
+                    </div>
+                    {bulkElementType !== "Tous" && <div className="space-y-2">
+                      <Button type="button" className="h-8 w-full bg-[#27358f] px-3 text-[9px] text-white" onClick={() => setBulkSectionPickerOpen(open => !open)}>
+                        {bulkSectionPickerOpen ? "Fermer la liste des sections" : "Modifier la section"}
+                      </Button>
+                      {bulkSectionPickerOpen && <label className="block text-[9px] font-semibold text-[#52656b]">Nouvelle section — {bulkElementType}
+                        <select autoFocus className="mt-1 h-9 w-full rounded border border-[#27358f] bg-white px-2 text-[10px]" value={bulkSection} onChange={event => applyBulkSection(event.target.value)}>
+                          <option value="">Choisir une section disponible…</option>
+                          {optionsForType(bulkElementType).map(section => <option key={section} value={section}>{section}</option>)}
+                        </select>
+                        <span className="mt-1 block font-normal text-[#688084]">Le changement est appliqué immédiatement en vue 2D et en vue 3D.</span>
+                      </label>}
+                    </div>}
+                    <div className="max-h-56 space-y-1 overflow-y-auto rounded border bg-white p-2">
+                      {bulkVisibleElements.length ? bulkVisibleElements.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[10px] hover:bg-[#eef7f7]">
+                        <input type="checkbox" checked={bulkSelectedElementIds.includes(item.id)} onChange={() => toggleBulkElement(item.id)} />
+                        <span className="font-semibold">{item.id}</span><span className="text-[#68767d]">{item.type} · {item.section}</span>
+                      </label>) : <p className="text-[10px] text-[#7b878b]">Aucun élément de ce type sur ce niveau.</p>}
+                    </div>
+                    <Button type="button" variant="outline" className="h-8 w-full border-[#d65d4d] px-3 text-[9px] text-[#b8493e]" onClick={deleteBulkElements}><Trash2 className="mr-1 h-3 w-3" />Supprimer les éléments cochés</Button>
+                  </div>
                   <div className="rounded-lg bg-[#e7f7f6] p-3 text-[10px] text-[#166b6b]">
                     <b>Charges du niveau</b>
                     <br />
@@ -5094,8 +5272,37 @@ export default function BuildingCreateFlow({
                   </div>
                   <section className="space-y-2 rounded-lg border border-[#e4d6b5] bg-[#fffaf0] p-3">
                     <div>
-                      <b className="text-[11px] text-[#6d5426]">Données géotechniques du rapport réel</b>
-                      <p className="mt-1 text-[9px] leading-4 text-[#786a51]">Aucune valeur n’est déduite du pays ou de la ville. Saisissez les paramètres effectivement fournis pour ce site, avec leur provenance. Leur saisie n’est pas une certification; les vérifications NF EN 1997-1/NA et NF P 94-261/A1 restent une pré-étude.</p>
+                      <b className="text-[11px] text-[#6d5426]">Catalogue géotechnique du projet</b>
+                      <p className="mt-1 text-[9px] leading-4 text-[#786a51]">Les valeurs du catalogue sont des hypothèses indicatives de pré-dimensionnement. Elles sont copiées dans le projet et ne modifient jamais le catalogue original. Remplacez-les par les valeurs de l’étude géotechnique dès qu’elles sont disponibles.</p>
+                      <p className="mt-1 text-[9px] leading-4 text-[#786a51]">Références de recherche : <a className="underline" href="https://www.sgns.gouv.sn/centre-de-documentation.html" target="_blank" rel="noreferrer">Centre de documentation du SGNS</a> et <a className="underline" href="https://www.geosenegal.gouv.sn/" target="_blank" rel="noreferrer">portail officiel Géo Sénégal</a>. Ces portails orientent vers les données et documents; ils ne remplacent pas le rapport géotechnique du projet.</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 rounded bg-white p-2">
+                      <label className="text-[9px]">Pays
+                        <select className="mt-1 h-8 w-full rounded border bg-white px-2 text-[10px]" value={selected.country} onChange={event => { const next = getGeotechnicalCatalogProfiles(event.target.value)[0]; if (next) { updateSelected({ country: next.country, city: next.city, soil: copyCatalogToProject(next) }); setCountry(next.country); setCity(next.city); } }}>
+                          {GEOTECHNICAL_CATALOG_COUNTRIES.map(item => <option key={item} value={item}>{item}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-[9px]">Région / ville
+                        <select className="mt-1 h-8 w-full rounded border bg-white px-2 text-[10px]" value={projectGeotechnicalCatalogProfile.id} onChange={event => { const next = getGeotechnicalCatalogProfile(event.target.value); updateSelected({ country: next.country, city: next.city, soil: copyCatalogToProject(next) }); setCountry(next.country); setCity(next.city); }}>
+                          {projectGeotechnicalCatalogProfiles.map(item => <option key={item.id} value={item.id}>{item.region} · {item.city}</option>)}
+                        </select>
+                      </label>
+                      <label className="col-span-2 text-[9px]">Profil de sol
+                        <select className="mt-1 h-8 w-full rounded border bg-white px-2 text-[10px]" value={projectGeotechnicalCatalogProfile.id} onChange={event => applyGeotechnicalCatalog(event.target.value)}>
+                          {projectGeotechnicalCatalogProfiles.map(item => <option key={item.id} value={item.id}>{item.profileName} · {item.soilType}</option>)}
+                        </select>
+                      </label>
+                      <div className="col-span-2 text-[9px] text-[#786a51]">Zone : <b>{projectGeotechnicalCatalogProfile.geologicalZone}</b> · Source : <b>{projectGeotechnicalCatalogProfile.source}</b> · Confiance : <b>{projectGeotechnicalCatalogProfile.confidence}</b></div>
+                      <div className="col-span-2 flex flex-wrap gap-2">
+                        <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[10px] text-white" onClick={() => applyGeotechnicalCatalog(projectGeotechnicalCatalogProfile.id)}>Charger le catalogue</Button>
+                        <Button type="button" variant="outline" className="h-8 px-3 text-[10px]" onClick={restoreGeotechnicalCatalog}>Restaurer le catalogue</Button>
+                        <Button type="button" variant="outline" className="h-8 px-3 text-[10px]" onClick={saveProject}><Save className="mr-1 h-3 w-3" />Enregistrer le projet</Button>
+                      </div>
+                    </div>
+                    <div className="rounded bg-[#fff4d8] p-2 text-[9px] text-[#786a51]">Statut : <b>{projectGeotechnical.sourceStatus === "catalog" ? "valeurs du catalogue" : projectGeotechnical.sourceStatus === "study" ? "étude géotechnique" : "valeurs modifiées par l’utilisateur"}</b>. Le moteur utilise toujours la copie enregistrée dans ce projet.</div>
+                    <div>
+                      <b className="text-[11px] text-[#6d5426]">Valeurs géotechniques du projet</b>
+                      <p className="mt-1 text-[9px] leading-4 text-[#786a51]">Vous pouvez modifier chaque valeur puis cliquer sur « Enregistrer le projet ». Les valeurs modifiées restent propres à ce projet.</p>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="text-[9px]">Description / couche d’assise
@@ -5107,6 +5314,12 @@ export default function BuildingCreateFlow({
                       <label className="text-[9px]">qadm déclaré · kPa
                         <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.bearingCapacityAdmissibleKPa ?? ""} onChange={event => updateGeotechnicalProfile({ bearingCapacityAdmissibleKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Valeur du rapport" />
                       </label>
+                      <label className="text-[9px]">qult · kPa
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.qUltimateKPa ?? ""} onChange={event => updateGeotechnicalProfile({ qUltimateKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Catalogue / étude" />
+                      </label>
+                      <label className="text-[9px]">qnet · kPa
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.qNetKPa ?? ""} onChange={event => updateGeotechnicalProfile({ qNetKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Catalogue / étude" />
+                      </label>
                       <label className="text-[9px]">Angle φ · degrés
                         <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" max="59.99" step="any" value={projectGeotechnical.frictionAngleDeg ?? ""} onChange={event => updateGeotechnicalProfile({ frictionAngleDeg: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
                       </label>
@@ -5116,8 +5329,14 @@ export default function BuildingCreateFlow({
                       <label className="text-[9px]">Poids volumique γ · kN/m³
                         <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.unitWeightKnM3 ?? ""} onChange={event => updateGeotechnicalProfile({ unitWeightKnM3: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
                       </label>
+                      <label className="text-[9px]">Poids saturé γsat · kN/m³
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.gammaSatKnM3 ?? ""} onChange={event => updateGeotechnicalProfile({ gammaSatKnM3: optionalGeotechnicalNumber(event.target.value) })} placeholder="Catalogue / étude" />
+                      </label>
                       <label className="text-[9px]">Module du sol E · kPa
                         <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.youngModulusKPa ?? ""} onChange={event => updateGeotechnicalProfile({ youngModulusKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
+                      </label>
+                      <label className="text-[9px]">Module œdométrique Eoed · kPa
+                        <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" step="any" value={projectGeotechnical.oedometricModulusKPa ?? ""} onChange={event => updateGeotechnicalProfile({ oedometricModulusKPa: optionalGeotechnicalNumber(event.target.value) })} placeholder="Catalogue / étude" />
                       </label>
                       <label className="text-[9px]">Coefficient de Poisson ν
                         <Input className="mt-1 h-8 bg-white text-[10px]" type="number" min="0" max="0.49" step="any" value={projectGeotechnical.poissonRatio ?? ""} onChange={event => updateGeotechnicalProfile({ poissonRatio: optionalGeotechnicalNumber(event.target.value) })} placeholder="Selon étude" />
@@ -5145,6 +5364,7 @@ export default function BuildingCreateFlow({
                       </label>
                     </div>
                     <div className="rounded bg-white p-2 text-[9px] text-[#786a51]">État géotechnique : <b>{projectSoilStatus}</b>. Les champs laissés vides demeurent non vérifiés; la portance saisie est comparée directement comme screening, sans coefficient caché.</div>
+                    <div className="rounded bg-[#f8f4ea] p-2 text-[9px] leading-4 text-[#786a51]"><b>Semelle excentrée et longrine de redressement :</b> l’excentricité est contrôlée par <i>e = M/N</i>, avec contact intégral si e ≤ B/6 et signalement du décollement partiel au-delà. Une longrine de redressement relie deux semelles distinctes pour reprendre le moment de redressement et limiter la rotation de la semelle excentrée; elle doit être dimensionnée comme élément en béton armé et ses deux appuis doivent exister dans le modèle.</div>
                   </section>
                   <div>
                     <Label>Tolérance de fusion analytique (m)</Label>
@@ -5378,10 +5598,10 @@ export default function BuildingCreateFlow({
             {panel === "Calculer la descente" && (
               <Card>
                 <CardContent className="space-y-3 p-3">
-                  {buildingCalculation && <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#cbdde1] bg-white p-2">
+                  {calculationExecuted && selectedAnalysisRow && <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#cbdde1] bg-white p-2">
                     <Button type="button" className="h-9 bg-[#102f45] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => noteReportButtonRef.current?.click()}>Note de calcul PDF</Button>
                     <Button type="button" className="h-9 bg-[#8a5b16] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => { setReinforcementPlanRequestToken(value => value + 1); requestAnimationFrame(() => document.getElementById("reinforcement-plan-section")?.scrollIntoView({ behavior: "smooth", block: "center" })); }}>Calculer le ferraillage / plans A4</Button>
-                    <div className="col-span-2 text-[9px] text-[#68767d]">Cliquez sur un élément dans la liste plus bas pour afficher ses charges et sollicitations. Note et plans sont des pré-études non certifiées.</div>
+                    <div className="col-span-2 text-[9px] text-[#68767d]">Élément sélectionné : {selectedAnalysisRow.label}. La note et le ferraillage concernent cet élément uniquement.</div>
                   </div>}
                   {analyticalPrecheck && analyticalModel && (
                     <div className={`space-y-2 rounded-lg border p-3 text-[10px] ${analyticalPrecheck.ok ? "border-[#bfe4e2] bg-[#eaf8f7] text-[#245e60]" : "border-[#efc4b9] bg-[#fff1ed] text-[#914d3d]"}`}>
@@ -5392,8 +5612,8 @@ export default function BuildingCreateFlow({
                       <div>{analyticalPrecheck.checkedNodeCount} nœud(s) · {analyticalPrecheck.checkedFrameCount} barre(s) · {analyticalPrecheck.checkedSurfaceCount} surface(s) · tolérance {analyticalModel.nodeMergeToleranceM.toFixed(3)} m</div>
                       <AnalyticalPlanPreview model={analyticalModel} />
                       <Button type="button" variant="outline" className="h-8 bg-white text-[10px]" onClick={downloadAnalyticalJson}>Exporter le modèle analytique JSON</Button>
-                      {analyticalPrecheck.errors.map((item,index) => <div key={`${item.code}-${index}`} className="rounded bg-white/80 p-2">Erreur · {item.message}</div>)}
-                      {analyticalPrecheck.warnings.map((item,index) => <div key={`${item.code}-${index}`} className="rounded bg-white/70 p-2">Avertissement · {item.message}</div>)}
+                      {analyticalPrecheck.errors.map((item,index) => <details key={`${item.code}-${index}`} className="rounded bg-white/80 p-2"><summary className="cursor-pointer font-semibold">Erreur · {item.message}</summary><p className="mt-1 pl-4">Ce contrôle bloque le calcul. Corrigez l’élément ou sa connexion indiquée, puis relancez le pré-contrôle.</p></details>)}
+                      {analyticalPrecheck.warnings.map((item,index) => <details key={`${item.code}-${index}`} className="rounded bg-white/70 p-2"><summary className="cursor-pointer font-semibold">Avertissement · {item.message}</summary><p className="mt-1 pl-4">Cet avertissement doit être vérifié avant le lancement. Ouvrez l’élément concerné, contrôlez ses appuis et ses paramètres, puis relancez le maillage et les charges si la structure a été modifiée.</p></details>)}
                     </div>
                   )}
                   {structuralValidation && (
@@ -5403,7 +5623,7 @@ export default function BuildingCreateFlow({
                         <span>{structuralValidation.checkedLevels} niveau(x) · {structuralValidation.checkedElements} élément(s)</span>
                       </div>
                       <div>qadm du rapport : <b>{projectBearingKPa === null ? "non renseigné" : `${projectBearingKPa} kPa`}</b> · aucun qadm par défaut; le contrôle du sol reste non vérifié tant que la donnée réelle manque.</div>
-                      {structuralValidation.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className="rounded bg-white/80 p-2">{issue.severity === "error" ? "Erreur" : "Avertissement"} · {issue.message}</div>)}
+                      {structuralValidation.issues.map((issue, index) => <details key={`${issue.code}-${index}`} className="rounded bg-white/80 p-2"><summary className="cursor-pointer font-semibold">{issue.severity === "error" ? "Erreur" : "Avertissement"} · {issue.message}</summary><p className="mt-1 pl-4">{issue.severity === "error" ? "Cette incohérence bloque la descente des charges. Corrigez l’élément ou son appui." : "Vérifiez cette liaison ou cette continuité avant de poursuivre."}</p></details>)}
                       {!structuralValidation.issues.length && <div className="rounded bg-white/80 p-2">Aucune discontinuité verticale, semelle orpheline ou duplication détectée dans le contrôle automatique.</div>}
                     </div>
                   )}
@@ -5418,7 +5638,7 @@ export default function BuildingCreateFlow({
                     diagnostics={loadProgramDiagnostics}
                     projectNorm={selected?.norm ?? norm}
                   />
-                  {analyticalModel && analyticalPrecheck?.ok && buildingLoadModel && (
+                  {showCalculationPreflight && calculationExecuted && analyticalModel && analyticalPrecheck?.ok && buildingLoadModel && planeAnalysis && (
                     <div className="space-y-2 rounded-lg border border-[#cbd5ef] bg-[#f4f6fc] p-3 text-[10px] text-[#354477]">
                       <b>Diagnostic 2D optionnel — portiques plans</b>
                       <div className="grid grid-cols-[1fr_1.5fr_auto] gap-2">
@@ -5441,20 +5661,22 @@ export default function BuildingCreateFlow({
                       )}
                     </div>
                   )}
-                  {analyticalModel && analyticalPrecheck?.ok && (
+                  {showCalculationPreflight && !calculationExecuted && analyticalModel && analyticalPrecheck?.ok && (
                     <div className="space-y-2 rounded-lg border border-[#bddbd6] bg-[#eef9f6] p-3 text-[10px] text-[#285a52]">
                       <b>Surfaces — maillage triangulaire et plaque</b>
                       <div className="grid grid-cols-[1fr_auto] gap-2">
                         <label className="flex items-center gap-2">Taille cible de maille (m)
                           <Input aria-label="Taille de maille des surfaces en mètres" inputMode="decimal" value={surfaceMeshSizeM} onChange={event => { setSurfaceMeshSizeM(event.target.value); setMeshPrerequisiteReady(false); setLoadCasesPrerequisiteReady(false); }} className="h-8 w-24 bg-white text-[10px]" />
                         </label>
-                        <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={runAllSurfaceMeshing}>Mailler toutes les surfaces</Button>
+                        <Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white disabled:opacity-50" disabled={meshPrerequisiteReady} onClick={runAllSurfaceMeshing}>{meshPrerequisiteReady ? "Maillage validé" : "Mailler toutes les surfaces"}</Button>
                       </div>
                       <div className="rounded bg-white p-2 text-[9px] text-[#647087]">Le maillage triangulaire est commun aux surfaces. Les dalles pleines sont résolues sur quatre appuis simples, les corps creux par une plaque orthotrope portée dans le sens des nervures, et les balcons par un encastrement idéal sur la rive choisie/détectée avec trois rives libres. Les trémies, diaphragmes et couplage avec les poutres réelles ne sont pas encore modélisés par le solveur de plaque.</div>
                       {surfaceAnalysis && (
                         <div className="space-y-2">
-                          {surfaceAnalysis.errors.length === 0 && <div className="rounded bg-white p-2">Toutes les surfaces traitées sans erreur de maillage ni d’équilibre global.</div>}
-                          {surfaceAnalysis.rows.map(row => (
+                          <Button type="button" variant="outline" className="h-8 bg-white text-[9px]" onClick={() => setShowMeshDetails(value => !value)}>{showMeshDetails ? "Masquer les détails" : "Voir les détails du maillage"}</Button>
+                          {showMeshDetails && <>
+                            {surfaceAnalysis.errors.length === 0 && <div className="rounded bg-white p-2">Toutes les surfaces traitées sans erreur de maillage ni d’équilibre global.</div>}
+                            {surfaceAnalysis.rows.map(row => (
                             <div key={row.elementId} className="space-y-2 rounded border border-[#d8e8e4] bg-white p-2">
                               <div className="font-semibold">{row.elementId} · {row.levelLabel} · aire nette {row.areaM2.toFixed(2)} m² · {row.openingCount} trémie(s)</div>
                               <SurfaceMeshPreview analysis={row.analysis} />
@@ -5468,18 +5690,20 @@ export default function BuildingCreateFlow({
                                   <span>Charge/équilibre {row.analysis.plate.totalLoadKn.toFixed(2)} / résidu {row.analysis.plate.equilibriumResidualKn.toExponential(1)} kN</span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-1">{row.analysis.plate.edgeReactions.map(edge => <span key={edge.edge}>{edge.edge} : {edge.totalKn.toFixed(2)} kN · {edge.lineLoadKnM.toFixed(2)} kN/m</span>)}</div>
+                                {row.analysis.plate.notes?.map((note, index) => <div key={`${row.elementId}-note-${index}`} className="rounded bg-[#eef5ff] p-2 text-[#315b87]">Hypothèse de calcul · {note}</div>)}
                               </>}
                               {row.analysis.errors.map((message, index) => <div key={`${row.elementId}-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Non calculé · {message}</div>)}
-                              {row.analysis.warnings.map((message, index) => <div key={`${row.elementId}-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">Avertissement · {message}</div>)}
+                              {row.analysis.warnings.map((message, index) => <div key={`${row.elementId}-warning-${index}`} className="rounded bg-[#eef5ff] p-2 text-[#315b87]">Information de méthode · {message}</div>)}
                             </div>
-                          ))}
-                          {surfaceAnalysis.rows.length === 0 && surfaceAnalysis.errors.map((message, index) => <div key={`surface-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}
-                          <Button type="button" variant="outline" className="h-8 bg-white text-[9px]" onClick={downloadSurfaceAnalysis}>Exporter résultats de surfaces JSON</Button>
+                            ))}
+                            {surfaceAnalysis.rows.length === 0 && surfaceAnalysis.errors.map((message, index) => <div key={`surface-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}
+                            <Button type="button" variant="outline" className="h-8 bg-white text-[9px]" onClick={downloadSurfaceAnalysis}>Exporter résultats de surfaces JSON</Button>
+                          </>}
                         </div>
                       )}
                     </div>
                   )}
-                  {selected && buildingCalculation && analyticalPrecheck?.ok && (
+                  {calculationExecuted && selected && selectedAnalysisRow && buildingCalculation && analyticalPrecheck?.ok && (
                     <div id="reinforcement-plan-section">
                     <ReinforcedConcretePanel
                       projectId={selected.id}
@@ -5499,7 +5723,7 @@ export default function BuildingCreateFlow({
                     />
                     </div>
                   )}
-                  {selected && buildingCalculation && analyticalPrecheck?.ok && (
+                  {calculationExecuted && selected && selectedAnalysisRow?.type === "Semelle" && buildingCalculation && analyticalPrecheck?.ok && (
                     <FoundationReactionPanel
                       key={`${selected.id}:${selected.levels.length}`}
                       model={analyticalModel}
@@ -5510,7 +5734,15 @@ export default function BuildingCreateFlow({
                       onResultChange={setFoundationEvaluation}
                     />
                   )}
-                  {buildingCalculation && (
+                  {calculationExecuted && buildingCalculation && recommendationItems.length > 0 && <div className="space-y-2 rounded-xl border border-[#efd49d] bg-[#fffaf0] p-3 text-[10px] text-[#765f36]">
+                    <b className="text-[12px] text-[#8a5a21]">Solutions proposées à la suite du calcul</b>
+                    <p>Corrigez les éléments indiqués puis relancez le maillage et les charges. Les propositions restent indicatives et doivent être validées par l’ingénieur du projet.</p>
+                    {recommendationItems.slice(0, 20).map(item => <details key={`result-${item.elementId}:${item.title}`} className="rounded border border-[#f0dfb7] bg-white p-2">
+                      <summary className="cursor-pointer font-semibold text-[#914d3d]">{item.elementId} · {item.title}</summary>
+                      <ul className="mt-1 list-disc pl-4">{item.actions.map(action => <li key={action}>{action}</li>)}</ul>
+                    </details>)}
+                  </div>}
+                  {calculationExecuted && buildingCalculation && (
                     <div className="space-y-2 rounded-lg border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] text-[#245e60]">
                       <div className="font-bold text-[#087f7f]">
                         Calcul terminé sur la structure modélisée
@@ -5613,12 +5845,13 @@ export default function BuildingCreateFlow({
                           {buildingCalculation.warnings
                             .slice(0, 4)
                             .map(warning => (
-                              <div key={warning}>⚠ {warning}</div>
+                              <details key={warning}><summary className="cursor-pointer">⚠ {warning}</summary><p className="mt-1 pl-4">Ouvrez l’élément concerné dans la liste des résultats pour vérifier ses charges, ses appuis et la cohérence de son transfert.</p></details>
                             ))}
                         </div>
                       )}
                     </div>
                   )}
+                  {calculationExecuted && selectedAnalysisRow && <>
                   <Button
                     ref={noteReportButtonRef}
                     className="w-full bg-[#049b9b] text-white"
@@ -5841,6 +6074,7 @@ export default function BuildingCreateFlow({
                     <summary className="cursor-pointer font-bold">Aperçu du rapport · même contenu que le PDF</summary>
                     <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-[#f7fafb] p-2 font-sans">{lastStructuralReport}</pre>
                   </details>}
+                  </>}
                 </CardContent>
               </Card>
             )}
@@ -5858,22 +6092,31 @@ export default function BuildingCreateFlow({
               <div className={`rounded-xl border p-3 ${meshPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : "border-[#dce7eb] bg-white"}`}>
                 <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">1. Faire le maillage</b><span className="text-[10px] font-bold">{meshPrerequisiteReady ? "VALIDÉ" : "À FAIRE"}</span></div>
                 <p className="mt-1 text-[10px] text-[#68767d]">Maillage triangulaire de toutes les surfaces analytiques du modèle (dalles, balcons, voiles, escaliers et semelles). Ce maillage géométrique n’implique pas à lui seul la rigidité de coque ni le couplage coque/barres dans le solveur.</p>
-                <div className="mt-2 grid grid-cols-[1fr_auto] gap-2"><label className="flex items-center gap-2 text-[9px]">Taille cible (m)<Input aria-label="Taille de maille des surfaces en mètres" inputMode="decimal" value={surfaceMeshSizeM} onChange={event => { setSurfaceMeshSizeM(event.target.value); setMeshPrerequisiteReady(false); setLoadCasesPrerequisiteReady(false); }} className="h-8 w-24 bg-white text-[10px]" /></label><Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white" onClick={runAllSurfaceMeshing}>{meshPrerequisiteReady ? "Refaire le maillage" : "Faire le maillage"}</Button></div>
-                {analyticalSurfaceMesh && <div className="mt-2 space-y-1 text-[9px] text-[#536b70]"><div className="rounded bg-white p-2">{analyticalSurfaceMesh.surfaces.length} surface(s) · {analyticalSurfaceMesh.nodes.length} nœud(s) partagés · {analyticalSurfaceMesh.triangles.length} triangle(s) · {analyticalSurfaceMesh.errors.length} erreur(s)</div>{analyticalSurfaceMesh.surfaces.map(surface => <div key={surface.surfaceId} className="rounded bg-white px-2 py-1">{surface.sourceElementId} · {surface.kind} · {surface.nodeCount} nœuds / {surface.triangleCount} triangles · {surface.areaM2.toFixed(2)} m²{surface.errors.length ? ` · ${surface.errors.join("; ")}` : ""}</div>)}{analyticalSurfaceMesh.errors.map((message,index)=><div key={`mesh-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}{analyticalSurfaceMesh.warnings.map((message,index)=><div key={`mesh-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">Limite · {message}</div>)}</div>}
+                <div className="mt-2 grid grid-cols-[1fr_auto] gap-2"><label className="flex items-center gap-2 text-[9px]">Taille cible (m)<Input aria-label="Taille de maille des surfaces en mètres" inputMode="decimal" value={surfaceMeshSizeM} onChange={event => { setSurfaceMeshSizeM(event.target.value); setMeshPrerequisiteReady(false); setLoadCasesPrerequisiteReady(false); }} className="h-8 w-24 bg-white text-[10px]" /></label><Button type="button" className="h-8 bg-[#087f7f] px-3 text-[9px] text-white disabled:opacity-50" disabled={meshPrerequisiteReady} onClick={runAllSurfaceMeshing}>{meshPrerequisiteReady ? "Maillage validé" : "Faire le maillage"}</Button></div>
+                {analyticalSurfaceMesh && <><Button type="button" variant="outline" className="mt-2 h-8 bg-white text-[9px]" onClick={() => setShowMeshDetails(value => !value)}>{showMeshDetails ? "Masquer les détails" : "Voir les détails du maillage"}</Button><div className={`mt-2 space-y-1 text-[9px] text-[#536b70] ${showMeshDetails ? "" : "hidden"}`}><div className="rounded bg-white p-2">{analyticalSurfaceMesh.surfaces.length} surface(s) · {analyticalSurfaceMesh.nodes.length} nœud(s) partagés · {analyticalSurfaceMesh.triangles.length} triangle(s) · {analyticalSurfaceMesh.errors.length} erreur(s)</div>{analyticalSurfaceMesh.surfaces.map(surface => <div key={surface.surfaceId} className="rounded bg-white px-2 py-1">{surface.sourceElementId} · {surface.kind} · {surface.nodeCount} nœuds / {surface.triangleCount} triangles · {surface.areaM2.toFixed(2)} m²{surface.errors.length ? ` · ${surface.errors.join("; ")}` : ""}</div>)}{analyticalSurfaceMesh.errors.map((message,index)=><div key={`mesh-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}{analyticalSurfaceMesh.warnings.map((message,index)=><div key={`mesh-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">Limite · {message}</div>)}</div></>}
                 {surfaceAnalysis?.errors.map((message,index)=><div key={`plate-mesh-error-${index}`} className="mt-1 rounded bg-[#fff1ed] p-2 text-[9px] text-[#914d3d]">Contrôle plaque · {message}</div>)}
               </div>
               <div className={`rounded-xl border p-3 ${loadCasesPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : loadApplicationReport?.errors.length ? "border-[#efc4b9] bg-[#fff1ed]" : "border-[#dce7eb] bg-white"}`}>
                 <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">2. Appliquer les charges</b><span className="text-[10px] font-bold">{loadCasesPrerequisiteReady ? "VALIDÉ" : loadApplicationReport?.errors.length ? "BLOQUÉ" : "À FAIRE"}</span></div>
                 <p className="mt-1 text-[10px] text-[#68767d]">Chaque dalle, volée et palier reçoit une ligne Gk/Qk nommée selon son type; les éléments du squelette (poutres, voiles, poteaux) gardent leurs propres poids et sources. Le contrôle vérifie aussi le transfert aux appuis et les combinaisons ELU/ELS.</p>
                 <div className="mt-2 rounded bg-white p-2 text-[9px]">Gk : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b> · combinaisons actives : <b>{loadProgram.combinations.filter(item=>item.enabled).length}</b></div>
-                <Button type="button" className="mt-2 h-9 w-full bg-[#087f7f] text-[10px] text-white disabled:opacity-40" disabled={!meshPrerequisiteReady} onClick={applyBuildingLoads}>Appliquer les charges</Button>
-                {loadApplicationReport && <div className="mt-2 space-y-1 text-[9px]">
+                <Button type="button" className="mt-2 h-9 w-full bg-[#087f7f] text-[10px] text-white disabled:opacity-40" disabled={!meshPrerequisiteReady || loadCasesPrerequisiteReady} onClick={applyBuildingLoads}>{loadCasesPrerequisiteReady ? "Charges validées" : "Appliquer les charges"}</Button>
+                  {loadApplicationReport && <><Button type="button" variant="outline" className="mt-2 h-8 w-full bg-white text-[9px]" onClick={() => setShowLoadDetails(value => !value)}>{showLoadDetails ? "Masquer les détails" : "Voir les détails des charges"}</Button><div className={`mt-2 space-y-1 text-[9px] ${showLoadDetails ? "" : "hidden"}`}>
                   <div className="rounded bg-[#eef6f7] px-2 py-1 font-bold text-[#245e60]">SURFACES — affectation individuelle</div>
                   {loadApplicationReport.surfaceRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.loadName}</b> · {row.areaM2.toFixed(2)} m² · Gk {row.gkKnM2.toFixed(2)} / Qk {row.qkKnM2.toFixed(2)} kN/m² → {row.gk.toFixed(2)} / {row.qk.toFixed(2)} kN · transfert vers appui {row.transferred ? "contrôlé" : "absent"}</div>)}
                   <div className="mt-2 rounded bg-[#eef6f7] px-2 py-1 font-bold text-[#245e60]">SQUELETTE — poids propres et charges propagées</div>
                   {loadApplicationReport.skeletonRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.loadName}</b> · Gk {row.gk.toFixed(2)} / Qk {row.qk.toFixed(2)} kN{row.sources.length ? <div className="mt-0.5 text-[#6f7f83]">Sources : {row.sources.slice(0,4).join("; ")}{row.sources.length > 4 ? `; … ${row.sources.length-4} autre(s)` : ""}</div> : null}</div>)}
                   {loadApplicationReport.combinationRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.name}</b> · {row.category} · {row.formula} · {row.status} · {row.lineLoadCount} charge(s) linéaire(s)</div>)}
-                  {loadApplicationReport.errors.map((message,index)=><div key={`load-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}{loadApplicationReport.warnings.slice(0,12).map((message,index)=><div key={`load-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">Avertissement · {message}</div>)}{loadApplicationReport.warnings.length>12 && <div className="text-[#8a5a21]">… {loadApplicationReport.warnings.length-12} autre(s) avertissement(s)</div>}
+                  {loadApplicationReport.errors.map((message,index)=><details key={`load-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]"><summary className="cursor-pointer font-semibold">Erreur · {message}</summary><p className="mt-1 pl-4">La descente des charges est bloquée pour le point indiqué. Corrigez l’appui, le maillage, la géométrie ou l’affectation Gk/Qk mentionnée, puis relancez l’application.</p></details>)}{loadApplicationReport.warnings.slice(0,12).map((message,index)=><details key={`load-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]"><summary className="cursor-pointer font-semibold">Avertissement · {message}</summary><p className="mt-1 pl-4">Ce message concerne la traçabilité ou la vérification du transfert. Il ne justifie pas à lui seul une augmentation de section.</p></details>)}{loadApplicationReport.warnings.length>12 && <div className="text-[#8a5a21]">… {loadApplicationReport.warnings.length-12} autre(s) avertissement(s)</div>}
+                </div></>}
+                {recommendationItems.length > 0 && <div className="mt-2 space-y-2 rounded-lg border border-[#efd49d] bg-[#fffaf0] p-2 text-[9px] text-[#765f36]">
+                  <div className="font-bold text-[11px] text-[#8a5a21]">Solutions proposées pour valider les contrôles</div>
+                  <p>Ces actions sont des pistes de pré-étude. Après modification d’une section, d’une épaisseur ou des appuis, relancez le maillage et l’application des charges.</p>
+                  {recommendationItems.slice(0, 20).map(item => <div key={`${item.elementId}:${item.title}`} className="rounded border border-[#f0dfb7] bg-white p-2">
+                    <div className="font-bold text-[#914d3d]">{item.elementId} · {item.title}</div>
+                    <ul className="mt-1 list-disc pl-4">{item.actions.map(action => <li key={action}>{action}</li>)}</ul>
+                  </div>)}
+                  {recommendationItems.length > 20 && <div>… {recommendationItems.length - 20} autre(s) recommandation(s)</div>}
                 </div>}
               </div>
             </div>

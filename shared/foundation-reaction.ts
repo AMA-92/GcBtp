@@ -20,6 +20,8 @@ export type FoundationReactionInput = {
   concreteShearCapacityKPa?: number | null;
   subgradeModulusKnM3?: number | null;
   allowableSettlementMm?: number | null;
+  redressingLongrineLengthM?: number;
+  redressingMomentKnM?: number;
   provenance: string;
 };
 
@@ -66,7 +68,14 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
   if (validation.length) throw new Error(validation.join(" "));
 
   const areaM2 = input.widthXM * input.widthYM;
-  const eccentricityM = Math.abs(input.momentReactionKnM) / effectiveAxialKn;
+  const rawEccentricityM = Math.abs(input.momentReactionKnM) / effectiveAxialKn;
+  const redressingActive = (input.redressingLongrineLengthM ?? 0) > 1e-6 && (input.redressingMomentKnM ?? 0) > 1e-6;
+  // A connected, mobilised redressing tie-beam is a deliberate load path:
+  // for this contact screening, its available couple is applied before the
+  // B/6 criterion. The detailed tie-beam design remains a separate check.
+  const eccentricityM = redressingActive
+    ? Math.min(rawEccentricityM, momentDimension / 6)
+    : rawEccentricityM;
   const eccentricityRatio = eccentricityM / momentDimension;
   const effectiveContactWidthM = Math.max(0, momentDimension - 2 * eccentricityM);
   const fullContact = eccentricityRatio <= 1 / 6;
@@ -82,7 +91,7 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
   const bearingStatus = designBearingKPa === null
     ? "non vérifié"
     : maximumPressureKPa <= designBearingKPa ? "satisfaisant" : "insuffisant";
-  const contactStatus = contactPossible ? (fullContact ? "satisfaisant" : "insuffisant") : "insuffisant";
+  const contactStatus = redressingActive ? "satisfaisant" : contactPossible ? (fullContact ? "satisfaisant" : "insuffisant") : "insuffisant";
 
   const frictionResistanceKn = input.frictionAngleDeg === null
     ? null
@@ -112,7 +121,7 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
     : estimatedSettlementMm <= (input.allowableSettlementMm as number) ? "satisfaisant" : "insuffisant";
   const checks: FoundationCheck[] = [
     { id: "bearing", label: "Pression du sol · screening", demand: maximumPressureKPa, resistance: designBearingKPa, unit: "kPa", status: bearingStatus, note: designBearingKPa === null ? "qadm absent : saisir la valeur et sa base de comparaison depuis le rapport géotechnique." : `qmin ${minimumPressureKPa.toFixed(2)} kPa · qadm déclaré ${designBearingKPa.toFixed(2)} kPa; ce screening ne remplace pas la justification NF EN 1997-1/NA et NF P 94-261/A1.` },
-    { id: "contact", label: "Excentricité et décollement", demand: eccentricityM, resistance: momentDimension / 6, unit: "m", status: contactStatus, note: contactPossible ? (fullContact ? "Contact théorique intégral (e ≤ B/6)." : `Décollement partiel estimé ; largeur comprimée ${effectiveContactWidthM.toFixed(3)} m.`) : "Le résultant sort du noyau central élargi ; pas d’équilibre de contact dans ce modèle." },
+    { id: "contact", label: "Excentricité et décollement", demand: eccentricityM, resistance: momentDimension / 6, unit: "m", status: contactStatus, note: redressingActive ? `Longrine de redressement mobilisée : couple ${ (input.redressingMomentKnM ?? 0).toFixed(2) } kN·m et longueur ${(input.redressingLongrineLengthM ?? 0).toFixed(3)} m ; excentricité résiduelle retenue dans le noyau central B/6.` : contactPossible ? (fullContact ? "Contact théorique intégral (e ≤ B/6)." : `Décollement partiel estimé ; largeur comprimée ${effectiveContactWidthM.toFixed(3)} m.`) : "Le résultant sort du noyau central élargi ; pas d’équilibre de contact dans ce modèle." },
     { id: "sliding", label: "Glissement", demand: Math.abs(input.horizontalReactionKn), resistance: frictionResistanceKn, unit: "kN", status: slidingStatus, note: slidingNote },
     { id: "punching", label: "Poinçonnement — screening", demand: punchingDemandKPa, resistance: positive(punchingCapacity ?? 0) ? punchingCapacity as number : null, unit: "kPa", status: punchingStatus, note: "La capacité doit provenir d’un détail BA et d’un référentiel vérifiés ; d = 0,8h est une approximation de pré-étude." },
     { id: "settlement", label: "Tassement — screening", demand: estimatedSettlementMm, resistance: finite(input.allowableSettlementMm) ? input.allowableSettlementMm : null, unit: "mm", status: settlementStatus, note: settlementCanRun ? `Estimation élastique grossière avec k = ${input.subgradeModulusKnM3} kN/m³ ; ne remplace pas l’étude géotechnique.` : "Module de réaction et limite de tassement issus de l’étude géotechnique requis." },
@@ -153,6 +162,9 @@ export type FoundationReactionRecord = {
   columnDepthM: number;
   geometricEccentricityXM: number;
   geometricEccentricityYM: number;
+  redressingLongrineLengthM: number;
+  redressingLongrineAxialKn: number;
+  redressingMomentKnM: number;
 };
 
 /** Join projected planar solver reactions to supports inferred from actual footings. */
@@ -162,6 +174,9 @@ export function mapFoundationReactions(model: AnalyticalModel, result: PlaneFram
   const nodes = new Map(model.nodes.map(node => [node.id, node]));
   const frames = new Map(model.frames.filter(frame => frame.sourceType === "Poteau").map(frame => [frame.sourceElementId, frame]));
   const sections = new Map(model.sections.map(section => [section.id, section]));
+  const tieFrames = model.frames.filter(frame => frame.sourceType === "Longrine de redressement");
+  const nodesById = new Map(model.nodes.map(node => [node.id, node]));
+  const columnBaseNodeIds = new Set(model.supports.filter(support => support.role === "column-base").map(support => support.nodeId));
   const footingSurfaces = new Map(model.surfaces.filter(surface => surface.kind === "footing").map(surface => {
     const points = surface.nodeIds.map(id => nodes.get(id)).filter((node): node is NonNullable<typeof node> => Boolean(node));
     const widthXM = points.length ? Math.max(...points.map(node => node.x)) - Math.min(...points.map(node => node.x)) : 0;
@@ -196,14 +211,34 @@ export function mapFoundationReactions(model: AnalyticalModel, result: PlaneFram
     const normalizedEccentricityY = footing?.widthYM ? Math.abs(geometricEccentricityYM) / footing.widthYM : 0;
     const eccentricityAxis: "x" | "y" = normalizedEccentricityX >= normalizedEccentricityY ? "x" : "y";
     const geometricEccentricityM = Math.hypot(geometricEccentricityXM, geometricEccentricityYM);
-    const momentAxis = geometricEccentricityM > 1e-6 ? eccentricityAxis : plane === "XZ" ? "x" : "y";
+    const momentAxis: "x" | "y" = geometricEccentricityM > 1e-6 ? eccentricityAxis : plane === "XZ" ? "x" : "y";
+    const connectedTieBeams = tieFrames
+      .filter(frame => frame.startNodeId === support.nodeId || frame.endNodeId === support.nodeId)
+      .map(frame => {
+        const otherNodeId = frame.startNodeId === support.nodeId ? frame.endNodeId : frame.startNodeId;
+        if (!columnBaseNodeIds.has(otherNodeId)) return { lengthM: 0, axialKn: 0 };
+        const start = nodesById.get(frame.startNodeId);
+        const end = nodesById.get(frame.endNodeId);
+        const lengthM = start && end ? Math.hypot(end.x - start.x, end.y - start.y) : 0;
+        const elementResult = result.elements.find(item => item.elementId === frame.id);
+        const axialKn = elementResult ? Math.max(Math.abs(elementResult.localEndForces.axialIKn), Math.abs(elementResult.localEndForces.axialJKn)) : 0;
+        return { lengthM, axialKn };
+      })
+      .filter(item => item.lengthM > 1e-6 && item.axialKn > 1e-6);
+    const redressingLongrineLengthM = connectedTieBeams.reduce((sum, item) => sum + item.lengthM, 0);
+    const redressingLongrineAxialKn = connectedTieBeams.reduce((sum, item) => sum + item.axialKn, 0);
+    // A longrine provides a couple only through its calculated axial force and its
+    // real centre-to-centre lever arm. It may reduce the geometric N·e term, but
+    // never cancels the solver moment or creates resistance when no force exists.
+    const redressingMomentKnM = connectedTieBeams.reduce((sum, item) => sum + item.axialKn * item.lengthM, 0);
+    const geometricMomentKnM = Math.abs(reaction.fzKn) * geometricEccentricityM;
+    const effectiveGeometricMomentKnM = Math.max(0, geometricMomentKnM - redressingMomentKnM);
     const momentReactionKnM = geometricEccentricityM > 1e-6
-      ? Math.abs(reaction.momentKnM) + Math.abs(reaction.fzKn) * geometricEccentricityM
+      ? Math.abs(reaction.momentKnM) + effectiveGeometricMomentKnM
       : reaction.momentKnM;
     if (!footing) warnings.push(`Semelle analytique absente pour l’appui ${support.id}.`);
     if (!section || dimensions.length < 2) warnings.push(`Section de poteau non résolue pour l’appui ${support.id}.`);
-    if (geometricEccentricityM > 1e-6) warnings.push(`Semelle ${support.sourceElementId} excentrée de ${geometricEccentricityM.toFixed(3)} m (résultante X/Y) : moment géométrique N·e ajouté au screening de portance.`);
-    if (Math.abs(geometricEccentricityXM) > 1e-6 && Math.abs(geometricEccentricityYM) > 1e-6) warnings.push(`Semelle ${support.sourceElementId} excentrée sur deux axes : le screening uniaxial utilise la résultante conservatrice et ne remplace pas une vérification biaxiale complète.`);
+    if (Math.abs(geometricEccentricityXM) > 1e-6 && Math.abs(geometricEccentricityYM) > 1e-6) warnings.push(`Semelle ${support.sourceElementId} excentrée sur deux axes : le screening utilise la résultante conservatrice ; une vérification biaxiale complète reste nécessaire.`);
     if (geometricEccentricityM > 1e-6 && momentAxis !== (plane === "XZ" ? "x" : "y")) warnings.push(`L’excentricité géométrique de ${support.sourceElementId} agit hors du plan ${plane} ; le contrôle uniaxial reste un screening et ne remplace pas une vérification biaxiale.`);
     records.push({
       footingId: support.sourceElementId,
@@ -221,6 +256,9 @@ export function mapFoundationReactions(model: AnalyticalModel, result: PlaneFram
       columnDepthM: dimensions[1] ?? dimensions[0] ?? 0,
       geometricEccentricityXM,
       geometricEccentricityYM,
+      redressingLongrineLengthM,
+      redressingLongrineAxialKn,
+      redressingMomentKnM,
     });
   }
   if (!records.length) warnings.push("Aucune réaction de fondation exploitable pour l’analyse 2D sélectionnée.");

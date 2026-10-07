@@ -58,6 +58,16 @@ describe("priority 1 — analytical model", () => {
     expect(precheck.ok).toBe(true);
   });
 
+  it("crée un appui de fondation pour un voile dont le pied recouvre une semelle", () => {
+    const levels = supportedPortal().map(level => level.id === "rdc"
+      ? { ...level, elements: [...level.elements, { id: "V1", type: "Voile", section: "Voile_20cm", x: 0, y: 0, x2: 1, y2: 0 }] }
+      : level);
+    const { model, precheck } = buildAnalyticalModel(input(levels));
+    expect(model.supports.some(support => support.role === "foundation-contact" && support.sourceElementId === "F1")).toBe(true);
+    expect(precheck.errors.map(error => error.code)).not.toContain("unsupported-surface");
+    expect(precheck.errors.map(error => error.code)).not.toContain("wall-without-footing");
+  });
+
   it("requires a real footing under each column before inferring a fixed support", () => {
     const levels = supportedPortal().map(level => ({ ...level, elements: level.elements.filter(element => element.type !== "Semelle") }));
     const { model, precheck } = buildAnalyticalModel(input(levels));
@@ -73,8 +83,8 @@ describe("priority 1 — analytical model", () => {
     const { model, precheck } = buildAnalyticalModel(input(levels));
     const footing = model.surfaces.find(surface => surface.sourceElementId === "F1")!;
     const footingPoints = footing.nodeIds.map(id => model.nodes.find(node => node.id === id)!);
-    expect(Math.min(...footingPoints.map(node => node.x))).toBeCloseTo(-5 / 6);
-    expect(Math.max(...footingPoints.map(node => node.x))).toBeCloseTo(1 / 6);
+    expect(Math.min(...footingPoints.map(node => node.x))).toBeCloseTo(-2 / 3);
+    expect(Math.max(...footingPoints.map(node => node.x))).toBeCloseTo(1 / 3);
     const support = model.supports.find(item => item.sourceElementId === "F1")!;
     const supportNode = model.nodes.find(node => node.id === support.nodeId)!;
     expect(supportNode.x).toBeCloseTo(0);
@@ -89,10 +99,10 @@ describe("priority 1 — analytical model", () => {
     const { model, precheck } = buildAnalyticalModel(input(levels));
     const footingSurface = model.surfaces.find(surface => surface.sourceElementId === "F1")!;
     const points = footingSurface.nodeIds.map(id => model.nodes.find(node => node.id === id)!);
-    expect(Math.min(...points.map(node => node.x))).toBeCloseTo(-1 / 6);
-    expect(Math.max(...points.map(node => node.x))).toBeCloseTo(5 / 6);
-    expect(Math.min(...points.map(node => node.y))).toBeCloseTo(-1 / 6);
-    expect(Math.max(...points.map(node => node.y))).toBeCloseTo(5 / 6);
+    expect(Math.min(...points.map(node => node.x))).toBeCloseTo(-1 / 3);
+    expect(Math.max(...points.map(node => node.x))).toBeCloseTo(2 / 3);
+    expect(Math.min(...points.map(node => node.y))).toBeCloseTo(-1 / 3);
+    expect(Math.max(...points.map(node => node.y))).toBeCloseTo(2 / 3);
     const support = model.supports.find(item => item.sourceElementId === "F1")!;
     const supportNode = model.nodes.find(node => node.id === support.nodeId)!;
     expect(supportNode.x).toBeCloseTo(0);

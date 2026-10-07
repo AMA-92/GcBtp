@@ -23,10 +23,10 @@ export function normalizeFootingEccentricAxes(direction: FootingDirectionSelecti
 /**
  * Offset du centre de la semelle par rapport au point de pose du poteau.
  * En excentré, chaque axe peut être décalé indépendamment. Sur chaque axe
- * sélectionné, l’axe du poteau partage la portée 5/6–1/6 : cinq sixièmes
- * de la semelle se trouvent du côté choisi et un sixième du côté opposé.
+ * sélectionné, l’axe du poteau est décalé de B/6 ou L/6 par rapport au
+ * centre : la résultante reste sur la limite du noyau central (B/6).
  * Le poteau et son point de pose restent inchangés; seul le centre de la
- * semelle est déplacé d’un tiers de sa dimension sur l’axe choisi.
+ * semelle est déplacé d’un sixième de sa dimension sur l’axe choisi.
  * Les coordonnées de plan suivent l’écran : Y positif va vers le bas.
  */
 export function footingCenterOffset(
@@ -39,8 +39,8 @@ export function footingCenterOffset(
   if (!direction || !Number.isFinite(widthM) || !Number.isFinite(depthM) || widthM <= 0 || depthM <= 0) return null;
   const axes = normalizeFootingEccentricAxes(direction);
   if (axes.x === "none" && axes.y === "none") return null;
-  const xM = axes.x === "left" ? -widthM / 3 : axes.x === "right" ? widthM / 3 : 0;
-  const yM = axes.y === "top" ? -depthM / 3 : axes.y === "bottom" ? depthM / 3 : 0;
+  const xM = axes.x === "left" ? -widthM / 6 : axes.x === "right" ? widthM / 6 : 0;
+  const yM = axes.y === "top" ? -depthM / 6 : axes.y === "bottom" ? depthM / 6 : 0;
   return { xM, yM };
 }
 

@@ -91,6 +91,8 @@ describe("priority 4 — surface mesh and plate analysis", () => {
     expect(result.plate?.edgeReactions.find(item => item.edge === "right")?.totalKn).toBeCloseTo(0.5 * result.plate!.totalLoadKn);
     expect(result.plate?.edgeReactions.find(item => item.edge === "top")?.totalKn).toBe(0);
     expect(result.plate?.equilibriumResidualKn).toBeCloseTo(0, 10);
+    expect(result.warnings).not.toContain(expect.stringContaining("Modèle orthotrope équivalent Rayleigh–Ritz"));
+    expect(result.plate?.notes?.[0]).toContain("Hypothèse du modèle orthotrope équivalent Rayleigh–Ritz");
 
     const rotated = analyzeOneWayOrthotropicRectangularPlate(panel({ x2M: 3, y2M: 5, meshSizeM: 0.5 }), { D11: 160, D22: 8000, D12: 200, D66: 300 }, "Y");
     expect(rotated.errors).toEqual([]);

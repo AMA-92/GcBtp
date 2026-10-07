@@ -418,6 +418,35 @@ export function buildAnalyticalModel(input: AnalyticalModelInput): { model: Anal
     supports.push({ id: `SUP:${footing.id}:${column.id}`, sourceElementId: footing.id, nodeId: baseNode.id, kind, role: "column-base", restrainedDofs, stiffness: kind === "elastic" ? input.foundationSpringStiffness : undefined, selectionReason: input.foundationSupportKind ? `Type déclaré par le projet : ${kind}.` : "Poteau directement posé sur une semelle identifiée au même nœud ; encastrement de base retenu par défaut.", status: input.foundationSupportKind ? "declared" : "inferred-from-footing" });
   }
 
+  // Un voile de fondation ne passe pas nécessairement par un poteau. Si son
+  // pied est contenu dans une semelle réelle, créer des appuis répartis sur
+  // ses nœuds bas afin que sa surface et ses charges rejoignent la fondation.
+  const footingBounds = surfaces.filter(surface => surface.kind === "footing").map(surface => {
+    const points = surface.nodeIds.map(nodeId => nodes.find(node => node.id === nodeId)).filter((node): node is AnalyticalNode => Boolean(node));
+    return { surface, minX: Math.min(...points.map(point => point.x)), maxX: Math.max(...points.map(point => point.x)), minY: Math.min(...points.map(point => point.y)), maxY: Math.max(...points.map(point => point.y)) };
+  });
+  for (const wall of elements.filter(element => element.type === "Voile")) {
+    const levelRecord = levelById.get(wall.levelId);
+    if (!levelRecord || levelRecord.index !== supportLevelIndex) continue;
+    const wallSurface = surfaces.find(surface => surface.sourceElementId === wall.id && surface.kind === "wall");
+    if (!wallSurface) continue;
+    const wallNodes = wallSurface.nodeIds.map(nodeId => nodes.find(node => node.id === nodeId)).filter((node): node is AnalyticalNode => Boolean(node));
+    const bottomZ = Math.min(...wallNodes.map(node => node.z));
+    const bottomNodes = wallNodes.filter(node => Math.abs(node.z - bottomZ) <= tolerance);
+    const candidateFooting = footingBounds.find(item => bottomNodes.some(node => node.x >= item.minX - tolerance && node.x <= item.maxX + tolerance && node.y >= item.minY - tolerance && node.y <= item.maxY + tolerance));
+    if (!candidateFooting) {
+      diagnostics.push({ severity: "error", code: "wall-without-footing", message: `Voile ${wall.id} sans semelle ou appui de fondation sous son pied ; placer une semelle recouvrant le voile ou le raccorder à un élément porteur.`, elementIds: [wall.id], levelId: wall.levelId });
+      continue;
+    }
+    const kind = input.foundationSupportKind ?? "fixed-base";
+    const restrainedDofs: DegreeOfFreedom[] = kind === "articulated" ? ["ux", "uy", "uz"] : kind === "sliding" ? ["uy", "uz"] : kind === "contact" ? ["uz"] : kind === "elastic" ? [] : [...DOFS];
+    for (const node of bottomNodes) {
+      const supportId = `SUP:${candidateFooting.surface.sourceElementId}:${wall.id}:${node.id}`;
+      if (supports.some(support => support.id === supportId)) continue;
+      supports.push({ id: supportId, sourceElementId: candidateFooting.surface.sourceElementId, nodeId: node.id, kind, role: "foundation-contact", restrainedDofs, stiffness: kind === "elastic" ? input.foundationSpringStiffness : undefined, selectionReason: "Pied de voile contenu dans une semelle réelle ; appui réparti sur les nœuds bas du voile.", status: input.foundationSupportKind ? "declared" : "inferred-from-footing" });
+    }
+  }
+
   // Explicitly flag beam end nodes that have no member reaching them (typical floating beam case).
   const frameDegree = new Map<string, number>();
   for (const frame of frames) {

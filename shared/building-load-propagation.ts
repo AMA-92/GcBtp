@@ -174,6 +174,7 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
   const localColumnLoads: Record<string, PropagatedLoad> = {};
   const beamToColumns: Record<string, string[]> = {};
   const tieBeamToFoundations: Record<string, string[]> = {};
+  const wallToFoundations: Record<string, string[]> = {};
   const columnToFoundation: Record<string, string> = {};
   const levelDirect: Record<string, LevelLoadSummary> = {};
   const stairSupportElements = (element: BuildingElementForLoads) => {
@@ -314,10 +315,15 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
       const isTieBeam = beamElement?.type === "Longrine de redressement";
       const supports = isTieBeam ? [] : levelColumns.filter(column => beamAtPoint(column, beam)).map(column => column.id);
       const foundationSupports = isTieBeam ? levelFoundations.filter(foundation => beamAtPoint(foundation, beam)).map(foundation => foundation.id) : [];
-      beamToColumns[beam.id] = isTieBeam ? foundationSupports : supports;
+      const wallFoundationSupports = beamElement?.type === "Voile" && !supports.length
+        ? foundations.filter(foundation => beamAtPoint(foundation, beam)).map(foundation => foundation.id)
+        : [];
+      beamToColumns[beam.id] = isTieBeam ? foundationSupports : supports.length ? supports : wallFoundationSupports;
       if (isTieBeam) {
         tieBeamToFoundations[beam.id] = foundationSupports;
         if (foundationSupports.length !== 2) warnings.push(`Longrine ${beam.id} non reliée à deux semelles sur ${levelId}.`);
+      } else if (beamElement?.type === "Voile" && wallFoundationSupports.length) {
+        wallToFoundations[beam.id] = wallFoundationSupports;
       } else if (!supports.length) {
         warnings.push(`${beamElement?.type ?? "Poutre"} ${beam.id} sans poteaux réels à ses extrémités sur ${levelId}.`);
       }
@@ -339,6 +345,10 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
     if (foundationIds.length !== 2) continue;
     const tieLoad = beamSelfWeights[tieBeamId] ?? emptyLoad();
     for (const foundationId of foundationIds) addLoad(foundationLoads, foundationId, { gk: tieLoad.gk / 2, qk: tieLoad.qk / 2, sources: [`${tieBeamId} → ${foundationId} · moitié de la longrine`] });
+  }
+  for (const [wallId, foundationIds] of Object.entries(wallToFoundations)) {
+    const wallLoad = localBeamLoads[wallId] ?? emptyLoad();
+    for (const foundationId of foundationIds) addLoad(foundationLoads, foundationId, { gk: wallLoad.gk / foundationIds.length, qk: wallLoad.qk / foundationIds.length, sources: [`${wallId} → ${foundationId} · répartition du voile`, ...wallLoad.sources] });
   }
   const columnLevel = (id: string) => levelKey(elements.find(e => e.id === id) ?? { id, type: "", x: 0, y: 0 });
   for (let index = levelOrder.length - 1; index >= 0; index--) {

@@ -40,6 +40,8 @@ export type RectangularPlateResult = {
   equilibriumResidualKn: number;
   nodeResults: PlateNodeResult[];
   warnings: string[];
+  /** Hypothèses de modélisation à consulter dans les détails, sans bloquer le maillage. */
+  notes?: string[];
 };
 export type SurfaceAnalysis = {
   mesh: SurfaceMesh | null;
@@ -451,7 +453,10 @@ function analyzeRitzRectangularPlate(input: SurfacePanelInput, stiffness: PlateB
   const equilibriumResidualKn = reactions.reduce((sum, reaction) => sum + reaction.totalKn, 0) - totalLoadKn;
   const warningsForPlate = boundary.kind === "cantilever"
     ? ["Modèle Kirchhoff–Love Rayleigh–Ritz : encastrement idéal sur la rive sélectionnée, trois autres rives libres. La liaison réelle à la façade/poutre et les armatures d’ancrage doivent être vérifiées par l’ingénieur."]
-    : ["Modèle orthotrope équivalent Rayleigh–Ritz : appuis simples aux deux extrémités du sens de portée, rives longitudinales libres. Vérifier entraxe, nervures et rigidité réelle selon le fabricant/projet."];
+    : [];
+  const notesForPlate = boundary.kind === "one-way"
+    ? ["Hypothèse du modèle orthotrope équivalent Rayleigh–Ritz : appuis simples aux deux extrémités du sens de portée et rives longitudinales libres. Vérifier l’entraxe, les nervures et la rigidité réelle selon le fabricant et le projet."]
+    : [];
   warnings.push(...warningsForPlate);
   const plate: RectangularPlateResult = {
     boundary: boundary.kind === "cantilever" ? "cantilever-fixed-edge" : "one-way-simply-supported",
@@ -464,6 +469,7 @@ function analyzeRitzRectangularPlate(input: SurfacePanelInput, stiffness: PlateB
     equilibriumResidualKn,
     nodeResults,
     warnings: warningsForPlate,
+    notes: notesForPlate,
   };
   return { mesh: meshed.mesh, plate, errors: [], warnings };
 }

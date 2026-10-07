@@ -71,6 +71,14 @@ describe("foundation checks from solver reactions", () => {
     expect(result.checks.find(check => check.id === "contact")?.status).toBe("insuffisant");
   });
 
+  it("retient le contact intégral après mobilisation d’une longrine de redressement", () => {
+    const result = checkFoundationReaction({ ...base, momentReactionKnM: 40, redressingLongrineLengthM: 2, redressingMomentKnM: 30 });
+    const contact = result.checks.find(check => check.id === "contact");
+    expect(result.eccentricityM).toBeCloseTo(2 / 6);
+    expect(contact?.status).toBe("satisfaisant");
+    expect(contact?.note).toMatch(/B\/6/);
+  });
+
   it("blocks a resultant outside the footing contact width", () => {
     const result = checkFoundationReaction({ ...base, momentReactionKnM: 120 });
     expect(result.eccentricityM).toBeGreaterThan(1);
@@ -165,7 +173,53 @@ describe("foundation checks from solver reactions", () => {
     expect(mapped.records[0].geometricEccentricityXM).toBeCloseTo(1 / 3);
     expect(mapped.records[0].geometricEccentricityYM).toBeCloseTo(-1 / 3);
     expect(mapped.records[0].momentReactionKnM).toBeCloseTo(12 + 100 * Math.sqrt(2) / 3);
-    expect(mapped.warnings.some(warning => warning.includes("moment géométrique N·e"))).toBe(true);
+    expect(mapped.records[0].redressingLongrineLengthM).toBe(0);
+    expect(mapped.records[0].redressingMomentKnM).toBe(0);
+    expect(mapped.warnings.some(warning => warning.includes("moment géométrique N·e"))).toBe(false);
     expect(mapped.warnings.some(warning => warning.includes("deux axes"))).toBe(true);
+  });
+
+  it("déduit le moment repris par une longrine reliée à deux appuis de semelles", () => {
+    const model: AnalyticalModel = {
+      schemaVersion: 1, units: { length: "m", force: "kN", stress: "kN/m²", moment: "kN·m" }, nodeMergeToleranceM: 0.01,
+      nodes: [
+        { id: "b1", x: 0, y: 0, z: 0, levelIds: ["foundation"], sourceElementIds: ["C1", "LR1"] },
+        { id: "b2", x: 2, y: 0, z: 0, levelIds: ["foundation"], sourceElementIds: ["C2", "LR1"] },
+        { id: "s1a", x: -1.5, y: -1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S1"] },
+        { id: "s1b", x: 0.5, y: -1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S1"] },
+        { id: "s1c", x: 0.5, y: 1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S1"] },
+        { id: "s1d", x: -1.5, y: 1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S1"] },
+        { id: "s2a", x: 1, y: -1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S2"] },
+        { id: "s2b", x: 3, y: -1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S2"] },
+        { id: "s2c", x: 3, y: 1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S2"] },
+        { id: "s2d", x: 1, y: 1, z: -1, levelIds: ["foundation"], sourceElementIds: ["S2"] },
+      ],
+      frames: [
+        { id: "F:C1", sourceElementId: "C1", sourceType: "Poteau", startNodeId: "b1", endNodeId: "b1", sectionId: "col", materialId: "concrete", levelId: "foundation", releases: { start: [], end: [] }, eccentricityM: { start: [0, 0, 0], end: [0, 0, 0] } },
+        { id: "F:C2", sourceElementId: "C2", sourceType: "Poteau", startNodeId: "b2", endNodeId: "b2", sectionId: "col", materialId: "concrete", levelId: "foundation", releases: { start: [], end: [] }, eccentricityM: { start: [0, 0, 0], end: [0, 0, 0] } },
+        { id: "F:LR1", sourceElementId: "LR1", sourceType: "Longrine de redressement", startNodeId: "b1", endNodeId: "b2", sectionId: "tie", materialId: "concrete", levelId: "foundation", releases: { start: [], end: [] }, eccentricityM: { start: [0, 0, 0], end: [0, 0, 0] } },
+      ],
+      surfaces: [
+        { id: "S:S1", sourceElementId: "S1", sourceType: "Semelle", kind: "footing", nodeIds: ["s1a", "s1b", "s1c", "s1d"], sectionId: "footing", materialId: "concrete", levelId: "foundation", openings: [] },
+        { id: "S:S2", sourceElementId: "S2", sourceType: "Semelle", kind: "footing", nodeIds: ["s2a", "s2b", "s2c", "s2d"], sectionId: "footing", materialId: "concrete", levelId: "foundation", openings: [] },
+      ],
+      supports: [
+        { id: "SUP:S1:C1", sourceElementId: "S1", nodeId: "b1", kind: "fixed-base", role: "column-base", restrainedDofs: ["ux", "uy", "uz", "rx", "ry", "rz"], status: "inferred-from-footing" },
+        { id: "SUP:S2:C2", sourceElementId: "S2", nodeId: "b2", kind: "fixed-base", role: "column-base", restrainedDofs: ["ux", "uy", "uz", "rx", "ry", "rz"], status: "inferred-from-footing" },
+      ],
+      materials: [{ id: "concrete", name: "BA", elasticModulusKnM2: 30_000_000, poissonRatio: 0.2, densityKnM3: 25, provenance: "model-catalog" }],
+      sections: [
+        { id: "footing", name: "Semelle", shape: "rectangle", dimensionsM: [2, 2, 0.4], areaM2: 4, inertiaY4M4: 1, inertiaZ4M4: 1, provenance: "model-catalog" },
+        { id: "col", name: "Poteau", shape: "rectangle", dimensionsM: [0.3, 0.3], areaM2: 0.09, inertiaY4M4: 0.000675, inertiaZ4M4: 0.000675, provenance: "model-catalog" },
+        { id: "tie", name: "Longrine", shape: "rectangle", dimensionsM: [0.3, 0.5], areaM2: 0.15, inertiaY4M4: 0.003125, inertiaZ4M4: 0.001125, provenance: "model-catalog" },
+      ],
+      mesh: { globalSizeM: 1, maxAspectRatio: 5, refinementRegions: [] }, sourceElementIds: ["S1", "S2", "C1", "C2", "LR1"],
+    };
+    const result: PlaneFrameResult = { plane: "XZ", displacements: [], reactions: [{ nodeId: "b1", fxKn: 0, fzKn: 100, momentKnM: 0 }, { nodeId: "b2", fxKn: 0, fzKn: 100, momentKnM: 0 }], elements: [{ elementId: "F:LR1", lengthM: 2, localEndForces: { axialIKn: 10, axialJKn: -10, shearIKn: 0, shearJKn: 0, momentIKnM: 0, momentJKnM: 0 }}], equilibrium: { appliedFxKn: 0, appliedFzKn: -200, appliedMomentKnM: 0, reactionFxKn: 0, reactionFzKn: 200, reactionMomentKnM: 0 }, warnings: [] };
+    const mapped = mapFoundationReactions(model, result, "XZ");
+    expect(mapped.records[0].redressingLongrineLengthM).toBeCloseTo(2);
+    expect(mapped.records[0].redressingLongrineAxialKn).toBeCloseTo(10);
+    expect(mapped.records[0].redressingMomentKnM).toBeCloseTo(20);
+    expect(mapped.records[0].momentReactionKnM).toBeCloseTo(30);
   });
 });

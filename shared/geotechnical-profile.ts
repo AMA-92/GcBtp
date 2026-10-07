@@ -2,6 +2,21 @@ export type ProjectGeotechnicalStatus = "not_provided" | "entered" | "geotechnic
 
 /** Données retranscrites depuis le rapport géotechnique réel du site. */
 export type ProjectGeotechnicalProfile = {
+  catalogProfileId?: string;
+  country?: string;
+  region?: string;
+  department?: string;
+  city?: string;
+  locality?: string;
+  geologicalZone?: string;
+  profileName?: string;
+  soilType?: string;
+  qUltimateKPa?: number | null;
+  qNetKPa?: number | null;
+  gammaSatKnM3?: number | null;
+  oedometricModulusKPa?: number | null;
+  sourceStatus?: "catalog" | "modified" | "study";
+  confidence?: "moyenne" | "faible";
   soilDescription: string;
   seismicSoilClass: string;
   bearingCapacityAdmissibleKPa: number | null;
@@ -23,6 +38,21 @@ export type ProjectGeotechnicalProfile = {
 };
 
 export const EMPTY_PROJECT_GEOTECHNICAL_PROFILE: ProjectGeotechnicalProfile = {
+  catalogProfileId: undefined,
+  country: "",
+  region: "",
+  department: "",
+  city: "",
+  locality: "",
+  geologicalZone: "",
+  profileName: "",
+  soilType: "",
+  qUltimateKPa: null,
+  qNetKPa: null,
+  gammaSatKnM3: null,
+  oedometricModulusKPa: null,
+  sourceStatus: undefined,
+  confidence: undefined,
   soilDescription: "",
   seismicSoilClass: "",
   bearingCapacityAdmissibleKPa: null,
@@ -50,15 +80,19 @@ const readNumber = (value: unknown, valid: (number: number) => boolean): number 
 };
 
 /**
- * Migre les projets historiques en supprimant explicitement qadm=200 kPa et
- * les autres défauts de démonstration. Seules des données saisies depuis une
- * étude géotechnique réelle sont conservées.
+ * Normalise les valeurs de projet. Les profils de catalogue sont copiés dans
+ * le projet et restent indépendants de la fiche originale.
  */
 export function normalizeProjectGeotechnicalProfile(value: unknown): ProjectGeotechnicalProfile {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   if (raw.status === "default_preliminary") return { ...EMPTY_PROJECT_GEOTECHNICAL_PROFILE };
 
   const profile: ProjectGeotechnicalProfile = {
+    catalogProfileId: readText(raw.catalogProfileId) || undefined,
+    country: readText(raw.country), region: readText(raw.region), department: readText(raw.department), city: readText(raw.city), locality: readText(raw.locality), geologicalZone: readText(raw.geologicalZone), profileName: readText(raw.profileName), soilType: readText(raw.soilType),
+    qUltimateKPa: readNumber(raw.qUltimateKPa, number => number > 0), qNetKPa: readNumber(raw.qNetKPa, number => number >= 0), gammaSatKnM3: readNumber(raw.gammaSatKnM3, number => number > 0), oedometricModulusKPa: readNumber(raw.oedometricModulusKPa, number => number > 0),
+    sourceStatus: raw.sourceStatus === "catalog" || raw.sourceStatus === "modified" || raw.sourceStatus === "study" ? raw.sourceStatus : undefined,
+    confidence: raw.confidence === "moyenne" || raw.confidence === "faible" ? raw.confidence : undefined,
     soilDescription: readText(raw.soilDescription),
     seismicSoilClass: readText(raw.seismicSoilClass),
     bearingCapacityAdmissibleKPa: readNumber(raw.bearingCapacityAdmissibleKPa, number => number > 0),
