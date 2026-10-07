@@ -77,7 +77,7 @@ export default function FoundationReactionPanel({ model, result, gravityResult, 
   return <section className="space-y-2 rounded-xl border border-[#bddbd8] bg-[#f5fbfa] p-3 text-[10px] text-[#36585b]">
     <div>
       <b className="text-[12px] text-[#087f7f]">Fondations · réactions du solveur et screening géotechnique</b>
-      <div className="mt-1 rounded bg-amber-100 p-2 text-amber-900"><b>Pré-étude indicative — non certifiée.</b> Références françaises : {FRENCH_EUROCODE_PROFILE.geotechnicalReference}. Ce panneau ne choisit aucun sol et n’invente aucune portance. qadm, φ, nappe, tassement et paramètres de sol sont lus dans les données géotechniques saisies depuis le rapport réel, dans Paramètres du projet. Les valeurs manquantes restent « non vérifiées » et ne bloquent pas le calcul BA fondé sur les efforts et la géométrie.</div>
+      <div className="mt-1 rounded bg-emerald-100 p-2 text-emerald-900"><b>Données géotechniques du projet utilisées.</b> Références françaises : {FRENCH_EUROCODE_PROFILE.geotechnicalReference}. Les valeurs du rapport enregistrées dans le projet — notamment qadm, φ, la nappe, le tassement et les paramètres du sol — sont appliquées directement aux contrôles. Une valeur modifiée est reprise après enregistrement. Les contrôles restent informatifs et ne bloquent jamais la descente des charges.</div>
     </div>
     <div className="grid grid-cols-2 gap-2 rounded bg-white p-2">
       <div>Profil · <b>{soilName}</b></div>
@@ -99,7 +99,20 @@ export default function FoundationReactionPanel({ model, result, gravityResult, 
       {(Math.abs(row.reaction.geometricEccentricityXM) > 1e-6 || Math.abs(row.reaction.geometricEccentricityYM) > 1e-6) && <div className="rounded bg-[#eef7f5] p-1">Décalage poteau–centre de semelle · ex {row.reaction.geometricEccentricityXM.toFixed(3)} m · ey {row.reaction.geometricEccentricityYM.toFixed(3)} m · N·e inclus dans le screening.</div>}
       {row.reaction.redressingLongrineLengthM > 1e-6 && <div className="rounded bg-[#eef5ff] p-1">Longrine(s) de redressement active(s) · longueur cumulée {row.reaction.redressingLongrineLengthM.toFixed(3)} m · effort axial calculé {row.reaction.redressingLongrineAxialKn.toFixed(2)} kN · moment repris {row.reaction.redressingMomentKnM.toFixed(2)} kN·m.</div>}
       {row.error && <div className="rounded bg-amber-50 p-2 text-amber-900">Screening indisponible · {row.error}</div>}
-      {row.result && <><div className="font-bold">{row.result.status} · N effectif {row.result.effectiveAxialKn.toFixed(2)} kN · e {row.result.eccentricityM.toFixed(3)} m · qmax {Number.isFinite(row.result.maximumPressureKPa) ? row.result.maximumPressureKPa.toFixed(2) : "∞"} kPa</div>{row.result.checks.map(check => <div key={check.id} className={`grid grid-cols-[1.3fr_.75fr_.75fr_.8fr] gap-1 rounded p-1 ${statusClass(check.status)}`}><span>{check.label}<small className="block opacity-75">{check.note}</small></span><span>Ed {check.demand === null ? "—" : Number.isFinite(check.demand) ? check.demand.toFixed(2) : "∞"} {check.unit}</span><span>Rd {check.resistance === null ? "—" : Number.isFinite(check.resistance) ? check.resistance.toFixed(2) : "∞"} {check.unit}</span><b>{check.status}</b></div>)}{row.result.warnings.map((warning, index) => <div key={index} className="text-[9px] text-[#8a5a21]">Avertissement · {warning}</div>)}</>}
+      {row.result && <>
+        <div className="font-bold">{row.result.status} · N effectif {row.result.effectiveAxialKn.toFixed(2)} kN · e {row.result.eccentricityM.toFixed(3)} m</div>
+        <div className="grid grid-cols-2 gap-1 rounded border border-[#cfe3e2] bg-[#f4fbfa] p-2 text-[9px]">
+          <div><b>Ex</b> · {row.result.eccentricityXM.toFixed(3)} m</div>
+          <div><b>Ey</b> · {row.result.eccentricityYM.toFixed(3)} m</div>
+          <div><b>Pression maximale qmax</b> · {Number.isFinite(row.result.maximumPressureKPa) ? row.result.maximumPressureKPa.toFixed(2) : "∞"} kPa</div>
+          <div><b>Pression minimale qmin</b> · {row.result.minimumPressureKPa.toFixed(2)} kPa</div>
+          <div><b>Contact</b> · <span className={row.result.fullContact ? "text-emerald-700" : "text-amber-800"}>{row.result.contactStatus}</span></div>
+          <div><b>Portance du sol</b> · {row.result.checks.find(check => check.id === "bearing")?.status ?? "non vérifiée"}</div>
+          <div><b>Glissement</b> · {row.result.checks.find(check => check.id === "sliding")?.status ?? "non vérifié"}</div>
+        </div>
+        {row.result.checks.map(check => <div key={check.id} className={`grid grid-cols-[1.3fr_.75fr_.75fr_.8fr] gap-1 rounded p-1 ${statusClass(check.status)}`}><span>{check.label}<small className="block opacity-75">{check.note}</small></span><span>Ed {check.demand === null ? "—" : Number.isFinite(check.demand) ? check.demand.toFixed(2) : "∞"} {check.unit}</span><span>Rd {check.resistance === null ? "—" : Number.isFinite(check.resistance) ? check.resistance.toFixed(2) : "∞"} {check.unit}</span><b>{check.status}</b></div>)}
+        {row.result.warnings.map((warning, index) => <div key={index} className="text-[9px] text-[#8a5a21]">Avertissement · {warning}</div>)}
+      </>}
     </div>)}
     {evaluation.warnings.map((warning, index) => <div key={index} className="rounded bg-amber-50 p-2 text-amber-900">Avertissement · {warning}</div>)}
   </section>;

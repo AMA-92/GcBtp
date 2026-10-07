@@ -9,23 +9,23 @@ import {
   PROJECT_COUNTRIES,
   PROJECT_STANDARD_CATALOG,
 } from "../shared/project-catalogs";
-import { FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "../shared/french-standard-profile";
+import { DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "../shared/french-standard-profile";
 
 describe("catalogues des paramètres de projet", () => {
-  it("applique le profil Eurocodes français quel que soit le pays ou la ville", () => {
+  it("applique le référentiel BAEL par défaut quel que soit le pays ou la ville", () => {
     for (const country of PROJECT_COUNTRIES) {
-      expect(getCountryProjectStandard(country, "Ville test")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
+      expect(getCountryProjectStandard(country, "Ville test")).toBe(DEFAULT_PROJECT_STANDARD);
     }
-    expect(getCountryProjectStandard("Sénégal", "Dakar")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
-    expect(normalizeProjectStandard("BS 8110")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
-    expect(normalizeProjectStandard("SANS 10100")).toBe(FRENCH_EUROCODE_DEFAULT_STANDARD);
+    expect(getCountryProjectStandard("Sénégal", "Dakar")).toBe(DEFAULT_PROJECT_STANDARD);
+    expect(normalizeProjectStandard("BS 8110")).toBe(DEFAULT_PROJECT_STANDARD);
+    expect(normalizeProjectStandard("SANS 10100")).toBe(DEFAULT_PROJECT_STANDARD);
     expect(normalizeProjectStandard("BAEL 91 mod. 99")).toBe("BAEL 91 mod. 99");
     expect(getProjectStandardId("BAEL 91 mod. 99")).toBe("bael-91-99");
   });
 
   it("n’expose que les deux choix français de calcul du projet", () => {
     expect(PROJECT_STANDARD_CATALOG.map(item => item.norm)).toEqual([
-      FRENCH_EUROCODE_DEFAULT_STANDARD, "BAEL 91 mod. 99",
+      "BAEL 91 mod. 99", FRENCH_EUROCODE_DEFAULT_STANDARD,
     ]);
     expect(PROJECT_COUNTRIES).toContain("Sénégal");
     expect(PROJECT_COUNTRIES).toContain("Afrique du Sud");

@@ -77,8 +77,19 @@ type Props = {
   analysisScaleColors?: Record<string, string>;
   showAnalysisValues?: boolean;
   showAnalysisMoments?: boolean;
-  loadVisuals?: Record<string, { gk: number; qk: number; nu: number; lineKnM?: number; areaKnM2?: number; critical?: boolean }>;
+  showAllAnalysisValues?: boolean;
+  showLinearLoads?: boolean;
+  showSurfaceLoads?: boolean;
+  loadVisuals?: Record<string, { gk: number; qk: number; nu: number; nser?: number; moment?: number; lineKnM?: number; areaKnM2?: number; critical?: boolean }>;
   showLoadValues?: boolean;
+  visualizationDraft?: { efforts: boolean; moments: boolean; linearLoads: boolean; surfaceLoads: boolean };
+  visualizationOptions?: { efforts: boolean; moments: boolean; linearLoads: boolean; surfaceLoads: boolean };
+  showStructureValuesMenu?: boolean;
+  onToggleStructureValuesMenu?: () => void;
+  onVisualizationDraftChange?: (key: "efforts" | "moments" | "linearLoads" | "surfaceLoads") => void;
+  onApplyVisualization?: () => void;
+  chargesReady?: boolean;
+  reinforcementReady?: boolean;
   meshedSurfaceIds?: string[];
   meshSizeM?: number;
   stairPlacementActive?: boolean;
@@ -235,8 +246,19 @@ export default function Building3DView({
   analysisScaleColors = {},
   showAnalysisValues = false,
   showAnalysisMoments = false,
+  showAllAnalysisValues = false,
+  showLinearLoads = false,
+  showSurfaceLoads = false,
   loadVisuals = {},
   showLoadValues = false,
+  visualizationDraft = { efforts: false, moments: false, linearLoads: false, surfaceLoads: false },
+  visualizationOptions = { efforts: false, moments: false, linearLoads: false, surfaceLoads: false },
+  showStructureValuesMenu = false,
+  onToggleStructureValuesMenu,
+  onVisualizationDraftChange,
+  onApplyVisualization,
+  chargesReady = false,
+  reinforcementReady = false,
   meshedSurfaceIds = [],
   meshSizeM = 0.75,
   stairPlacementActive = false,
@@ -259,6 +281,7 @@ export default function Building3DView({
   const [reinforcementMode, setReinforcementMode] = useState(false);
   const [concreteOpacity, setConcreteOpacity] = useState(0.28);
   const [reinforcementCategories, setReinforcementCategories] = useState<Record<string, boolean>>({ ...DEFAULT_REINFORCEMENT_3D_CATEGORIES });
+  const [reinforcementDraftCategories, setReinforcementDraftCategories] = useState<Record<string, boolean>>({ ...DEFAULT_REINFORCEMENT_3D_CATEGORIES });
   const [selectedRebar, setSelectedRebar] = useState<{ elementId: string; proposalId: string } | null>(null);
   const [navigationMode, setNavigationMode] = useState<"rotate" | "pan">(
     "rotate"
@@ -966,7 +989,7 @@ export default function Building3DView({
                             { x: arrivalLandingStart.x + arrivalDirection.x * arrivalDepth, y: arrivalLandingStart.y + arrivalDirection.y * arrivalDepth },
                           ]
                         : [];
-                      return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}><g opacity=".72" stroke="#a84d16" strokeWidth="1.15">{firstFlight}{renderedSecondFlight}{solidLanding(landingWorld, middleZ, "rest-landing")}{arrivalLandingWorld.length > 0 && solidLanding(arrivalLandingWorld, topZ, "arrival-landing")}</g><text x={(start.x + project(secondUpper.x, secondUpper.y, topZ).x) / 2 + 8} y={(start.y + project(secondUpper.x, secondUpper.y, topZ).y) / 2 - 8} className="fill-[#e87538] text-[9px] font-bold">{item.id}</text>{showLoadValues && stairLoad && <text x={start.x + 8} y={start.y - 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{stairLoad.areaKnM2?.toFixed(2)} kN/m²</text>}</g>;
+                      return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}><g opacity=".72" stroke="#a84d16" strokeWidth="1.15">{firstFlight}{renderedSecondFlight}{solidLanding(landingWorld, middleZ, "rest-landing")}{arrivalLandingWorld.length > 0 && solidLanding(arrivalLandingWorld, topZ, "arrival-landing")}</g><text x={(start.x + project(secondUpper.x, secondUpper.y, topZ).x) / 2 + 8} y={(start.y + project(secondUpper.x, secondUpper.y, topZ).y) / 2 - 8} className="fill-[#e87538] text-[9px] font-bold">{item.id}</text>{showSurfaceLoads && stairLoad && <text x={start.x + 8} y={start.y - 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{stairLoad.areaKnM2?.toFixed(2)} kN/m²</text>}</g>;
                     }
                     if (item.type === "Dalle" || item.type === "Balcon") {
                       const dimensions = resolvedDimensions(item, modelCatalog);
@@ -990,7 +1013,7 @@ export default function Building3DView({
                         }),
                       ] : [];
                       const load = loadVisuals[analysisKey];
-                      const loadedLines = load?.areaKnM2 && load.areaKnM2 > 0 ? [0.2, 0.4, 0.6, 0.8].map((ratio, index) => {
+                      const loadedLines = showSurfaceLoads && load?.areaKnM2 && load.areaKnM2 > 0 ? [0.2, 0.4, 0.6, 0.8].map((ratio, index) => {
                         const x = Math.min(xA, xB) + Math.abs(xB - xA) * ratio;
                         return <line key={`slab-load-line-${index}`} x1={projectMetric(x, Math.min(yA, yB), z + thickness + 0.015).x} y1={projectMetric(x, Math.min(yA, yB), z + thickness + 0.015).y} x2={projectMetric(x, Math.max(yA, yB), z + thickness + 0.015).x} y2={projectMetric(x, Math.max(yA, yB), z + thickness + 0.015).y} />;
                       }) : null;
@@ -999,8 +1022,8 @@ export default function Building3DView({
                           {faces.map((face, index) => <polygon key={`slab-face-${index}`} points={polygon(face)} fill="#9ca3af" fillOpacity={index === 0 ? ".52" : ".36"} stroke={selectedElementKey === `${level.id}:${item.id}` ? "#e87538" : "#6b7280"} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 3 : 1.1} />)}
                           {meshed && <g stroke="#111111" strokeWidth="0.75" strokeDasharray="2 2" opacity="0.95">{meshLines}</g>}
                           {loadedLines && <g stroke="#ff1717" strokeWidth="1.4" strokeDasharray="3 2" opacity="0.9">{loadedLines}</g>}
-                          {meshed && <text x={top[0].x + 5} y={top[0].y - 5} className="fill-[#087f7f] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>MAILLÉ</text>}
-                          {showLoadValues && load && <text x={top[0].x + 5} y={top[0].y + 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{load.areaKnM2?.toFixed(2)} kN/m²</text>}
+                          {showSurfaceLoads && load && <text x={top[0].x + 5} y={top[0].y + 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{load.areaKnM2?.toFixed(2)} kN/m²</text>}
+                          {showAnalysisMoments && load && typeof load.moment === "number" && <text x={top[0].x + 5} y={top[0].y + 18} className="fill-[#27358f] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>M {load.moment.toFixed(1)} kN·m</text>}
                         </g>
                       );
                     }
@@ -1036,12 +1059,12 @@ export default function Building3DView({
                       const beamTop = [projectMetric(a.x + nx, a.y + ny, z + beamHeight), projectMetric(b.x + nx, b.y + ny, z + beamHeight), projectMetric(b.x - nx, b.y - ny, z + beamHeight), projectMetric(a.x - nx, a.y - ny, z + beamHeight)];
                       const beamStroke = selectedElementKey === `${level.id}:${item.id}` ? "#e87538" : color;
                       const load = loadVisuals[analysisKey];
-                      const arrows = load?.lineKnM && load.lineKnM > 0 ? [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((ratio, index) => {
+                      const arrows = showLinearLoads && load?.lineKnM && load.lineKnM > 0 ? [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((ratio, index) => {
                         const x = a.x + (b.x - a.x) * ratio, y = a.y + (b.y - a.y) * ratio;
                         const base = projectMetric(x, y, z + beamHeight + 0.36), tip = projectMetric(x, y, z + beamHeight + 0.025);
                         return <g key={`beam-load-arrow-${index}`}><line x1={base.x} y1={base.y} x2={tip.x} y2={tip.y} stroke="#e11d48" strokeWidth="0.9" strokeLinecap="round" /><path d={`M ${tip.x - 2.5} ${tip.y - 4} L ${tip.x} ${tip.y} L ${tip.x + 2.5} ${tip.y - 4}`} fill="none" stroke="#e11d48" strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round" /></g>;
                       }) : null;
-                      return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>{[beamTop, beamBottom, [beamBottom[0], beamBottom[1], beamTop[1], beamTop[0]], [beamBottom[1], beamBottom[2], beamTop[2], beamTop[1]], [beamBottom[2], beamBottom[3], beamTop[3], beamTop[2]], [beamBottom[3], beamBottom[0], beamTop[0], beamTop[3]]].map((face, index) => <polygon key={`beam-face-${index}`} points={polygon(face)} fill={color} fillOpacity={index === 0 ? ".88" : ".76"} stroke={beamStroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 1.8 : 1} />)}{arrows && <g>{arrows}</g>}{showLoadValues && load && <text x={(beamTop[0].x + beamTop[2].x) / 2} y={(beamTop[0].y + beamTop[2].y) / 2 - 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{load.lineKnM?.toFixed(2)} kN/m</text>}</g>;
+                      return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>{[beamTop, beamBottom, [beamBottom[0], beamBottom[1], beamTop[1], beamTop[0]], [beamBottom[1], beamBottom[2], beamTop[2], beamTop[1]], [beamBottom[2], beamBottom[3], beamTop[3], beamTop[2]], [beamBottom[3], beamBottom[0], beamTop[0], beamTop[3]]].map((face, index) => <polygon key={`beam-face-${index}`} points={polygon(face)} fill={color} fillOpacity={index === 0 ? ".88" : ".76"} stroke={beamStroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 1.8 : 1} />)}{arrows && <g>{arrows}</g>}{showLinearLoads && load && <text x={(beamTop[0].x + beamTop[2].x) / 2} y={(beamTop[0].y + beamTop[2].y) / 2 - 8} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>{load.lineKnM?.toFixed(2)} kN/m</text>}{showAnalysisMoments && load && typeof load.moment === "number" && <text x={(beamTop[0].x + beamTop[2].x) / 2} y={(beamTop[0].y + beamTop[2].y) / 2 + 2} className="fill-[#27358f] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>M {load.moment.toFixed(1)} kN·m</text>}</g>;
                     }
                     if (item.type === "Poteau") {
                       const resolved = resolvedDimensions(item, modelCatalog);
@@ -1065,14 +1088,14 @@ export default function Building3DView({
                           const next = (i + 1) % n;
                           return <polygon key={`circular-column-face-${i}`} points={polygon([bottom[i], bottom[next], top[next], top[i]])} fill={color} fillOpacity=".82" stroke={stroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 1.6 : 0.8} />;
                         });
-                        return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>{sideFaces}<polygon points={polygon(top)} fill={color} fillOpacity=".94" stroke={stroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 2 : 1} /><text x={top[Math.floor(n / 4)].x + 6} y={top[Math.floor(n / 4)].y - 6} className="fill-[#27358f] text-[9px] font-bold" style={{ paintOrder: "stroke", stroke: "#c9e3f3", strokeWidth: 3 }}>{item.id}</text>{showLoadValues && load && <text x={top[Math.floor(n / 4)].x + 6} y={top[Math.floor(n / 4)].y + 5} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>Nu {load.nu.toFixed(1)} kN</text>}</g>;
+                        return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>{sideFaces}<polygon points={polygon(top)} fill={color} fillOpacity=".94" stroke={stroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 2 : 1} /><text x={top[Math.floor(n / 4)].x + 6} y={top[Math.floor(n / 4)].y - 6} className="fill-[#27358f] text-[9px] font-bold" style={{ paintOrder: "stroke", stroke: "#c9e3f3", strokeWidth: 3 }}>{item.id}</text>{showAnalysisValues && load && <text x={top[Math.floor(n / 4)].x + 6} y={top[Math.floor(n / 4)].y + 5} className="fill-[#ff1717] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}><tspan x={top[Math.floor(n / 4)].x + 6} dy="0">G {load.gk.toFixed(1)} · Q {load.qk.toFixed(1)}</tspan><tspan x={top[Math.floor(n / 4)].x + 6} dy="9">Nu {load.nu.toFixed(1)} · Nser {(load.nser ?? 0).toFixed(1)} kN</tspan></text>}{showAnalysisMoments && load && typeof load.moment === "number" && <text x={top[Math.floor(n / 4)].x + 6} y={top[Math.floor(n / 4)].y + 25} className="fill-[#27358f] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>M {load.moment.toFixed(1)} kN·m</text>}</g>;
                       }
                       const load = loadVisuals[analysisKey];
                       const [postWidth, postDepth] = sectionPair(resolved, [0.20, 0.30]);
                       const bottom = [projectMetric(center.x - postWidth / 2, center.y - postDepth / 2, baseZ), projectMetric(center.x + postWidth / 2, center.y - postDepth / 2, baseZ), projectMetric(center.x + postWidth / 2, center.y + postDepth / 2, baseZ), projectMetric(center.x - postWidth / 2, center.y + postDepth / 2, baseZ)];
                       const top = [projectMetric(center.x - postWidth / 2, center.y - postDepth / 2, topZ), projectMetric(center.x + postWidth / 2, center.y - postDepth / 2, topZ), projectMetric(center.x + postWidth / 2, center.y + postDepth / 2, topZ), projectMetric(center.x - postWidth / 2, center.y + postDepth / 2, topZ)];
                       const faces = [top, bottom, [bottom[0], bottom[1], top[1], top[0]], [bottom[1], bottom[2], top[2], top[1]], [bottom[2], bottom[3], top[3], top[2]], [bottom[3], bottom[0], top[0], top[3]]];
-                      return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>{faces.map((face, index) => <polygon key={`column-face-${index}`} points={polygon(face)} fill={color} fillOpacity={index === 0 ? ".94" : ".82"} stroke={stroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 2 : 1} />)}<text x={top[2].x + 6} y={top[2].y - 6} className="fill-[#27358f] text-[9px] font-bold" style={{ paintOrder: "stroke", stroke: "#c9e3f3", strokeWidth: 3 }}>{item.id}</text>{showLoadValues && load && <text x={top[2].x + 6} y={top[2].y + 4} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>Nu {load.nu.toFixed(1)} kN</text>}</g>;
+                      return <g key={`${level.id}-${item.id}`} className={selectionEnabled ? "cursor-pointer" : undefined} onPointerDown={selectionEnabled ? event => { event.stopPropagation(); onElementSelect?.(level.id, item); } : undefined}>{faces.map((face, index) => <polygon key={`column-face-${index}`} points={polygon(face)} fill={color} fillOpacity={index === 0 ? ".94" : ".82"} stroke={stroke} strokeWidth={selectedElementKey === `${level.id}:${item.id}` ? 2 : 1} />)}<text x={top[2].x + 6} y={top[2].y - 6} className="fill-[#27358f] text-[9px] font-bold" style={{ paintOrder: "stroke", stroke: "#c9e3f3", strokeWidth: 3 }}>{item.id}</text>{showAnalysisValues && load && <text x={top[2].x + 6} y={top[2].y + 4} className="fill-[#ff1717] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}><tspan x={top[2].x + 6} dy="0">G {load.gk.toFixed(1)} · Q {load.qk.toFixed(1)}</tspan><tspan x={top[2].x + 6} dy="9">Nu {load.nu.toFixed(1)} · Nser {(load.nser ?? 0).toFixed(1)} kN</tspan></text>}{showAnalysisMoments && load && typeof load.moment === "number" && <text x={top[2].x + 6} y={top[2].y + 25} className="fill-[#27358f] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>M {load.moment.toFixed(1)} kN·m</text>}</g>;
                     }
                     const load = loadVisuals[analysisKey];
                     const footingDimensions = resolvedDimensions(item, modelCatalog);
@@ -1184,7 +1207,8 @@ export default function Building3DView({
                         >
                           {level.elements.find(candidate => candidate.type === "Poteau" && Math.abs(candidate.x - item.x) < 0.001 && Math.abs(candidate.y - item.y) < 0.001)?.id ?? ""}
                         </text>
-                        {showLoadValues && load && <text x={top[2].x + 7} y={top[2].y + 22} className="fill-[#ff1717] text-[8px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>Nu {load.nu.toFixed(1)} kN</text>}
+                        {showAnalysisValues && load && <text x={top[2].x + 7} y={top[2].y + 22} className="fill-[#ff1717] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>Nu {load.nu.toFixed(1)} · Nser {(load.nser ?? 0).toFixed(1)} kN</text>}
+                        {showAnalysisMoments && load && typeof load.moment === "number" && <text x={top[2].x + 7} y={top[2].y + 32} className="fill-[#27358f] text-[7px] font-bold" style={{ paintOrder: "stroke", stroke: "#ffffff", strokeWidth: 3 }}>M {load.moment.toFixed(1)} kN·m</text>}
                       </g>
                     );
                   })}
@@ -1285,14 +1309,25 @@ export default function Building3DView({
         onOrbit={orientation => { stopInertia(); setRotation(orientation); }}
         onFaceSelect={orientation => { stopInertia(); setNavigationMode("rotate"); setRotation(orientation); }}
       />
-      <div className="absolute left-2 top-2 z-20 max-w-[230px]">
-        <button type="button" aria-pressed={reinforcementMode} onClick={() => { setSelectedRebar(null); setReinforcementMode(value => !value); }} className={`rounded-lg border px-3 py-2 text-[10px] font-bold shadow-md ${reinforcementMode ? "border-[#20323d] bg-[#26343d] text-white" : "border-white bg-white text-[#20323d]"}`}>
-          {reinforcementMode ? "Ferraillage 3D · actif" : "Ferraillage 3D"}
-        </button>
+      <div className="absolute left-2 top-2 z-20 max-w-[300px]">
+        <div className="flex items-start gap-1.5">
+          <button type="button" aria-pressed={reinforcementMode} disabled={!reinforcementReady} title={reinforcementReady ? "Afficher le ferraillage 3D calculé" : "Lancer et calculer le ferraillage avant de l’afficher"} onClick={() => { setSelectedRebar(null); setReinforcementMode(value => { const next = !value; if (next) setReinforcementDraftCategories(reinforcementCategories); return next; }); }} className={`rounded-lg border px-3 py-2 text-[10px] font-bold shadow-md ${reinforcementMode ? "border-[#20323d] bg-[#26343d] text-white" : reinforcementReady ? "border-white bg-white text-[#20323d]" : "cursor-not-allowed border-[#d7dde0] bg-[#f2f4f5] text-[#aab3b7]"}`}>
+            {reinforcementMode ? "Ferraillage 3D · actif" : "Ferraillage 3D"}
+          </button>
+          {onToggleStructureValuesMenu && <button type="button" aria-pressed={showStructureValuesMenu} disabled={!chargesReady} title={chargesReady ? "Afficher les charges et moments calculés" : "Lancer les calculs avant d’afficher les charges et moments"} onClick={onToggleStructureValuesMenu} className={`rounded-lg border px-3 py-2 text-[10px] font-bold shadow-md ${Object.values(visualizationOptions).some(Boolean) ? "border-[#27358f] bg-[#27358f] text-white" : chargesReady ? "border-white bg-white text-[#20323d]" : "cursor-not-allowed border-[#d7dde0] bg-[#f2f4f5] text-[#aab3b7]"}`}>
+            Charges/Moments
+          </button>}
+        </div>
+        {showStructureValuesMenu && onVisualizationDraftChange && onApplyVisualization && <div className="mt-1 max-h-[270px] overflow-y-auto rounded-lg border border-white/80 bg-white/95 p-2 text-[9px] text-[#324652] shadow-lg">
+          <div className="mb-1 font-bold text-[#27358f]">Types de résultats à afficher</div>
+          {([ ["efforts", "Valeurs G / Q / Nu / Nser"], ["moments", "Moments M"], ["linearLoads", "Chargements linéaires (kN/m)"], ["surfaceLoads", "Chargements surfaciques (kN/m²)"] ] as const).map(([key, label]) => <label key={key} className="flex items-center gap-1.5 py-0.5"><input type="checkbox" checked={visualizationDraft[key]} onChange={() => onVisualizationDraftChange(key)} />{label}</label>)}
+          <button type="button" className="mt-2 h-8 w-full rounded-md bg-[#1667c7] px-3 text-[10px] font-semibold text-white" onClick={onApplyVisualization}>Appliquer</button>
+        </div>}
         {reinforcementMode && <div className="mt-1 max-h-[270px] overflow-y-auto rounded-lg border border-white/80 bg-white/95 p-2 text-[9px] text-[#324652] shadow-lg">
           <div className="mb-1 font-bold">Afficher les armatures par élément</div>
-          {[["columns","Poteaux"],["beams","Poutres"],["longrines","Longrines"],["slabs","Dalles"],["foundations","Fondations / semelles"],["walls","Voiles"],["balconies","Balcons"],["stairs","Escaliers"],["others","Autres"]].map(([key,label]) => <label key={key} className="flex items-center gap-1.5 py-0.5"><input type="checkbox" checked={Boolean(reinforcementCategories[key])} onChange={event => setReinforcementCategories(current => ({...current,[key]:event.target.checked}))} />{label}</label>)}
+          {["columns","beams","longrines","slabs","foundations","walls","balconies","stairs","others"].map(key => <label key={key} className="flex items-center gap-1.5 py-0.5"><input type="checkbox" checked={Boolean(reinforcementDraftCategories[key])} onChange={event => setReinforcementDraftCategories(current => ({ ...current, [key]: event.target.checked }))} />{key === "columns" ? "Poteaux" : key === "beams" ? "Poutres" : key === "longrines" ? "Longrines" : key === "slabs" ? "Dalles" : key === "foundations" ? "Fondations / semelles" : key === "walls" ? "Voiles" : key === "balconies" ? "Balcons" : key === "stairs" ? "Escaliers" : "Autres"}</label>)}
           <label className="mt-1 block border-t pt-1">Opacité du béton · {Math.round(concreteOpacity*100)}%<input className="block w-full" type="range" min="0" max="0.8" step="0.04" value={concreteOpacity} onChange={event => setConcreteOpacity(Number(event.target.value))} aria-label="Opacité du béton" /></label>
+          <button type="button" className="mt-2 h-8 w-full rounded-md bg-[#26343d] px-3 text-[10px] font-semibold text-white" onClick={() => { setReinforcementCategories(reinforcementDraftCategories); setReinforcementMode(false); }}>Appliquer</button>
           {!reinforcementDesign?.elements.length ? <p className="mt-1 rounded bg-amber-50 p-1.5 text-amber-900">Aucun résultat de ferraillage calculé à afficher. Aucun acier n’est inventé.</p> : <p className="mt-1 rounded bg-[#eef7f5] p-1.5">{reinforcementDesign.elements.filter(item => item.reinforcement.length > 0).length} élément(s) avec propositions calculées; {uncalculatedReinforcementElementCount} restent en béton seul. Les escaliers et les détails d’ancrage non calculés n’affichent aucune barre.</p>}
         </div>}
       </div>
@@ -1304,17 +1339,6 @@ export default function Building3DView({
         <div>Statut des contrôles : {selectedReinforcementDesign.checks.some(item => item.status === "non satisfaisant") ? "non satisfaisant" : selectedReinforcementDesign.checks.some(item => item.status === "bloqué" || item.status === "à vérifier") ? "à vérifier / bloqué" : "aucun échec relevé (pré-étude)"}</div>
         <button type="button" className="mt-1 text-[#0b747a] underline" onClick={() => setSelectedRebar(null)}>Fermer la fiche</button>
       </div>}
-      {showAnalysisValues && Object.keys(analysisValues).length > 0 && (
-        <div className="absolute left-2 top-2 max-w-[190px] rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-[9px] text-[#294b5a] shadow-sm">
-          <div className="mb-1 font-bold text-[#27358f]">Valeurs d’analyse</div>
-          {Object.entries(analysisValues).filter(([key]) => criticalElementKeys.includes(key)).map(([key, value]) => (
-            <div key={key} className="leading-4">
-              <span className="font-semibold text-[#ff1717]">{key.split(":")[1]}</span> · G {value.gk.toFixed(2)} · Q {value.qk.toFixed(2)} · Nu {value.nu.toFixed(2)} kN
-              {showAnalysisMoments && value.moment !== undefined ? ` · M ${value.moment.toFixed(2)} kN·m` : ""}
-            </div>
-          ))}
-        </div>
-      )}
       <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
         <button
           onClick={() => {

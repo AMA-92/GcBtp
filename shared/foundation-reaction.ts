@@ -39,10 +39,14 @@ export type FoundationReactionResult = {
   status: "pré-étude — satisfaisant, à valider" | "pré-étude — incomplet" | "pré-étude — insuffisant";
   effectiveAxialKn: number;
   eccentricityM: number;
+  eccentricityXM: number;
+  eccentricityYM: number;
   eccentricityRatio: number;
   maximumPressureKPa: number;
   minimumPressureKPa: number;
   effectiveContactWidthM: number;
+  fullContact: boolean;
+  contactStatus: "contact total" | "contact partiel" | "sans contact stable";
   checks: FoundationCheck[];
   warnings: string[];
 };
@@ -69,6 +73,10 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
 
   const areaM2 = input.widthXM * input.widthYM;
   const rawEccentricityM = Math.abs(input.momentReactionKnM) / effectiveAxialKn;
+  // The planar solver provides one bending moment at a time.  Keep the
+  // direction explicit so the report can show Ex and Ey separately.
+  const eccentricityXM = input.momentAxis === "y" ? Math.abs(input.momentReactionKnM) / effectiveAxialKn : 0;
+  const eccentricityYM = input.momentAxis === "x" ? Math.abs(input.momentReactionKnM) / effectiveAxialKn : 0;
   const redressingActive = (input.redressingLongrineLengthM ?? 0) > 1e-6 && (input.redressingMomentKnM ?? 0) > 1e-6;
   // A connected, mobilised redressing tie-beam is a deliberate load path:
   // for this contact screening, its available couple is applied before the
@@ -92,6 +100,7 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
     ? "non vérifié"
     : maximumPressureKPa <= designBearingKPa ? "satisfaisant" : "insuffisant";
   const contactStatus = redressingActive ? "satisfaisant" : contactPossible ? (fullContact ? "satisfaisant" : "insuffisant") : "insuffisant";
+  const contactLabel = !contactPossible ? "sans contact stable" : fullContact ? "contact total" : "contact partiel";
 
   const frictionResistanceKn = input.frictionAngleDeg === null
     ? null
@@ -137,10 +146,14 @@ export function checkFoundationReaction(input: FoundationReactionInput): Foundat
     status: failed ? "pré-étude — insuffisant" : incomplete ? "pré-étude — incomplet" : "pré-étude — satisfaisant, à valider",
     effectiveAxialKn,
     eccentricityM,
+    eccentricityXM,
+    eccentricityYM,
     eccentricityRatio,
     maximumPressureKPa,
     minimumPressureKPa,
     effectiveContactWidthM,
+    fullContact,
+    contactStatus: contactLabel,
     checks,
     warnings,
   };

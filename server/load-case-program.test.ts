@@ -12,7 +12,7 @@ describe("programme de charges — actions, cas, combinaisons et source de masse
 
   it("utilise les références françaises et marque les combinaisons automatiques comme cataloguées, sans certifier la pré-étude", () => {
     const program = createDefaultLoadProgram();
-    expect(program.selectedStandard).toBe("Eurocode 2 — France");
+    expect(program.selectedStandard).toBe("BAEL 91 mod. 99");
     expect(program.combinations.filter(item => item.enabled).every(item => item.status === "catalogued")).toBe(true);
     expect(program.combinations.find(item => item.id === "comb:uls-gravity")?.reference).toContain("NF EN 1990/NA:2011");
     expect(program.combinations.find(item => item.id === "comb:uls-gravity")?.reference).toContain("NF P 06-111-2/A1:2009");
@@ -24,7 +24,7 @@ describe("programme de charges — actions, cas, combinaisons et source de masse
     const legacy = createDefaultLoadProgram("SANS 10100");
     legacy.combinations.filter(item => item.origin === "automatic").forEach(item => { item.status = "provisional"; });
     const normalized = normalizeLoadProgram(legacy, "SANS 10100");
-    expect(normalized.selectedStandard).toBe("Eurocode 2 — France");
+    expect(normalized.selectedStandard).toBe("BAEL 91 mod. 99");
     expect(normalized.combinations.filter(item => item.enabled).every(item => item.status === "catalogued")).toBe(true);
   });
 

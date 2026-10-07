@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DSRCAD_COUNTRIES, DSRCAD_DEFAULT_PLANNING, DSRCAD_MODULES, DSRCAD_NORMS } from "../shared/dsrcad";
-import { FRENCH_EUROCODE_DEFAULT_STANDARD } from "../shared/french-standard-profile";
+import { DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD } from "../shared/french-standard-profile";
 
 describe("DSRCAD workspace catalog", () => {
   it("exposes the visible calculation modules", () => {
@@ -11,7 +11,7 @@ describe("DSRCAD workspace catalog", () => {
   });
 
   it("keeps the technical context choices from the reference flow", () => {
-    expect(DSRCAD_NORMS).toEqual([FRENCH_EUROCODE_DEFAULT_STANDARD, "BAEL 91 mod. 99"]);
+    expect(DSRCAD_NORMS).toEqual([DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD]);
     expect(DSRCAD_COUNTRIES).toContain("Sénégal");
   });
 

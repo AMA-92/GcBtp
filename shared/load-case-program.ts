@@ -1,4 +1,4 @@
-import { FRENCH_EUROCODE_DEFAULT_STANDARD, isBaelStandard, normalizeProjectStandard } from "./french-standard-profile";
+import { DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD, isBaelStandard, normalizeProjectStandard } from "./french-standard-profile";
 import { FRENCH_EUROCODE_ACTION_CATALOG, formatFrenchCoefficient, getFrenchProjectUsageProfile, getFrenchPsiFactors, type FrenchProjectUsage, type FrenchPsiCategory } from "./french-load-catalog";
 
 export const LOAD_PROGRAM_SCHEMA_VERSION = 1 as const;
@@ -7,7 +7,7 @@ export type LoadValueStatus = "user-input" | "calculated" | "catalogued" | "defa
 export type LoadPattern = { id: string; name: string; category: LoadPatternCategory; unit: "kN" | "kN/m²"; value: number; source: string; status: LoadValueStatus; direction: "vertical" | "x" | "y" | "none"; selfWeightMultiplier: number; enabled: boolean; psiCategory?: FrenchPsiCategory };
 export type AnalysisCase = { id: string; name: string; type: "linear-static" | "modal" | "spectral"; patternFactors: Record<string, number>; enabled: boolean; provenance: "automatic" | "manual"; status: "provisional" | "ready" };
 export type LoadCombination = { id: string; name: string; category: "ULS" | "SLS-characteristic" | "SLS-frequent" | "SLS-quasi-permanent" | "wind" | "seismic" | "accidental"; caseFactors: Record<string, number>; enabled: boolean; origin: "automatic" | "manual"; status: "catalogued" | "provisional" | "ready"; note: string; formula?: string; reference?: string };
-export type MassSource = { id: string; name: string; patternFactors: Record<string, number>; gravityMPerS2: number; status: "provisional" | "ready"; note: string; provenance?: "catalogue" | "manual" };
+export type MassSource = { id: string; name: string; patternFactors: Record<string, number>; gravityMPerS2: number; status: "provisional" | "ready"; note: string; provenance?: "catalogue" | "manual" | "confirmed" };
 export type LoadProgram = { schemaVersion: typeof LOAD_PROGRAM_SCHEMA_VERSION; selectedStandard: string; projectUsage?: FrenchProjectUsage; patterns: LoadPattern[]; cases: AnalysisCase[]; combinations: LoadCombination[]; massSource: MassSource };
 export type LoadProgramDiagnostic = { severity: "error" | "warning"; code: string; message: string; relatedIds: string[] };
 export type EvaluatedCombination = { id: string; name: string; category: LoadCombination["category"]; value: number; factors: Record<string, number>; enabled: boolean; status: LoadCombination["status"] };
@@ -89,7 +89,7 @@ function createCombinations(projectUsage: FrenchProjectUsage, isBael: boolean): 
   ];
 }
 
-export function createDefaultLoadProgram(selectedStandard: string = FRENCH_EUROCODE_DEFAULT_STANDARD, projectUsage: FrenchProjectUsage = "habitation"): LoadProgram {
+export function createDefaultLoadProgram(selectedStandard: string = DEFAULT_PROJECT_STANDARD, projectUsage: FrenchProjectUsage = "habitation"): LoadProgram {
   const normalizedStandard = normalizeProjectStandard(selectedStandard);
   const isBael = isBaelStandard(selectedStandard);
   const activity = getFrenchProjectUsageProfile(projectUsage);
@@ -186,7 +186,9 @@ export function normalizeLoadProgram(program: LoadProgram, projectStandard = pro
   const savedMassSource = program.massSource;
   const massSource = savedMassSource?.provenance === "manual"
     ? { ...defaults.massSource, ...savedMassSource, status: "provisional" as const }
-    : defaults.massSource;
+    : savedMassSource?.provenance === "confirmed"
+      ? { ...defaults.massSource, ...savedMassSource, status: "ready" as const }
+      : defaults.massSource;
   return { ...defaults, ...program, selectedStandard, projectUsage, patterns, cases, combinations: normalizedCombinations, massSource };
 }
 

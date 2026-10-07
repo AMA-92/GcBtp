@@ -4,22 +4,22 @@ import {
   type ConcreteMaterialClass,
   type ConcreteMaterialProperties,
 } from "./model-catalog";
-import { FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "./french-standard-profile";
+import { DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "./french-standard-profile";
 
 export const PROJECT_COUNTRIES = AFRICAN_COUNTRIES;
 
 export const PROJECT_STANDARD_CATALOG = [
   {
+    id: "bael-91-99",
+    norm: "BAEL 91 mod. 99",
+    label: "BAEL 91 mod. 99 · référentiel français par défaut",
+    shortLabel: "BAEL 91 mod. 99",
+  },
+  {
     id: "eurocode-2",
     norm: FRENCH_EUROCODE_DEFAULT_STANDARD,
     label: "Eurocodes français · NF EN et annexes nationales françaises",
     shortLabel: "Eurocodes français",
-  },
-  {
-    id: "bael-91-99",
-    norm: "BAEL 91 mod. 99",
-    label: "BAEL 91 mod. 99 · option française historique (béton armé)",
-    shortLabel: "BAEL 91 mod. 99",
   },
 ] as const;
 
@@ -28,11 +28,11 @@ export type ProjectStandardId = (typeof PROJECT_STANDARD_CATALOG)[number]["id"];
 
 export function getProjectStandardId(norm: string): ProjectStandardId {
   const normalized = normalizeProjectStandard(norm);
-  return PROJECT_STANDARD_CATALOG.find(item => item.norm === normalized)?.id ?? "eurocode-2";
+  return PROJECT_STANDARD_CATALOG.find(item => item.norm === normalized)?.id ?? "bael-91-99";
 }
 
 export function getCountryProjectStandard(_country: string, _city = ""): ProjectStandard {
-  return FRENCH_EUROCODE_DEFAULT_STANDARD;
+  return DEFAULT_PROJECT_STANDARD;
 }
 
 export function getProjectCountryGuidance(country: string) {

@@ -126,6 +126,7 @@ import type { WallDemand } from "@shared/wall-design";
 import ReinforcedConcretePanel from "@/components/ReinforcedConcretePanel";
 import FoundationReactionPanel, { type FoundationPanelEvaluation } from "@/components/FoundationReactionPanel";
 import { createStructuralPassport, createStructuralReport, renderStructuralPassport, renderStructuralReport } from "@shared/structural-report";
+import { downloadElementsReportPdf } from "@shared/local-pdf";
 import { loadReinforcementTemplate, saveReinforcementTemplate, type ReinforcementTemplate } from "@shared/reinforcement-report";
 import { createBuildingProjectBundle, loadBuildingProjectHistory, loadBuildingProjects, parseBuildingProjectBundle, removeBuildingProject, saveBuildingProject, serializeBuildingProjectBundle, type BuildingProjectSnapshot } from "@shared/building-persistence";
 import { supabase } from "@/lib/supabase";
@@ -728,9 +729,17 @@ export default function BuildingCreateFlow({
   const [selectedAnalysisRow, setSelectedAnalysisRow] = useState<
     ReturnType<typeof summarizeBuildingLoads>["rows"][number] | null
   >(null);
-  const [showAnalysisValues, setShowAnalysisValues] = useState(false);
-  const [showAnalysisMoments, setShowAnalysisMoments] = useState(false);
-  const [showLoadValues, setShowLoadValues] = useState(false);
+  const [visualizationOptions, setVisualizationOptions] = useState({ efforts: false, moments: false, linearLoads: false, surfaceLoads: false });
+  const [visualizationDraft, setVisualizationDraft] = useState({ efforts: false, moments: false, linearLoads: false, surfaceLoads: false });
+  const [showStructureValuesMenu, setShowStructureValuesMenu] = useState(false);
+  useEffect(() => {
+    const massSourceConfirmed = loadProgram.massSource.status === "ready" || loadProgram.massSource.provenance === "confirmed";
+    if (!massSourceConfirmed || !loadApplicationReport) return;
+    const warnings = loadApplicationReport.warnings.filter(message => !/source de masse sismique reste une pré-étude/i.test(message));
+    if (warnings.length === loadApplicationReport.warnings.length) return;
+    setLoadApplicationReport({ ...loadApplicationReport, warnings });
+    setLoadCasesPrerequisiteReady(loadApplicationReport.errors.length === 0 && warnings.length === 0);
+  }, [loadProgram.massSource.status, loadProgram.massSource.provenance, loadApplicationReport]);
   const dragSnapshot = useRef<Project | null>(null);
   const beamTraceRef = useRef(false);
   const noteReportButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -743,6 +752,26 @@ export default function BuildingCreateFlow({
   const loadProgramEvaluation = evaluateLoadProgram(loadProgram, loadProgramPatternValues);
   const loadProgramDiagnostics = validateLoadProgram(loadProgram);
   const analysisGroups = buildLoadSynthesis(analysisRows);
+  const downloadElementsPdf = () => {
+    if (!selected || !analysisRows.length) return toast.info("Lancez d’abord les calculs pour générer la liste des éléments.");
+    const projectFileName = selected.name.replace(/\br\+/gi, "R+").trim();
+    downloadElementsReportPdf("Note de calcul", [
+      ["Projet", selected.name],
+      ["Pays", selected.country || "non renseigné"],
+      ["Ville", selected.city || "non renseignée"],
+      ["Lieu", selected.location || "non renseigné"],
+      ["Structure", selected.structure || "Béton armé"],
+      ["Référentiel", selected.norm || norm],
+    ], analysisRows.map(row => ({
+      element: row.label,
+      level: selected.levels.find(level => level.id === row.levelId)?.label ?? row.levelId,
+      section: row.section ?? "—",
+      g: row.gk,
+      q: row.qk,
+      nu: row.nu,
+      nser: row.nser,
+    })), `note de calcul ${projectFileName}`);
+  };
   const rcMemberExtraction = useMemo(() => {
     if (analyticalModel && spatial3DResult) {
       const extracted = deriveRCMemberDemandsFromSpatial({ model: analyticalModel, result: spatial3DResult, combinationId: solverCombinationId, combinationName: loadProgram.combinations.find(item => item.id === solverCombinationId)?.name ?? solverCombinationId });
@@ -910,8 +939,8 @@ export default function BuildingCreateFlow({
   const criticalColumnKey = criticalColumn ? `${criticalColumn.levelId}:${criticalColumn.id}` : null;
   const criticalElementKeys = criticalColumnKey ? [criticalColumnKey] : [];
   const loadVisuals = useMemo(() => {
-    const visuals: Record<string, { gk: number; qk: number; nu: number; lineKnM?: number; areaKnM2?: number; critical?: boolean }> = {};
-    for (const row of analysisRows) visuals[`${row.levelId}:${row.id}`] = { gk: row.gk, qk: row.qk, nu: row.nu, critical: criticalElementKeys.includes(`${row.levelId}:${row.id}`) };
+    const visuals: Record<string, { gk: number; qk: number; nu: number; nser?: number; moment?: number; lineKnM?: number; areaKnM2?: number; critical?: boolean }> = {};
+    for (const row of analysisRows) visuals[`${row.levelId}:${row.id}`] = { gk: row.gk, qk: row.qk, nu: row.nu, nser: row.nser, moment: row.moment, critical: criticalElementKeys.includes(`${row.levelId}:${row.id}`) };
     const combination = loadProgram.combinations.find(item => item.id === solverCombinationId) ?? loadProgram.combinations.find(item => item.enabled);
     const gammaG = combination?.caseFactors["case:G"] ?? 1;
     const gammaQ = combination?.caseFactors["case:Q"] ?? 1;
@@ -2012,14 +2041,42 @@ export default function BuildingCreateFlow({
       combinationRows.push({ id: combination.id, name: combination.name, category: combination.category, formula: combination.formula ?? combination.note, status: combination.status, lineLoadCount: gravity.memberLoads.filter(item => item.elementId && Number.isFinite(item.qyKnM) && Math.abs(item.qyKnM ?? 0) > 1e-9).length });
     }
     if (enabledCombinations.some(item => item.status === "provisional")) warnings.push("Une combinaison active a été modifiée manuellement ou ne provient pas du catalogue NF EN/NA; ses coefficients doivent être vérifiés.");
-    if (loadProgram.massSource.status !== "ready") warnings.push("La source de masse sismique reste une pré-étude : l’application complète de ψE=φ·ψ2 selon l’EC8 et sa distribution par niveau doivent être vérifiées.");
+    const massSourceConfirmed = loadProgram.massSource.status === "ready" || loadProgram.massSource.provenance === "confirmed";
+    if (!massSourceConfirmed) warnings.push("La source de masse sismique reste une pré-étude : l’application complète de ψE=φ·ψ2 selon l’EC8 et sa distribution par niveau doivent être vérifiées.");
     const report: LoadApplicationReport = { errors: Array.from(new Set(errors)), warnings: Array.from(new Set(warnings)), surfaceRows, skeletonRows, combinationRows, lineLoadCount: combinationRows.reduce((sum, item) => sum + item.lineLoadCount, 0) };
     setLoadApplicationReport(report);
     setShowLoadDetails(false);
-    const ready = report.errors.length === 0;
+    // Un avertissement non traité reste bloquant : aucun résultat ne doit
+    // être présenté tant que la cohérence du transfert n'est pas validée.
+    const ready = report.errors.length === 0 && report.warnings.length === 0;
     setLoadCasesPrerequisiteReady(ready);
     if (ready) toast.success(`Charges appliquées et contrôlées · ${surfaceRows.length} surface(s) · ${enabledCombinations.length} combinaison(s) · ${report.lineLoadCount} charge(s) linéaire(s) générée(s) sur les combinaisons actives.`);
-    else toast.error(`Application des charges bloquée : ${report.errors[0]}`);
+    else toast.error(`Application des charges bloquée : ${report.errors[0] ?? report.warnings[0] ?? "contrôle à compléter"}`);
+  };
+  const focusCalculationDiagnostic = (message: string) => {
+    if (/source de masse|masse sismique|ψe|ψ2|ec8|fraction de q|coefficient de masse|accélération de la pesanteur/i.test(message)) {
+      setPanel("Calculer la descente");
+      setShowCalculationPreflight(false);
+      requestAnimationFrame(() => {
+        const target = document.getElementById("gcbtp-mass-source-editor");
+        target?.setAttribute("open", "");
+        target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      toast.info("Section Source de masse ouverte : renseignez ou vérifiez les facteurs EC8 et la fraction de Q.");
+      return;
+    }
+    const token = message.match(/\b(?:PL|DAL|BAL|ESC|S|P|B)\d+\b/i)?.[0]?.toLowerCase();
+    const level = token ? selected?.levels.find(item => item.elements.some(element => element.id.toLowerCase() === token)) : undefined;
+    const element = level?.elements.find(item => item.id.toLowerCase() === token);
+    if (level && element) {
+      setActiveLevelId(level.id);
+      setSelected3DElementKey(`${level.id}:${element.id}`);
+      setPanel("Éléments du niveau");
+      setShowCalculationPreflight(false);
+      toast.info(`Élément ${element.id} sélectionné : corrigez le contrôle puis relancez l’application des charges.`);
+      return;
+    }
+    toast.info("Aucun élément unique n’a été identifié dans ce message. Ouvrez les éléments du niveau et corrigez l’hypothèse indiquée.");
   };
   const downloadSurfaceAnalysis = () => {
     if (!surfaceAnalysis) return;
@@ -3090,10 +3147,21 @@ export default function BuildingCreateFlow({
       analysisValues={analysisValues}
       criticalElementKeys={criticalElementKeys}
       analysisScaleColors={analysisScaleColors}
-      showAnalysisValues={showAnalysisValues}
-      showAnalysisMoments={showAnalysisMoments}
       loadVisuals={loadVisuals}
-      showLoadValues={showLoadValues}
+      showAnalysisValues={visualizationOptions.efforts}
+      showAnalysisMoments={visualizationOptions.moments}
+      showLinearLoads={visualizationOptions.linearLoads}
+      showSurfaceLoads={visualizationOptions.surfaceLoads}
+      showLoadValues={visualizationOptions.linearLoads || visualizationOptions.surfaceLoads}
+      visualizationDraft={visualizationDraft}
+      visualizationOptions={visualizationOptions}
+      showStructureValuesMenu={showStructureValuesMenu}
+      onToggleStructureValuesMenu={() => { setVisualizationDraft(visualizationOptions); setShowStructureValuesMenu(value => !value); }}
+      onVisualizationDraftChange={key => setVisualizationDraft(current => ({ ...current, [key]: !current[key] }))}
+      onApplyVisualization={() => { setVisualizationOptions(visualizationDraft); setShowStructureValuesMenu(false); }}
+      chargesReady={calculationExecuted && analysisRows.length > 0}
+      reinforcementReady={Boolean(rcDesignResult?.elements?.length)}
+      showAllAnalysisValues={visualizationOptions.efforts || visualizationOptions.moments}
       meshedSurfaceIds={analyticalSurfaceMesh?.surfaces.filter(surface => surface.triangleCount > 0).map(surface => surface.sourceElementId.split(":")[0]) ?? surfaceAnalysis?.rows.filter(row => Boolean(row.analysis.mesh)).map(row => row.elementId) ?? []}
       meshSizeM={Number(surfaceMeshSizeM.replace(",", ".")) || 0.75}
       stairPlacementActive={false}
@@ -4344,11 +4412,6 @@ export default function BuildingCreateFlow({
           <div className="mb-1 flex items-center justify-between font-semibold text-[#45616b]"><span>Échelle Nu — poteaux et semelles</span><span>{loadScale.minimum.toFixed(1)} à {loadScale.maximum.toFixed(1)} kN</span></div>
           <div className="h-2 rounded-full" style={{ background: "linear-gradient(90deg, #ffecb4 0%, #ff9a45 50%, #ff1717 100%)" }} aria-label="Échelle progressive des charges" />
           <div className="mt-0.5 flex justify-between text-[9px] text-[#74858c]"><span>faible</span><span>intermédiaire</span><span>maximale</span></div>
-          {threeD && <div className="mt-1.5 flex gap-2 overflow-x-auto">
-            <button type="button" onClick={() => setShowAnalysisValues(value => !value)} className={`whitespace-nowrap rounded-md px-2 py-1 ${showAnalysisValues ? "bg-[#049b9b] text-white" : "bg-[#eef5f6] text-[#45616b]"}`}>Valeurs G/Q/Nu/Nser</button>
-            <button type="button" onClick={() => setShowAnalysisMoments(value => !value)} className={`whitespace-nowrap rounded-md px-2 py-1 ${showAnalysisMoments ? "bg-[#27358f] text-white" : "bg-[#eef0f8] text-[#45616b]"}`}>Moments M</button>
-            <button type="button" onClick={() => setShowLoadValues(value => !value)} className={`whitespace-nowrap rounded-md px-2 py-1 ${showLoadValues ? "bg-[#ff1717] text-white" : "bg-[#fff0f0] text-[#9a2f2f]"}`}>Charges 3D</button>
-          </div>}
         </div>
       )}
       {threeD ? actualThreeDView : grid}
@@ -5598,12 +5661,25 @@ export default function BuildingCreateFlow({
             {panel === "Calculer la descente" && (
               <Card>
                 <CardContent className="space-y-3 p-3">
+                  {false ? (
+                    <div className="space-y-2 rounded-lg border border-[#bfe4e2] bg-white p-3 text-[10px] text-[#245e60]">
+                      <div className="flex items-center justify-between gap-2 border-b border-[#dce9e9] pb-2"><b className="text-[12px] text-[#087f7f]">Éléments et charges calculés</b><span className="text-[9px] text-[#68767d]">Calcul terminé</span></div>
+                      <div className="grid grid-cols-[1.35fr_.7fr_.7fr_.8fr_.8fr] gap-1 rounded bg-[#eef8f7] px-2 py-1.5 text-[9px] font-bold"><span>Élément</span><span>G (kN)</span><span>Q (kN)</span><span>Nu (kN)</span><span>Nser (kN)</span></div>
+                      <div className="rounded bg-[#f8fbfb] px-2 py-1 text-[9px] text-[#68767d]"><b>G</b> = charge permanente · <b>Q</b> = charge d’exploitation · <b>Nu</b> = effort normal ELU · <b>Nser</b> = effort normal ELS</div>
+                      {analysisGroups.length === 0 ? <div className="rounded border border-dashed border-[#cbd9dc] p-3 text-center text-[10px] text-[#74858c]">Aucun élément calculé à afficher.</div> : analysisGroups.map(group => (
+                        <div key={group.key} className="overflow-hidden rounded-lg border border-[#dfe8e8]"><div className="bg-[#f2f7f7] px-2 py-1.5 text-[9px] font-bold text-[#245e60]">{group.label}</div>{group.rows.map(row => (
+                          <button type="button" key={`${row.levelId}:${row.id}`} onClick={() => setSelectedAnalysisRow(row)} className="grid w-full grid-cols-[1.35fr_.7fr_.7fr_.8fr_.8fr] gap-1 border-t border-[#edf1f1] px-2 py-2 text-left text-[9px] text-[#4c5e61] hover:bg-[#f8fbfb]"><span className="font-semibold">{row.label}<small className="ml-1 block font-normal text-[#8a9799]">{selected?.levels.find(level => level.id === row.levelId)?.label ?? row.levelId}{row.section ? ` · ${row.section}` : ""}</small></span><span>{row.gk.toFixed(1)}</span><span>{row.qk.toFixed(1)}</span><span className="font-bold text-[#087f7f]">{row.nu.toFixed(1)}</span><span>{row.nser.toFixed(1)}</span></button>
+                        ))}</div>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
                   {calculationExecuted && selectedAnalysisRow && <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#cbdde1] bg-white p-2">
                     <Button type="button" className="h-9 bg-[#102f45] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => noteReportButtonRef.current?.click()}>Note de calcul PDF</Button>
                     <Button type="button" className="h-9 bg-[#8a5b16] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => { setReinforcementPlanRequestToken(value => value + 1); requestAnimationFrame(() => document.getElementById("reinforcement-plan-section")?.scrollIntoView({ behavior: "smooth", block: "center" })); }}>Calculer le ferraillage / plans A4</Button>
                     <div className="col-span-2 text-[9px] text-[#68767d]">Élément sélectionné : {selectedAnalysisRow.label}. La note et le ferraillage concernent cet élément uniquement.</div>
                   </div>}
-                  {analyticalPrecheck && analyticalModel && (
+                  {!calculationExecuted && analyticalPrecheck && analyticalModel && (
                     <div className={`space-y-2 rounded-lg border p-3 text-[10px] ${analyticalPrecheck.ok ? "border-[#bfe4e2] bg-[#eaf8f7] text-[#245e60]" : "border-[#efc4b9] bg-[#fff1ed] text-[#914d3d]"}`}>
                       <div className="flex items-center justify-between gap-2">
                         <b>{analyticalPrecheck.ok ? "Pré-contrôle géométrique réussi" : "Pré-contrôle géométrique échoué — calcul bloqué"}</b>
@@ -5612,32 +5688,32 @@ export default function BuildingCreateFlow({
                       <div>{analyticalPrecheck.checkedNodeCount} nœud(s) · {analyticalPrecheck.checkedFrameCount} barre(s) · {analyticalPrecheck.checkedSurfaceCount} surface(s) · tolérance {analyticalModel.nodeMergeToleranceM.toFixed(3)} m</div>
                       <AnalyticalPlanPreview model={analyticalModel} />
                       <Button type="button" variant="outline" className="h-8 bg-white text-[10px]" onClick={downloadAnalyticalJson}>Exporter le modèle analytique JSON</Button>
-                      {analyticalPrecheck.errors.map((item,index) => <details key={`${item.code}-${index}`} className="rounded bg-white/80 p-2"><summary className="cursor-pointer font-semibold">Erreur · {item.message}</summary><p className="mt-1 pl-4">Ce contrôle bloque le calcul. Corrigez l’élément ou sa connexion indiquée, puis relancez le pré-contrôle.</p></details>)}
-                      {analyticalPrecheck.warnings.map((item,index) => <details key={`${item.code}-${index}`} className="rounded bg-white/70 p-2"><summary className="cursor-pointer font-semibold">Avertissement · {item.message}</summary><p className="mt-1 pl-4">Cet avertissement doit être vérifié avant le lancement. Ouvrez l’élément concerné, contrôlez ses appuis et ses paramètres, puis relancez le maillage et les charges si la structure a été modifiée.</p></details>)}
+                      {analyticalPrecheck.errors.map((item,index) => <details key={`${item.code}-${index}`} className="cursor-pointer rounded bg-white/80 p-2" onClick={() => focusCalculationDiagnostic(item.message)}><summary className="font-semibold">Erreur · {item.message}</summary><p className="mt-1 pl-4">Ce contrôle bloque le calcul. Cliquez pour ouvrir la correction de l’élément ou de sa connexion indiquée.</p></details>)}
+                      {analyticalPrecheck.warnings.map((item,index) => <details key={`${item.code}-${index}`} className="cursor-pointer rounded bg-white/70 p-2" onClick={() => focusCalculationDiagnostic(item.message)}><summary className="font-semibold">Avertissement · {item.message}</summary><p className="mt-1 pl-4">Cliquez pour ouvrir la correction de l’élément ou de la donnée concernée, puis relancez le maillage et les charges.</p></details>)}
                     </div>
                   )}
-                  {structuralValidation && (
+                  {!calculationExecuted && structuralValidation && (
                     <div className={`space-y-2 rounded-lg border p-3 text-[10px] ${structuralValidation.status === "conforme" ? "border-[#bfe4e2] bg-[#eaf8f7] text-[#245e60]" : structuralValidation.status === "a_verifier" ? "border-[#efd49d] bg-[#fffaf0] text-[#765f36]" : "border-[#efc4b9] bg-[#fff1ed] text-[#914d3d]"}`}>
                       <div className="flex items-center justify-between gap-2">
                         <b>Vérification du modèle · {structuralValidation.status === "conforme" ? "🟢 CONFORME" : structuralValidation.status === "a_verifier" ? "🟠 À VÉRIFIER" : "🔴 NON CONFORME"}</b>
                         <span>{structuralValidation.checkedLevels} niveau(x) · {structuralValidation.checkedElements} élément(s)</span>
                       </div>
                       <div>qadm du rapport : <b>{projectBearingKPa === null ? "non renseigné" : `${projectBearingKPa} kPa`}</b> · aucun qadm par défaut; le contrôle du sol reste non vérifié tant que la donnée réelle manque.</div>
-                      {structuralValidation.issues.map((issue, index) => <details key={`${issue.code}-${index}`} className="rounded bg-white/80 p-2"><summary className="cursor-pointer font-semibold">{issue.severity === "error" ? "Erreur" : "Avertissement"} · {issue.message}</summary><p className="mt-1 pl-4">{issue.severity === "error" ? "Cette incohérence bloque la descente des charges. Corrigez l’élément ou son appui." : "Vérifiez cette liaison ou cette continuité avant de poursuivre."}</p></details>)}
+                      {structuralValidation.issues.map((issue, index) => <details key={`${issue.code}-${index}`} className="cursor-pointer rounded bg-white/80 p-2" onClick={() => focusCalculationDiagnostic(issue.message)}><summary className="font-semibold">{issue.severity === "error" ? "Erreur" : "Avertissement"} · {issue.message}</summary><p className="mt-1 pl-4">Cliquez pour ouvrir l’élément ou la donnée à corriger avant de poursuivre.</p></details>)}
                       {!structuralValidation.issues.length && <div className="rounded bg-white/80 p-2">Aucune discontinuité verticale, semelle orpheline ou duplication détectée dans le contrôle automatique.</div>}
                     </div>
                   )}
-                  <p className="text-[11px] text-[#68767d]">
+                  {!calculationExecuted && <p className="text-[11px] text-[#68767d]">
                     Pré-étude : le calcul tributaire n’est autorisé qu’après le pré-contrôle de connectivité. Il ne remplace pas une analyse structurale par rigidité.
-                  </p>
-                  <LoadProgramEditor
+                  </p>}
+                  {!calculationExecuted && <LoadProgramEditor
                     program={loadProgram}
                     onChange={setLoadProgram}
                     patternValues={loadProgramPatternValues}
                     evaluation={loadProgramEvaluation}
                     diagnostics={loadProgramDiagnostics}
                     projectNorm={selected?.norm ?? norm}
-                  />
+                  />}
                   {showCalculationPreflight && calculationExecuted && analyticalModel && analyticalPrecheck?.ok && buildingLoadModel && planeAnalysis && (
                     <div className="space-y-2 rounded-lg border border-[#cbd5ef] bg-[#f4f6fc] p-3 text-[10px] text-[#354477]">
                       <b>Diagnostic 2D optionnel — portiques plans</b>
@@ -5723,16 +5799,18 @@ export default function BuildingCreateFlow({
                     />
                     </div>
                   )}
-                  {calculationExecuted && selected && selectedAnalysisRow?.type === "Semelle" && buildingCalculation && analyticalPrecheck?.ok && (
-                    <FoundationReactionPanel
-                      key={`${selected.id}:${selected.levels.length}`}
-                      model={analyticalModel}
-                      result={planeAnalysis?.result ?? null}
-                      gravityResult={automaticFoundationResult}
-                      plane={analysisPlane}
-                      soilProfile={projectGeotechnical}
-                      onResultChange={setFoundationEvaluation}
-                    />
+                  {calculationExecuted && selected && buildingCalculation && analyticalPrecheck?.ok && (
+                    <div className="hidden" aria-hidden="true">
+                      <FoundationReactionPanel
+                        key={`${selected.id}:${selected.levels.length}`}
+                        model={analyticalModel}
+                        result={planeAnalysis?.result ?? null}
+                        gravityResult={automaticFoundationResult}
+                        plane={analysisPlane}
+                        soilProfile={projectGeotechnical}
+                        onResultChange={setFoundationEvaluation}
+                      />
+                    </div>
                   )}
                   {calculationExecuted && buildingCalculation && recommendationItems.length > 0 && <div className="space-y-2 rounded-xl border border-[#efd49d] bg-[#fffaf0] p-3 text-[10px] text-[#765f36]">
                     <b className="text-[12px] text-[#8a5a21]">Solutions proposées à la suite du calcul</b>
@@ -5744,9 +5822,7 @@ export default function BuildingCreateFlow({
                   </div>}
                   {calculationExecuted && buildingCalculation && (
                     <div className="space-y-2 rounded-lg border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] text-[#245e60]">
-                      <div className="font-bold text-[#087f7f]">
-                        Calcul terminé sur la structure modélisée
-                      </div>
+                      <div className="flex items-center justify-between gap-2"><div className="font-bold text-[#087f7f]">Calcul terminé sur la structure modélisée</div><Button type="button" className="h-8 bg-[#1667c7] px-3 text-[10px] text-white hover:bg-[#1256a7]" onClick={downloadElementsPdf}><Download className="mr-1.5 h-3.5 w-3.5" />PDF</Button></div>
                       <div className="grid grid-cols-2 gap-1">
                         <span>Surfaces (dalles, balcons, escaliers) : {buildingCalculation.floorCount}</span>
                         <span>Balcons : {selected?.levels.flatMap(level => level.elements).filter(item => item.type === "Balcon").length ?? 0}</span>
@@ -5780,6 +5856,7 @@ export default function BuildingCreateFlow({
                         )}
                       </div>
                       <div className="mt-2 space-y-2">
+                        <div className="rounded bg-white/70 px-2 py-1 text-[9px] font-semibold">Libellés : <b>G</b> = charge permanente · <b>Q</b> = charge d’exploitation · <b>Nu</b> = effort normal de calcul ELU · <b>Nser</b> = effort normal de service ELS</div>
                         <div className="flex items-center justify-between px-1 text-[10px] font-bold text-[#3f6265]">
                           <span>Synthèse par famille et sollicitation</span>
                           <span className="font-normal text-[#789095]">{analysisGroups.length} groupe(s)</span>
@@ -5845,7 +5922,7 @@ export default function BuildingCreateFlow({
                           {buildingCalculation.warnings
                             .slice(0, 4)
                             .map(warning => (
-                              <details key={warning}><summary className="cursor-pointer">⚠ {warning}</summary><p className="mt-1 pl-4">Ouvrez l’élément concerné dans la liste des résultats pour vérifier ses charges, ses appuis et la cohérence de son transfert.</p></details>
+                              <details key={warning} className="cursor-pointer" onClick={() => focusCalculationDiagnostic(warning)}><summary>⚠ {warning}</summary><p className="mt-1 pl-4">Cliquez pour ouvrir l’élément ou la donnée concernée et vérifier ses charges, ses appuis et la cohérence de son transfert.</p></details>
                             ))}
                         </div>
                       )}
@@ -6075,6 +6152,8 @@ export default function BuildingCreateFlow({
                     <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-[#f7fafb] p-2 font-sans">{lastStructuralReport}</pre>
                   </details>}
                   </>}
+                  </>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -6096,19 +6175,20 @@ export default function BuildingCreateFlow({
                 {analyticalSurfaceMesh && <><Button type="button" variant="outline" className="mt-2 h-8 bg-white text-[9px]" onClick={() => setShowMeshDetails(value => !value)}>{showMeshDetails ? "Masquer les détails" : "Voir les détails du maillage"}</Button><div className={`mt-2 space-y-1 text-[9px] text-[#536b70] ${showMeshDetails ? "" : "hidden"}`}><div className="rounded bg-white p-2">{analyticalSurfaceMesh.surfaces.length} surface(s) · {analyticalSurfaceMesh.nodes.length} nœud(s) partagés · {analyticalSurfaceMesh.triangles.length} triangle(s) · {analyticalSurfaceMesh.errors.length} erreur(s)</div>{analyticalSurfaceMesh.surfaces.map(surface => <div key={surface.surfaceId} className="rounded bg-white px-2 py-1">{surface.sourceElementId} · {surface.kind} · {surface.nodeCount} nœuds / {surface.triangleCount} triangles · {surface.areaM2.toFixed(2)} m²{surface.errors.length ? ` · ${surface.errors.join("; ")}` : ""}</div>)}{analyticalSurfaceMesh.errors.map((message,index)=><div key={`mesh-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]">Erreur · {message}</div>)}{analyticalSurfaceMesh.warnings.map((message,index)=><div key={`mesh-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">Limite · {message}</div>)}</div></>}
                 {surfaceAnalysis?.errors.map((message,index)=><div key={`plate-mesh-error-${index}`} className="mt-1 rounded bg-[#fff1ed] p-2 text-[9px] text-[#914d3d]">Contrôle plaque · {message}</div>)}
               </div>
-              <div className={`rounded-xl border p-3 ${loadCasesPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : loadApplicationReport?.errors.length ? "border-[#efc4b9] bg-[#fff1ed]" : "border-[#dce7eb] bg-white"}`}>
-                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">2. Appliquer les charges</b><span className="text-[10px] font-bold">{loadCasesPrerequisiteReady ? "VALIDÉ" : loadApplicationReport?.errors.length ? "BLOQUÉ" : "À FAIRE"}</span></div>
+              <div className={`rounded-xl border p-3 ${loadCasesPrerequisiteReady ? "border-[#bfe4e2] bg-[#eaf8f7]" : loadApplicationReport && (loadApplicationReport.errors.length || loadApplicationReport.warnings.length) ? "border-[#efc4b9] bg-[#fff1ed]" : "border-[#dce7eb] bg-white"}`}>
+                <div className="flex items-center justify-between"><b className="text-[12px] text-[#245e60]">2. Appliquer les charges</b><span className="text-[10px] font-bold">{loadCasesPrerequisiteReady ? "VALIDÉ" : loadApplicationReport && (loadApplicationReport.errors.length || loadApplicationReport.warnings.length) ? "BLOQUÉ" : "À FAIRE"}</span></div>
                 <p className="mt-1 text-[10px] text-[#68767d]">Chaque dalle, volée et palier reçoit une ligne Gk/Qk nommée selon son type; les éléments du squelette (poutres, voiles, poteaux) gardent leurs propres poids et sources. Le contrôle vérifie aussi le transfert aux appuis et les combinaisons ELU/ELS.</p>
                 <div className="mt-2 rounded bg-white p-2 text-[9px]">Gk : <b>{buildingCalculation?.totalGk.toFixed(2) ?? "0.00"} kN</b> · Qk : <b>{buildingCalculation?.totalQk.toFixed(2) ?? "0.00"} kN</b> · combinaisons actives : <b>{loadProgram.combinations.filter(item=>item.enabled).length}</b></div>
                 <Button type="button" className="mt-2 h-9 w-full bg-[#087f7f] text-[10px] text-white disabled:opacity-40" disabled={!meshPrerequisiteReady || loadCasesPrerequisiteReady} onClick={applyBuildingLoads}>{loadCasesPrerequisiteReady ? "Charges validées" : "Appliquer les charges"}</Button>
                   {loadApplicationReport && <><Button type="button" variant="outline" className="mt-2 h-8 w-full bg-white text-[9px]" onClick={() => setShowLoadDetails(value => !value)}>{showLoadDetails ? "Masquer les détails" : "Voir les détails des charges"}</Button><div className={`mt-2 space-y-1 text-[9px] ${showLoadDetails ? "" : "hidden"}`}>
+                  <div className="rounded bg-[#eef6f7] px-2 py-1 text-[9px] font-bold text-[#245e60]">LIBELLÉS DES CHARGES — G = permanente · Q = exploitation · Nu = ELU · Nser = ELS</div>
                   <div className="rounded bg-[#eef6f7] px-2 py-1 font-bold text-[#245e60]">SURFACES — affectation individuelle</div>
                   {loadApplicationReport.surfaceRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.loadName}</b> · {row.areaM2.toFixed(2)} m² · Gk {row.gkKnM2.toFixed(2)} / Qk {row.qkKnM2.toFixed(2)} kN/m² → {row.gk.toFixed(2)} / {row.qk.toFixed(2)} kN · transfert vers appui {row.transferred ? "contrôlé" : "absent"}</div>)}
                   <div className="mt-2 rounded bg-[#eef6f7] px-2 py-1 font-bold text-[#245e60]">SQUELETTE — poids propres et charges propagées</div>
                   {loadApplicationReport.skeletonRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.loadName}</b> · Gk {row.gk.toFixed(2)} / Qk {row.qk.toFixed(2)} kN{row.sources.length ? <div className="mt-0.5 text-[#6f7f83]">Sources : {row.sources.slice(0,4).join("; ")}{row.sources.length > 4 ? `; … ${row.sources.length-4} autre(s)` : ""}</div> : null}</div>)}
                   {loadApplicationReport.combinationRows.map(row=><div key={row.id} className="rounded bg-white p-1.5"><b>{row.name}</b> · {row.category} · {row.formula} · {row.status} · {row.lineLoadCount} charge(s) linéaire(s)</div>)}
-                  {loadApplicationReport.errors.map((message,index)=><details key={`load-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]"><summary className="cursor-pointer font-semibold">Erreur · {message}</summary><p className="mt-1 pl-4">La descente des charges est bloquée pour le point indiqué. Corrigez l’appui, le maillage, la géométrie ou l’affectation Gk/Qk mentionnée, puis relancez l’application.</p></details>)}{loadApplicationReport.warnings.slice(0,12).map((message,index)=><details key={`load-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]"><summary className="cursor-pointer font-semibold">Avertissement · {message}</summary><p className="mt-1 pl-4">Ce message concerne la traçabilité ou la vérification du transfert. Il ne justifie pas à lui seul une augmentation de section.</p></details>)}{loadApplicationReport.warnings.length>12 && <div className="text-[#8a5a21]">… {loadApplicationReport.warnings.length-12} autre(s) avertissement(s)</div>}
                 </div></>}
+                  {loadApplicationReport && (loadApplicationReport.errors.length > 0 || loadApplicationReport.warnings.length > 0) && <div className="mt-2 space-y-1 rounded-lg border border-[#efc4b9] bg-[#fffaf6] p-2 text-[9px]"><div className="font-bold text-[#914d3d]">Contrôles à corriger avant de lancer le calcul</div>{loadApplicationReport.errors.map((message,index)=><details key={`visible-load-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]" onClick={() => focusCalculationDiagnostic(message)}><summary className="cursor-pointer font-semibold">Erreur · {message}</summary><p className="mt-1 pl-4">Cliquez pour ouvrir la zone de correction correspondante.</p></details>)}{loadApplicationReport.warnings.slice(0,12).map((message,index)=><details key={`visible-load-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]" onClick={() => focusCalculationDiagnostic(message)}><summary className="cursor-pointer font-semibold">Avertissement · {message}</summary><p className="mt-1 pl-4">Cliquez pour ouvrir la zone de donnée ou l’élément à corriger.</p></details>)}{loadApplicationReport.warnings.length > 12 && <div className="text-[#8a5a21]">… {loadApplicationReport.warnings.length - 12} autre(s) avertissement(s)</div>}</div>}
                 {recommendationItems.length > 0 && <div className="mt-2 space-y-2 rounded-lg border border-[#efd49d] bg-[#fffaf0] p-2 text-[9px] text-[#765f36]">
                   <div className="font-bold text-[11px] text-[#8a5a21]">Solutions proposées pour valider les contrôles</div>
                   <p>Ces actions sont des pistes de pré-étude. Après modification d’une section, d’une épaisseur ou des appuis, relancez le maillage et l’application des charges.</p>
@@ -6198,12 +6278,23 @@ function LoadProgramEditor({
     ...program,
     massSource: { ...program.massSource, patternFactors: { ...program.massSource.patternFactors, [patternId]: value }, status: "provisional", provenance: "manual" },
   });
+  const confirmMassSource = () => onChange({
+    ...program,
+    massSource: {
+      ...program.massSource,
+      patternFactors: { ...program.massSource.patternFactors, Q: 0.30 },
+      status: "ready",
+      provenance: "confirmed",
+      note: "ψ2(Q)=0,30 confirmé pour la catégorie habitation; validation utilisateur de la source de masse EC8 enregistrée.",
+    },
+  });
   const warnings = diagnostics.filter(item=>item.severity === "warning");
-  return <details className="rounded-lg border border-[#dce7eb] bg-white p-3 text-[10px] text-[#3d4b50]">
+  const massSourceConfirmed = program.massSource.status === "ready" || program.massSource.provenance === "confirmed";
+  return <details id="gcbtp-mass-source-editor" className="rounded-lg border border-[#dce7eb] bg-white p-3 text-[10px] text-[#3d4b50]">
     <summary className="cursor-pointer font-bold text-[#27358f]">Cas de charges, combinaisons et source de masse — {program.cases.length} cas / {program.combinations.filter(item=>item.enabled).length} combinaisons actives</summary>
     <div className="mt-2 space-y-2">
       <div className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">
-        <b>Statut pré-étude / non certifié.</b> Référentiel déclaré : {projectNorm || program.selectedStandard}. Les combinaisons automatiques et leurs coefficients proviennent du catalogue français NF EN 1990/NA et NF EN 1991-1-1/NA, selon la catégorie {program.projectUsage ?? "habitation"}. Les actions climatiques et les données du site restent à déterminer; la source de masse sismique requiert les facteurs EC8 par niveau. G/Q proviennent de la descente tributaire; les autres valeurs globales ne sont pas encore distribuées spatialement et ne constituent pas des cas dimensionnants.
+        <b>{massSourceConfirmed ? "Source de masse validée par l’utilisateur." : "Statut pré-étude / non certifié."}</b> Référentiel déclaré : {projectNorm || program.selectedStandard}. Les combinaisons automatiques et leurs coefficients proviennent du catalogue français NF EN 1990/NA et NF EN 1991-1-1/NA, selon la catégorie {program.projectUsage ?? "habitation"}. Les actions climatiques et les données du site restent à déterminer; {massSourceConfirmed ? "la source de masse EC8 est marquée comme validée dans ce projet." : "la source de masse sismique requiert les facteurs EC8 par niveau."} G/Q proviennent de la descente tributaire; les autres valeurs globales ne sont pas encore distribuées spatialement et ne constituent pas des cas dimensionnants.
       </div>
       <div className="space-y-1">
         <div className="font-semibold">Actions / patterns</div>
@@ -6217,10 +6308,11 @@ function LoadProgramEditor({
       </div>
       <div className="grid gap-1 rounded border border-[#edf1f1] p-2">
         <div className="font-semibold">Source de masse : {evaluation.massTonnes.toFixed(3)} t équivalentes</div>
-        <div className="text-[9px] text-[#74858c]">Σ poids des actions × fractions de masse ÷ g ; statut {loadProgramStatusLabel(program.massSource.status)}. ψ2(Q) vient du catalogue d’usage; le calcul EC8 complet utilise ψE=φ·ψ2 par niveau.</div>
+        <div className="text-[9px] text-[#74858c]">Σ poids des actions × fractions de masse ÷ g ; statut {loadProgramStatusLabel(program.massSource.status)}. ψ2(Q) vient du catalogue d’usage; {massSourceConfirmed ? "la validation utilisateur EC8 est enregistrée par niveau." : "le calcul EC8 complet utilise ψE=φ·ψ2 par niveau."}</div>
         <label className="flex items-center gap-2">Fraction de Q incluse dans la masse
           <input className="h-7 w-20 rounded border px-1" type="number" min="0" max="1" step="0.05" value={program.massSource.patternFactors.Q ?? 0} onChange={event=>updateMassFactor("Q",Number(event.target.value))} />
         </label>
+        <Button type="button" className="h-8 bg-[#087f7f] text-[9px] text-white" onClick={confirmMassSource}>Confirmer 0,30 pour habitation</Button>
       </div>
       <div className="space-y-1">
         <div className="font-semibold">Combinaisons — facteurs catalogués, résultantes globales de pré-étude</div>

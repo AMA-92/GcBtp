@@ -6,7 +6,7 @@ import { downloadReinforcementA4Pdf, downloadReinforcementGroupA4Pdf } from "@sh
 import { groupReinforcementElements, loadReinforcementTemplate } from "@shared/reinforcement-report";
 import { CONCRETE_MATERIAL_CATALOG } from "@shared/model-catalog";
 import { resolveRCStandardProfile, sameRCStandardFamily } from "@shared/rc-standard-profile";
-import { FRENCH_BAEL_LEGACY_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD, FRENCH_EUROCODE_PROFILE } from "@shared/french-standard-profile";
+import { DEFAULT_PROJECT_STANDARD, FRENCH_BAEL_LEGACY_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD, FRENCH_EUROCODE_PROFILE } from "@shared/french-standard-profile";
 
 type Draft = {
   standard: string;
@@ -34,7 +34,7 @@ type Draft = {
 };
 
 const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRebarFykMpa?: number): Draft => {
-  const normalizedStandard = standard || FRENCH_EUROCODE_DEFAULT_STANDARD;
+  const normalizedStandard = standard || DEFAULT_PROJECT_STANDARD;
   const standardProfile = resolveRCStandardProfile(normalizedStandard);
   const isBael = standardProfile.family === "bael-91-99";
   const isEurocode = standardProfile.family === "eurocode-2";

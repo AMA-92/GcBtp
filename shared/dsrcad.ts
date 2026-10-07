@@ -1,4 +1,4 @@
-import { FRENCH_EUROCODE_DEFAULT_STANDARD } from "./french-standard-profile";
+import { DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD } from "./french-standard-profile";
 
 export const DSRCAD_MODULES = [
   "Dosage Béton",
@@ -29,5 +29,5 @@ export const DSRCAD_DEFAULT_PLANNING = {
   tasks: ["Installation de chantier", "Fondations", "Élévation des murs"],
 } as const;
 
-export const DSRCAD_NORMS = [FRENCH_EUROCODE_DEFAULT_STANDARD, "BAEL 91 mod. 99"] as const;
+export const DSRCAD_NORMS = [DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD] as const;
 export const DSRCAD_COUNTRIES = ["Sénégal", "Mauritanie", "Mali", "Gambie"] as const;

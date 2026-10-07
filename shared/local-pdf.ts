@@ -123,7 +123,7 @@ export function buildLocalPdf(title: string, content: string) {
   if (hasStairSchema) pageKinds.push({ kind: "stair" });
   const objects: string[] = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    `<< /Type /Pages /Kids [${pageKinds.map((_, index) => `${5 + index * 2} 0 R`).join(" ")}] /Count ${pageKinds.length} >>`,
+    `<< /Type /Pages /Kids [${pageKinds.map((_, index) => `${4 + index * 2} 0 R`).join(" ")}] /Count ${pageKinds.length} >>`,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];
   pageKinds.forEach((page, index) => {
@@ -149,14 +149,14 @@ export function buildLocalPdf(title: string, content: string) {
   return new TextEncoder().encode(pdf);
 }
 
-export function downloadLocalPdf(title: string, content: string) {
+export function downloadLocalPdf(title: string, content: string, fileName?: string) {
   const bytes = buildLocalPdf(title, content);
   const blob = new Blob([bytes], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const safeName =
-    title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() ||
-    "rapport-gcbtp";
+  const safeName = fileName
+    ? fileName.replace(/[<>:"/\\|?*]/g, "-").trim()
+    : title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "rapport-gcbtp";
   link.href = url;
   link.download = `${safeName}.pdf`;
   link.click();
@@ -556,6 +556,96 @@ export function downloadReinforcementA4Pdf(result: RCDesignResult, element?: RCE
   const link = document.createElement("a");
   link.href = url;
   link.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+
+export type ElementsReportPdfRow = {
+  element: string;
+  level: string;
+  section: string;
+  g: number;
+  q: number;
+  nu: number;
+  nser: number;
+};
+
+const pdfShort = (value: string, max = 25) => {
+  const normalized = value.replace(/[\r\n]+/g, " ");
+  return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
+};
+
+function elementsReportPage(metadata: Array<[string, string]>, rows: ElementsReportPdfRow[], page: number, pageCount: number) {
+  const commands: string[] = [
+    "0.98 0.99 1 rg\n0 0 595 842 re f",
+    "0.06 0.18 0.27 rg\n0 730 595 112 re f",
+    textAt("GcBtp", 42, 805, 20, "1 1 1 rg"),
+    textAt("NOTE DE CALCUL", 42, 778, 13, "0.72 0.92 0.94 rg"),
+    textAt(`Page ${page}/${pageCount}`, 500, 805, 8, "0.86 0.94 0.96 rg"),
+    "0.04 0.55 0.58 rg\n42 716 511 3 re f",
+    "0.90 0.96 0.97 rg\n42 650 511 54 re f",
+  ];
+  metadata.slice(0, 6).forEach(([label, value], index) => {
+    const column = index % 3;
+    const row = Math.floor(index / 3);
+    const x = 52 + column * 170;
+    const y = 682 - row * 25;
+    commands.push(textAt(label.toUpperCase(), x, y, 6.5, "0.25 0.43 0.48 rg"));
+    commands.push(textAt(pdfShort(value, 25), x, y - 11, 8.5, "0.08 0.20 0.27 rg"));
+  });
+  const rowHeight = 18;
+  const columns: Array<[string, number]> = [
+    ["ÉLÉMENT", 48], ["NIVEAU", 180], ["SECTION", 250], ["G (kN)", 350], ["Q (kN)", 398], ["Nu (kN)", 446], ["Nser (kN)", 500],
+  ];
+  commands.push("0.12 0.42 0.55 rg\n48 600 505 25 re f");
+  columns.forEach(([label, x]) => commands.push(textAt(label, x + 4, 609, 7.2, "1 1 1 rg")));
+  rows.forEach((row, index) => {
+    const y = 575 - index * rowHeight;
+    if (index % 2 === 0) commands.push(`0.91 0.97 0.98 rg\n48 ${y - 4} 505 ${rowHeight} re f`);
+    commands.push(`0.76 0.86 0.88 RG\n0.5 w\n48 ${y - 4} m 553 ${y - 4} l S`);
+    const values = [pdfShort(row.element, 23), pdfShort(row.level, 13), pdfShort(row.section, 17), row.g.toFixed(1), row.q.toFixed(1), row.nu.toFixed(1), row.nser.toFixed(1)];
+    columns.forEach(([, x], valueIndex) => commands.push(textAt(values[valueIndex], x + 4, y + 3, 7.2, "0.10 0.22 0.28 rg")));
+  });
+  commands.push("0.04 0.55 0.58 RG\n1 w\n48 600 m 553 600 l S");
+  commands.push(textAt("G = charge permanente  ·  Q = charge d’exploitation  ·  Nu = effort normal ELU  ·  Nser = effort normal ELS", 48, 45, 7.2, "0.25 0.38 0.42 rg"));
+  commands.push(textAt("Document généré par GcBtp — vérifier les hypothèses et valider la note selon le projet.", 48, 30, 6.8, "0.42 0.50 0.53 rg"));
+  return commands.join("\n");
+}
+
+export function buildElementsReportPdf(title: string, metadata: Array<[string, string]>, rows: ElementsReportPdfRow[]) {
+  const rowsPerPage = 28;
+  const pageCount = Math.max(1, Math.ceil(rows.length / rowsPerPage));
+  const pages = Array.from({ length: pageCount }, (_, index) => elementsReportPage(metadata, rows.slice(index * rowsPerPage, (index + 1) * rowsPerPage), index + 1, pageCount));
+  const objects: string[] = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Kids [${pages.map((_, index) => `${4 + index * 2} 0 R`).join(" ")}] /Count ${pageCount} >>`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  pages.forEach(commands => {
+    const contentId = 5 + (objects.length - 3);
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`,
+      `<< /Length ${new TextEncoder().encode(commands).length} >>\nstream\n${commands}\nendstream`,
+    );
+  });
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [0];
+  objects.forEach((object, index) => { offsets.push(new TextEncoder().encode(pdf).length); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = new TextEncoder().encode(pdf).length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach(offset => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new TextEncoder().encode(pdf);
+}
+
+export function downloadElementsReportPdf(title: string, metadata: Array<[string, string]>, rows: ElementsReportPdfRow[], fileName: string) {
+  const bytes = buildElementsReportPdf(title, metadata, rows);
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${fileName.replace(/[<>:"/\\|?*]/g, "-").trim() || "note de calcul"}.pdf`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

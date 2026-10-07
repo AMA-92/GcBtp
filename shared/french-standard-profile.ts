@@ -1,5 +1,7 @@
 export const FRENCH_EUROCODE_DEFAULT_STANDARD = "Eurocode 2 — France" as const;
 export const FRENCH_BAEL_LEGACY_STANDARD = "BAEL 91 mod. 99" as const;
+/** Référentiel proposé par défaut pour un nouveau projet; les Eurocodes restent sélectionnables. */
+export const DEFAULT_PROJECT_STANDARD = FRENCH_BAEL_LEGACY_STANDARD;
 
 /**
  * Profil de calcul français utilisé par défaut dans GcBtp lorsque le maître
@@ -39,9 +41,9 @@ export function isFrenchEurocodeStandard(standard: string | null | undefined): b
   return !value || /eurocode|\ben\s*199[0-9]|nf\s*en/i.test(value);
 }
 
-/** Apply the application-wide French calculation basis, preserving BAEL as an explicit French legacy option. */
+/** Apply BAEL by default; an explicit Eurocode selection remains available. */
 export function normalizeProjectStandard(standard: string | null | undefined): string {
-  return isBaelStandard(standard) ? FRENCH_BAEL_LEGACY_STANDARD : FRENCH_EUROCODE_DEFAULT_STANDARD;
+  return isBaelStandard(standard) ? FRENCH_BAEL_LEGACY_STANDARD : isFrenchEurocodeStandard(standard) && Boolean(standard?.trim()) ? FRENCH_EUROCODE_DEFAULT_STANDARD : DEFAULT_PROJECT_STANDARD;
 }
 
 export function getFrenchCalculationBasisLabel(standard: string | null | undefined): string {
