@@ -113,6 +113,44 @@ export function checkRectangularTorsion(i: TorsionCheckInput): TorsionCheckResul
   return { AkMm2: Ak, teffMm: teff, thetaRad: theta, TRdMaxKnM: TRdMax, TRdSKnM: TRdS, AslReqMm2: AslReq, passesConcrete, passesTransverse, passesLongitudinal, passes: warnings.length === 0 && passesConcrete && passesTransverse && passesLongitudinal, warnings };
 }
 
+export type Eurocode2BondCondition = "good" | "poor";
+
+export function calculateEurocode2StraightAnchorageMm(input: {
+  barDiameterMm: number;
+  fckMpa: number;
+  fykMpa: number;
+  gammaC: number;
+  gammaS: number;
+  bondCondition: Eurocode2BondCondition;
+  alphaProduct?: number;
+}) {
+  const { barDiameterMm, fckMpa, fykMpa, gammaC, gammaS } = input;
+  if (![barDiameterMm, fckMpa, fykMpa, gammaC, gammaS].every(Number.isFinite)
+    || barDiameterMm <= 0 || fckMpa < 15 || fckMpa > 90 || fykMpa <= 0 || gammaC <= 0 || gammaS <= 0) {
+    throw new Error("Le calcul d’ancrage EC2 exige des paramètres matériaux et un diamètre valides.");
+  }
+  const alphaProduct = input.alphaProduct ?? 1;
+  if (!Number.isFinite(alphaProduct) || alphaProduct <= 0 || alphaProduct > 1) {
+    throw new Error("Le produit α1·α2·α3·α4·α5 doit être compris entre 0 et 1.");
+  }
+  const fctmMpa = fckMpa <= 50
+    ? 0.3 * fckMpa ** (2 / 3)
+    : 2.12 * Math.log(1 + (fckMpa + 8) / 10);
+  const fctk005Mpa = 0.7 * fctmMpa;
+  const fctdMpa = fctk005Mpa / gammaC; // αct = 1, sans réduction nationale implicite.
+  const eta1 = input.bondCondition === "good" ? 1 : 0.7;
+  const eta2 = barDiameterMm <= 32 ? 1 : Math.max(0, (132 - barDiameterMm) / 100);
+  const fbdMpa = 2.25 * eta1 * eta2 * fctdMpa;
+  const sigmaSdMpa = fykMpa / gammaS; // Hypothèse conservatrice : acier à fyd.
+  const lbRqdMm = (barDiameterMm / 4) * (sigmaSdMpa / fbdMpa);
+  const minimumCompressionLengthMm = Math.max(0.6 * lbRqdMm, 10 * barDiameterMm, 100);
+  const designLengthMm = Math.max(alphaProduct * lbRqdMm, minimumCompressionLengthMm);
+  return {
+    fctmMpa, fctk005Mpa, fctdMpa, eta1, eta2, fbdMpa, sigmaSdMpa,
+    lbRqdMm, alphaProduct, minimumCompressionLengthMm, designLengthMm,
+  };
+}
+
 export type SecondOrderColumnInput = {
   NEdKn: number;
   M0EdKnM: number;

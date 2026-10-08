@@ -19,6 +19,8 @@ type Draft = {
   gammaS: string;
   alphaCC: string;
   coverMm: string;
+  anchorageBondCondition: "good" | "poor";
+  anchorageAlphaProduct: string;
   minReinforcementPercent: string;
   maxReinforcementPercent: string;
   concreteShearStressLimitMpa: string;
@@ -59,6 +61,8 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   gammaS: "1.15",
   alphaCC: String(standardProfile.suggestedAlphaCC ?? 0.85),
   coverMm: String(concrete.cover),
+  anchorageBondCondition: "poor",
+  anchorageAlphaProduct: "1.00",
   minReinforcementPercent: isBael ? "0.20" : "0.13",
   maxReinforcementPercent: isBael ? "5.00" : "4.00",
   concreteShearStressLimitMpa: "0.55",
@@ -171,6 +175,8 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     gammaS: numeric(draft.gammaS),
     alphaCC: numeric(draft.alphaCC),
     coverMm: numeric(draft.coverMm),
+    anchorageBondCondition: draft.anchorageBondCondition,
+    anchorageAlphaProduct: numeric(draft.anchorageAlphaProduct),
     minReinforcementRatio: numeric(draft.minReinforcementPercent) / 100,
     maxReinforcementRatio: numeric(draft.maxReinforcementPercent) / 100,
     concreteShearStressLimitMpa: numeric(draft.concreteShearStressLimitMpa),
@@ -301,7 +307,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     ["fckMpa", "fck béton", "MPa"], ["fykMpa", "fyk acier", "MPa"],
     ["gammaC", "γc", "—"], ["gammaS", "γs", "—"], ["alphaCC", resolveRCStandardProfile(projectNorm).family === "bael-91-99" ? "Facteur béton d’étude" : "αcc", "—"],
     ["coverMm", "Enrobage nominal", "mm"], ["minReinforcementPercent", "ρ armatures min.", "%"], ["maxReinforcementPercent", "ρ armatures max.", "%"],
-    ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"], ["bondStressMpa", "Adhérence τbd déclarée", "MPa"],
+    ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"], ["bondStressMpa", "τbd générique (hors lbd EC2)", "MPa"],
     ["minClearSpacingMm", "Espacement libre min.", "mm"], ["maxLinkSpacingMm", "Espacement cadres max.", "mm"],
     ["maxDeflectionRatio", "Limite de flèche L/", "—"], ["maxColumnSlenderness", "Limite d’élancement λ", "—"], ["maxCrackWidthMm", "wk,max", "mm"],
   ];
@@ -322,6 +328,10 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     <div className="grid grid-cols-2 gap-2">
       {fields.map(([key, label, unit]) => <label key={key}>{label} <span className="text-[#93856d]">{unit}</span><input type="number" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft[key] as string} onChange={event => update(key, event.target.value)} /></label>)}
       <label className="col-span-2">Diamètres d’acier disponibles · mm<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.availableBarDiametersMm} onChange={event => update("availableBarDiametersMm", event.target.value)} /><span className="text-[8px]">Séparer par virgule, espace ou point-virgule.</span></label>
+      {selectedStandardProfile.family === "eurocode-2" && <>
+        <label>Adhérence des barres<select className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.anchorageBondCondition} onChange={event => update("anchorageBondCondition", event.target.value as Draft["anchorageBondCondition"])}><option value="good">Bonne — à confirmer</option><option value="poor">Mauvaise — conservatrice</option></select></label>
+        <label>Produit α1·α2·α3·α4·α5<input type="number" min="0.01" max="1" step="0.01" className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.anchorageAlphaProduct} onChange={event => update("anchorageAlphaProduct", event.target.value)} /><span className="text-[8px]">1,00 sans réduction de forme/confinement (conservateur).</span></label>
+      </>}
     </div>
     <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[9px] text-amber-950">Règle de projet : <b>HA8 est interdit comme armature longitudinale principale d’un poteau</b> (il peut rester admissible en cadre/étrier). Les contrôles wk, torsion, second ordre nominal et détail sismique activables restent soumis à l’édition exacte des Eurocodes et à la revue d’un ingénieur.</div>
       <label className="flex items-start gap-2 rounded bg-white p-2"><input type="checkbox" checked={draft.basisConfirmed} onChange={event => update("basisConfirmed", event.target.checked)} /><span>J’ai vérifié ces paramètres contre les documents du projet. Cette attestation de saisie ne transforme pas le calcul générique en vérification normative.</span></label>

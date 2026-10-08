@@ -6,8 +6,8 @@ import type { Spatial3DResult } from "./frame-solver-3d";
 import { designStairV2 } from "./stair-design-v2";
 import { resolveRCStandardProfile } from "./rc-standard-profile";
 import { validateRCNormSelection } from "./rc-norms";
-import { checkColumnSecondOrder, checkCrackWidth, checkRectangularTorsion, checkSeismicDetailing } from "./rc-eurocode-checks";
-import { baelColumnLayoutForCount, baelColumnTieDiameterMm, baelMaximumColumnBarPitchMm, baelMaximumColumnTieSpacingMm, baelMinimumColumnBarCount, calculateBAELSecondOrderAxis, calculateBAELStraightAnchorageMm, minimumBAELColumnSteelAreaMm2, solveBAELIsolatedColumnEquilibrium, type BAELColumnSectionShape } from "./bael-column-checks";
+import { calculateEurocode2StraightAnchorageMm, checkColumnSecondOrder, checkCrackWidth, checkRectangularTorsion, checkSeismicDetailing } from "./rc-eurocode-checks";
+import { baelColumnLayoutForCount, baelColumnTieDiameterMm, baelMaximumColumnBarPitchMm, baelMaximumColumnTieSpacingMm, baelMinimumColumnBarCount, calculateBAELReferenceAnchorageMm, calculateBAELSecondOrderAxis, minimumBAELColumnSteelAreaMm2, solveBAELIsolatedColumnEquilibrium, type BAELColumnSectionShape } from "./bael-column-checks";
 
 export type RCDesignBasis = {
   schemaVersion: typeof RC_DESIGN_SCHEMA_VERSION;
@@ -21,6 +21,8 @@ export type RCDesignBasis = {
   gammaS: number;
   alphaCC: number;
   coverMm: number;
+  anchorageBondCondition?: "good" | "poor";
+  anchorageAlphaProduct?: number;
   minReinforcementRatio: number;
   maxReinforcementRatio: number;
   concreteShearStressLimitMpa: number;
@@ -411,6 +413,8 @@ export function validateRCDesignBasis(basis: RCDesignBasis): string[] {
   if (!positive(basis.fykMpa) || basis.fykMpa < 250 || basis.fykMpa > 700) errors.push("fyk doit être compris entre 250 et 700 MPa.");
   if (!positive(basis.gammaC) || !positive(basis.gammaS) || !positive(basis.alphaCC)) errors.push("Les coefficients matériau γc, γs et αcc doivent être saisis et positifs.");
   if (!positive(basis.coverMm) || basis.coverMm > 120) errors.push("L’enrobage nominal doit être compris entre 0 et 120 mm.");
+  if (basis.anchorageBondCondition !== undefined && !["good", "poor"].includes(basis.anchorageBondCondition)) errors.push("La qualité d’adhérence déclarée doit être bonne ou mauvaise.");
+  if (basis.anchorageAlphaProduct !== undefined && (!positive(basis.anchorageAlphaProduct) || basis.anchorageAlphaProduct > 1)) errors.push("Le produit des coefficients α1·α2·α3·α4·α5 doit être compris entre 0 et 1.");
   if (!positive(basis.minReinforcementRatio) || !positive(basis.maxReinforcementRatio) || basis.maxReinforcementRatio <= basis.minReinforcementRatio || basis.maxReinforcementRatio > 0.08) errors.push("Les taux d’armatures minimal et maximal doivent être cohérents et déclarés.");
   if (!positive(basis.concreteShearStressLimitMpa)) errors.push("La contrainte de cisaillement du béton doit être renseignée selon le référentiel choisi.");
   if (!positive(basis.bondStressMpa)) errors.push("La contrainte d’adhérence de calcul doit être renseignée selon le référentiel choisi.");
@@ -750,17 +754,29 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     proposal(`${demand.id}:longitudinal`, `Longitudinal poteau · ${count}HA${diameter} · ${shape === "circular" ? "répartition circulaire régulière" : "répartition sur les faces"}`, diameter, count, longitudinalRequiredAreaMm2, length / 1000),
     proposal(`${demand.id}:ties`, `Cadres BAEL · HA ${tieDiameter} / ${tieSpacingMm.toFixed(0)} mm · ceinture continue`, tieDiameter, tieCount, 0, tieLengthM),
   ];
-  let baelAnchorageRatio: number | null = null;
-  let baelAnchorageLengthMm: number | null = null;
+  let anchorageRequiredLengthMm: number | null = null;
+  let anchorageFormula = "";
   if (isBael && basis.fckMpa <= 60) {
-    const anchorage = calculateBAELStraightAnchorageMm(diameter, basis.fykMpa, basis.fckMpa);
-    baelAnchorageRatio = anchorage.ratioDiameters;
-    baelAnchorageLengthMm = anchorage.lengthMm;
-    const anchorageLengthM = anchorage.lengthMm / 1000;
+    const anchorage = calculateBAELReferenceAnchorageMm(diameter, basis.fykMpa);
+    anchorageRequiredLengthMm = anchorage.lengthMm;
+    anchorageFormula = `Référence BAEL du projet : lreq=50Φ·fyk/500=${anchorage.ratioDiameters.toFixed(1)}Φ=${anchorage.lengthMm.toFixed(0)} mm (HA FeE500 : 50Φ). Comparaison indépendante à la longueur droite réellement disponible en tête et au pied.`;
+    limitations.push("Ancrage BAEL prérempli par la référence de projet 50Φ pour FeE500; confirmer l’applicabilité au calcul BAEL contractuel et mesurer séparément les longueurs réellement disponibles.");
+  } else if (!isBael) {
+    const anchorage = calculateEurocode2StraightAnchorageMm({
+      barDiameterMm: diameter, fckMpa: basis.fckMpa, fykMpa: basis.fykMpa,
+      gammaC: basis.gammaC, gammaS: basis.gammaS,
+      bondCondition: basis.anchorageBondCondition ?? "poor",
+      alphaProduct: basis.anchorageAlphaProduct ?? 1,
+    });
+    anchorageRequiredLengthMm = anchorage.designLengthMm;
+    anchorageFormula = `EC2 : lb,rqd=Φ/4·σsd/fbd; σsd=fyd=${anchorage.sigmaSdMpa.toFixed(1)} MPa; fbd=2,25·η1(${anchorage.eta1})·η2(${anchorage.eta2.toFixed(2)})·fctd=${anchorage.fbdMpa.toFixed(3)} MPa; α1…α5=${anchorage.alphaProduct.toFixed(2)} (1 sans réduction de forme/confinement); lreq=${anchorage.designLengthMm.toFixed(0)} mm. Adhérence ${anchorage.eta1 === 1 ? "bonne" : "mauvaise"}; comparez tête et pied aux longueurs droites disponibles.`;
+    limitations.push("Ancrage EC2 calculé avec σsd=fyd (conservateur), α1…α5=produit déclaré (1,0 par défaut sans réduction) et qualité d’adhérence du profil; valider position de bétonnage, forme, confinement, pression transversale et annexe nationale.");
+  }
+  if (anchorageRequiredLengthMm !== null) {
+    const anchorageLengthM = anchorageRequiredLengthMm / 1000;
     const anchorageBarCount = count * 2;
     const anchorageTotalLengthM = anchorageBarCount * anchorageLengthM;
-    reinforcement.push({ id: `${demand.id}:anchorage`, label: `Scellement droit BAEL · ${anchorage.ratioDiameters.toFixed(1)}Φ = ${anchorage.lengthMm.toFixed(0)} mm par extrémité`, diameterMm: diameter, count: anchorageBarCount, areaMm2: 0, requiredAreaMm2: 0, lengthPerBarM: anchorageLengthM, totalLengthM: anchorageTotalLengthM, massKg: anchorageTotalLengthM * barMassKgPerM(diameter) });
-    limitations.push("A.6.1,221 : longueur minimale de scellement droit calculée pour une barre HA tendue à sa limite élastique; le contrôle compare cette longueur aux valeurs réellement disponibles saisies en tête et en pied.");
+    reinforcement.push({ id: `${demand.id}:anchorage`, label: `Ancrage requis · ${isBael ? "BAEL 50Φ" : "EC2"} · ${anchorageRequiredLengthMm.toFixed(0)} mm par extrémité`, diameterMm: diameter, count: anchorageBarCount, areaMm2: 0, requiredAreaMm2: 0, lengthPerBarM: anchorageLengthM, totalLengthM: anchorageTotalLengthM, massKg: anchorageTotalLengthM * barMassKgPerM(diameter) });
   }
   const checks: RCCheck[] = [
     check("column-axial", "Compression axiale", axialKn, axialResistance, "kN", "NRd≈0,8·Ac·fcd+As·fyd", combinationId, combinationName),
@@ -771,17 +787,28 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     check("column-bar-layout-count", "Disposition longitudinale · nombre de barres", selectedBars.minimumCount, count, "barres", isBael ? (shape === "circular" ? "Au moins six barres équidistantes pour la section circulaire; adaptation géométrique A.8.1,22" : "Une barre à chaque angle et nombre suffisant pour le pas maximal A.8.1,22") : "Nombre pair ≥ 4 pour la répartition retenue", combinationId, combinationName),
     check("column-tie-spacing", "Espacement des cadres", tieSpacingMm, tieSpacingLimitMm, "mm", isBael ? `A.8.1,3 : s ≤ min(15·φlong=${(15 * diameter).toFixed(0)} mm, 400 mm, petit côté+100 mm)` : "sCadres ≤ espacement maximal déclaré dans la base du projet", combinationId, combinationName),
   ];
+  const anchorTop = demand.anchorageAvailableTopMm;
+  const anchorBottom = demand.anchorageAvailableBottomMm;
+  const hasAnchorTop = anchorTop !== undefined && Number.isFinite(anchorTop);
+  const hasAnchorBottom = anchorBottom !== undefined && Number.isFinite(anchorBottom);
+  const anchorageLabel = isBael ? "Ancrage disponible · BAEL 91 mod. 99" : "Ancrage disponible · Eurocode 2";
+  if (isBael && basis.fckMpa > 60) {
+    checks.push(emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, `fc28=${basis.fckMpa.toFixed(1)} MPa dépasse le domaine BAEL déclaré; aucune longueur requise ni conformité d’ancrage n’est émise.`));
+  } else if (anchorageRequiredLengthMm !== null && hasAnchorTop && hasAnchorBottom) {
+    const available = Math.min(anchorTop!, anchorBottom!);
+    const topStatus = anchorTop! >= anchorageRequiredLengthMm ? "suffisant" : "INSUFFISANT";
+    const bottomStatus = anchorBottom! >= anchorageRequiredLengthMm ? "suffisant" : "INSUFFISANT";
+    checks.push(check("column-anchorage-length", anchorageLabel, anchorageRequiredLengthMm, available, "mm", `${anchorageFormula} Tête : ${anchorTop!.toFixed(0)} mm (${topStatus}); pied : ${anchorBottom!.toFixed(0)} mm (${bottomStatus}). La vérification n’est satisfaite que si les deux longueurs disponibles ≥ lreq.`, combinationId, combinationName));
+  } else if (anchorageRequiredLengthMm !== null) {
+    const missing = [!hasAnchorTop ? "tête" : null, !hasAnchorBottom ? "pied" : null].filter(Boolean).join(" et ");
+    checks.push({
+      ...emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, `${anchorageFormula} Saisir la longueur droite réellement disponible en ${missing}; la longueur requise est calculée automatiquement et ne remplace pas cette mesure.`),
+      demand: anchorageRequiredLengthMm,
+    });
+  } else {
+    checks.push(emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, "Le calcul de la longueur requise d’ancrage n’est pas disponible pour ces paramètres de norme."));
+  }
   if (isBael) {
-    const anchorTop = demand.anchorageAvailableTopMm;
-    const anchorBottom = demand.anchorageAvailableBottomMm;
-    if (basis.fckMpa > 60) {
-      checks.push(emptyCheck("column-anchorage-length", "Ancrage droit BAEL · A.6.1,221", "mm", combinationId, combinationName, `fc28=${basis.fckMpa.toFixed(1)} MPa dépasse le domaine BAEL A.1.1/A.2.1,12; aucun verdict d’ancrage BAEL n’est émis.`));
-    } else if (baelAnchorageLengthMm !== null && positive(anchorTop ?? 0) && positive(anchorBottom ?? 0)) {
-      const available = Math.min(anchorTop!, anchorBottom!);
-      checks.push(check("column-anchorage-length", "Ancrage droit BAEL · A.6.1,221", baelAnchorageLengthMm, available, "mm", `sreq=Φ·fe/(4τsu)=${baelAnchorageLengthMm.toFixed(0)} mm; disponibles: tête=${anchorTop!.toFixed(0)} mm, pied=${anchorBottom!.toFixed(0)} mm; le plus petit des deux gouverne. Vérifier les aciers de couture et l’ancrage dans le support.`, combinationId, combinationName));
-    } else {
-      checks.push(emptyCheck("column-anchorage-length", "Ancrage droit BAEL · A.6.1,221", "mm", combinationId, combinationName, "Saisir les longueurs droites réellement disponibles au-delà de la face du support en tête et en pied; aucune conformité d’ancrage n’est attribuée sans ces deux mesures."));
-    }
     if (baelSecondX && baelSecondY) {
       const secondOrderFormula = `Domaine A.4.3,5 : f/h < max(15,20·e1/h) dans les deux axes; α=1, φ=2; ea=${baelSecondX.additionalEccentricityMm.toFixed(1)} mm; e2x=${baelSecondX.secondOrderEccentricityMm.toFixed(1)} mm, e2y=${baelSecondY.secondOrderEccentricityMm.toFixed(1)} mm; M1x=${momentX.toFixed(2)} kN·m, M1y=${momentY.toFixed(2)} kN·m.`;
       if (baelDomainRatio < 1) {
@@ -816,8 +843,6 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
       ? unverifiedCheck("column-second-order", "Second ordre · moments de premier ordre nuls", Math.max(secondOrderX.MEdKnM, secondOrderY.MEdKnM), "kN·m", "M0≈0 dans les deux axes : le ratio d’amplification est indéfini. L’imperfection calculée ne constitue pas une validation normative.", combinationId, combinationName)
       : check("column-second-order", "Second ordre · amplification biaxiale", secondOrderAmplification, 5, "—", `Contrôle indicatif par courbure nominale dans X et Y; L0=${bucklingLengthMm.toFixed(0)} mm. MEd,x=${secondOrderX.MEdKnM.toFixed(2)} kN·m; MEd,y=${secondOrderY.MEdKnM.toFixed(2)} kN·m.`, combinationId, combinationName));
     if (secondOrderX.warnings.length || secondOrderY.warnings.length) limitations.push(...secondOrderX.warnings, ...secondOrderY.warnings);
-    const indicativeAnchorageLengthMm = diameter * fyd / (4 * basis.bondStressMpa);
-    checks.push(unverifiedCheck("column-anchorage-length", "Longueur d’ancrage requise · indicative", indicativeAnchorageLengthMm, "mm", "La longueur disponible au nœud et les règles du profil sélectionné doivent être évaluées.", combinationId, combinationName));
     checks.push(emptyCheck("column-bael-detailing", "Détails réglementaires Eurocode 2", "—", combinationId, combinationName, "Les contrôles complets d’ancrage, recouvrement et détails EC2 ne sont pas implémentés par cette fiche."));
   }
   if (basis.seismicDetailingEnabled && basis.seismicDuctilityClass) {
@@ -829,9 +854,9 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const slendernessX = bucklingLengthMm / Math.sqrt(height * height / 12);
   const slendernessY = bucklingLengthMm / Math.sqrt(width * width / 12);
   const secondOrderRequired = isBael ? !a43WithinDomain : Math.max(slendernessX, slendernessY) > basis.maxColumnSlenderness;
-  const finalStatus: RCColumnCalculationSheet["finalStatus"] = checks.some(item => item.status === "non satisfaisant" || item.status === "bloqué")
+  const finalStatus: RCColumnCalculationSheet["finalStatus"] = checks.some(item => item.status === "non satisfaisant")
     ? "NON CONFORME"
-    : checks.some(item => item.status === "à vérifier")
+    : checks.some(item => item.status === "bloqué" || item.status === "à vérifier")
       ? "À VÉRIFIER"
       : "CONFORME";
   const context = demand.columnContext;

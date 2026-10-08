@@ -113,7 +113,8 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(design.checks.map(item => item.id)).toContain("column-slenderness");
     expect(design.checks.find(item => item.id === "column-tie-spacing")?.status).toBe("satisfaisant");
     expect(design.checks.find(item => item.id === "column-bar-layout-count")?.status).toBe("satisfaisant");
-    expect(design.checks.find(item => item.id === "column-anchorage-length")?.status).toBe("à vérifier");
+    expect(design.checks.find(item => item.id === "column-anchorage-length")?.status).toBe("bloqué");
+    expect(design.checks.find(item => item.id === "column-anchorage-length")?.demand).toBeGreaterThan(0);
     expect(design.checks.find(item => item.id === "column-bael-detailing")?.status).toBe("bloqué");
     expect(design.reinforcement.map(item => item.id)).toContain("P1:ties");
     const longitudinal = design.reinforcement.find(item => item.id === "P1:longitudinal")!;
@@ -123,6 +124,22 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(ties.diameterMm).toBe(8);
     expect(result.schedule.length).toBeGreaterThan(0);
     expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
+  });
+
+  it("sépare la longueur requise EC2 des longueurs disponibles en tête et au pied", () => {
+    const member = { id: "PA", type: "column" as const, combinationId: "ELU", combinationName: "ELU", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3000, axialKn: 250, shearKn: 0, momentKnM: 10, momentXKnM: 10, momentYKnM: 0 };
+    const design = (top?: number, bottom?: number) => designReinforcedConcrete({
+      basis: { ...basis(), anchorageBondCondition: "good" as const },
+      members: [{ ...member, anchorageAvailableTopMm: top, anchorageAvailableBottomMm: bottom }],
+      slabs: [],
+    }).elements[0];
+    const required = design().checks.find(item => item.id === "column-anchorage-length")!.demand!;
+    expect(design().checks.find(item => item.id === "column-anchorage-length")?.status).toBe("bloqué");
+    expect(design(required, required).checks.find(item => item.id === "column-anchorage-length")?.status).toBe("satisfaisant");
+    const insufficient = design(required + 100, required - 1).checks.find(item => item.id === "column-anchorage-length")!;
+    expect(insufficient.status).toBe("non satisfaisant");
+    expect(insufficient.formula).toContain("Tête");
+    expect(insufficient.formula).toContain("pied");
   });
 
   it("classifies a modeled corner column, records connected members, and exposes its calculation sheet", () => {

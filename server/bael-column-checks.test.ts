@@ -8,6 +8,7 @@ import {
   baelMaximumColumnTieSpacingMm,
   baelMinimumColumnBarCount,
   calculateBAELSecondOrderAxis,
+  calculateBAELReferenceAnchorageMm,
   calculateBAELStraightAnchorageMm,
   minimumBAELColumnSteelAreaMm2,
   solveBAELIsolatedColumnEquilibrium,
@@ -64,6 +65,7 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     const anchorage = calculateBAELStraightAnchorageMm(10, 500, 25);
     expect(anchorage.tauSuMpa).toBeCloseTo(2.835, 8);
     expect(anchorage.lengthMm).toBeCloseTo(440.9171076, 5);
+    expect(calculateBAELReferenceAnchorageMm(12, 500).lengthMm).toBe(600);
   });
 
   it("dimensionne une section rectangulaire avec second ordre, cadres et ancrage calculés", () => {
@@ -83,12 +85,15 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     const longitudinal = design.reinforcement.find(item => item.id === "P6:longitudinal");
     const ties = design.reinforcement.find(item => item.id === "P6:ties");
     const anchor = design.reinforcement.find(item => item.id === "P6:anchorage");
+    const anchorageCheck = design.checks.find(item => item.id === "column-anchorage-length");
     expect(longitudinal?.areaMm2).toBeGreaterThanOrEqual(400);
     expect(longitudinal?.diameterMm).toBeGreaterThanOrEqual(8);
     expect(ties?.label).toContain("Cadres BAEL");
     expect(ties?.lengthPerBarM).toBeGreaterThan(0);
     expect(anchor?.label).toContain("par extrémité");
     expect(anchor?.lengthPerBarM).toBeGreaterThan(0);
+    expect(anchorageCheck?.demand).toBe(longitudinal!.diameterMm * 50);
+    expect(anchorageCheck?.status).toBe("satisfaisant");
   });
 
   it("prend le relais par A.4.4 hors domaine A.4.3,5 et rend un verdict de stabilité", () => {
@@ -110,7 +115,7 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
       slabs: [],
     }).elements[0].checks.find(item => item.id === "column-anchorage-length");
     expect(designForAnchorage()?.status).toBe("bloqué");
-    expect(designForAnchorage()?.formula).toContain("Saisir les longueurs droites réellement disponibles");
+    expect(designForAnchorage()?.formula).toContain("longueur droite réellement disponible");
     expect(designForAnchorage(800, 800)?.status).toBe("satisfaisant");
     expect(designForAnchorage(800, 100)?.status).toBe("non satisfaisant");
   });

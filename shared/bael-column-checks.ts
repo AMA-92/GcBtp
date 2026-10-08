@@ -74,6 +74,15 @@ export function calculateBAELStraightAnchorageMm(barDiameterMm: number, fykMpa: 
   return { lengthMm: barDiameterMm * fykMpa / (4 * tauSuMpa), ratioDiameters: fykMpa / (4 * tauSuMpa), ft28Mpa, tauSuMpa };
 }
 
+/** Projet GcBtp: conservative reference 50Φ for FeE500, scaled to the declared steel yield strength. */
+export function calculateBAELReferenceAnchorageMm(barDiameterMm: number, fykMpa: number) {
+  if (![barDiameterMm, fykMpa].every(Number.isFinite) || barDiameterMm <= 0 || fykMpa <= 0) {
+    throw new Error("Le calcul de la longueur de référence BAEL exige un diamètre et un fyk positifs.");
+  }
+  const ratioDiameters = 50 * fykMpa / 500;
+  return { ratioDiameters, lengthMm: barDiameterMm * ratioDiameters };
+}
+
 export function baelMaximumColumnBarPitchMm(widthMm: number, depthMm: number) {
   return Math.min(Math.min(widthMm, depthMm) + 100, 400);
 }

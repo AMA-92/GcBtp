@@ -837,6 +837,11 @@ export default function BuildingCreateFlow({
       const parsed = Number(value.trim().replace(",", "."));
       return Number.isFinite(parsed) ? parsed : 0;
     };
+    const optionalNumericInput = (value: string): number | undefined => {
+      if (!value.trim()) return undefined;
+      const parsed = Number(value.trim().replace(",", "."));
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
     const combination = loadProgram.combinations.find(item => item.id === solverCombinationId);
     const factors = combination?.caseFactors ?? {};
     const factorG = factors["case:G"] ?? 1;
@@ -875,8 +880,8 @@ export default function BuildingCreateFlow({
       sectionShape: columnVerificationGeometry.shape,
       lengthMm: lengthMm > 0 ? lengthMm : demand.lengthMm,
       bucklingLengthMm: lengthMm,
-      anchorageAvailableTopMm: numericInput(columnVerificationGeometry.anchorageTopMm),
-      anchorageAvailableBottomMm: numericInput(columnVerificationGeometry.anchorageBottomMm),
+      anchorageAvailableTopMm: optionalNumericInput(columnVerificationGeometry.anchorageTopMm),
+      anchorageAvailableBottomMm: optionalNumericInput(columnVerificationGeometry.anchorageBottomMm),
       axialKn,
       momentXKnM,
       momentYKnM,
@@ -3227,17 +3232,21 @@ export default function BuildingCreateFlow({
     ? rcMemberExtraction.demands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column")
     : undefined;
   const selectedColumnVerificationDesign = rcDesignResult?.elements.find(element => element.elementId === selectedAnalysisRow?.id && element.type === "column");
+  const selectedColumnAnchorageCheck = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-anchorage-length");
+  const selectedColumnAnchorageRequiredMm = typeof selectedColumnAnchorageCheck?.demand === "number" && Number.isFinite(selectedColumnAnchorageCheck.demand)
+    ? selectedColumnAnchorageCheck.demand
+    : null;
   const baelColumnChecksActive = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-bael-detailing")?.label.includes("BAEL") ?? false;
   const columnVerificationCheckIds = new Set([
-    "column-axial", "column-interaction", "column-steel-min", "column-steel-max", "column-bar-spacing", "column-bar-layout-count", "column-tie-spacing",
-    ...(baelColumnChecksActive ? ["column-second-order", "column-bael-detailing", "column-anchorage-length"] : []),
+    "column-axial", "column-interaction", "column-steel-min", "column-steel-max", "column-bar-spacing", "column-bar-layout-count", "column-tie-spacing", "column-anchorage-length",
+    ...(baelColumnChecksActive ? ["column-second-order", "column-bael-detailing"] : []),
   ]);
   const columnVerificationCoreChecks = selectedColumnVerificationDesign?.checks.filter(item => [
     ...columnVerificationCheckIds,
   ].includes(item.id)) ?? [];
   const unsupportedColumnBarCheck = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-longitudinal-diameter");
   const baelSecondOrderDomainCheck = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-second-order");
-  const requiredColumnVerificationChecks = baelColumnChecksActive ? 10 : 7;
+  const requiredColumnVerificationChecks = baelColumnChecksActive ? 10 : 8;
   const columnVerificationFailedChecks = [...columnVerificationCoreChecks.filter(item => item.status === "non satisfaisant"), ...(unsupportedColumnBarCheck ? [unsupportedColumnBarCheck] : [])];
   const columnVerificationState: "idle" | "running" | "stale" | "blocked" | "failed" | "passed" = columnVerificationFeedback
     ? "blocked"
@@ -3251,6 +3260,7 @@ export default function BuildingCreateFlow({
     selected?.id, selectedAnalysisRow?.levelId, selectedAnalysisRow?.id,
     columnVerificationGeometry?.shape, columnVerificationGeometry?.widthM, columnVerificationGeometry?.depthM,
     columnVerificationGeometry?.diameterM, columnVerificationGeometry?.heightM,
+    columnVerificationGeometry?.anchorageTopMm, columnVerificationGeometry?.anchorageBottomMm,
     columnVerificationGeometry?.selfWeight, columnVerificationLoads, columnVerificationSelectedBarDiameter,
   ]);
   const columnVerificationAlreadySaved = columnVerificationSavedKey === columnVerificationConfigurationKey;
@@ -3265,7 +3275,7 @@ export default function BuildingCreateFlow({
     if (lastColumnVerificationNotice.current === noticeKey) return;
     lastColumnVerificationNotice.current = noticeKey;
     if (columnVerificationState === "passed") toast.success(`Vérification numérique satisfaisante pour ${selectedAnalysisRow?.id ?? "le poteau"}.`);
-    else if (columnVerificationState === "failed") toast.error(unsupportedColumnBarCheck ? "Diamètre longitudinal non admis par le moteur pour un poteau." : columnVerificationFailedChecks.some(item => item.id === "column-anchorage-length") ? "Ancrage insuffisant : augmenter la longueur droite disponible en tête ou en pied, ou revoir le détail d’ancrage BAEL." : baelSecondOrderDomainCheck?.status === "non satisfaisant" ? "La stabilité calculée selon BAEL A.4.4 n’est pas satisfaite : augmenter la section, revoir f ou les appuis dans le modèle." : `Section ou armatures insuffisantes : ${columnVerificationFailedChecks.map(item => item.label).join(", ") || "contrôle non satisfait"}.`);
+    else if (columnVerificationState === "failed") toast.error(unsupportedColumnBarCheck ? "Diamètre longitudinal non admis par le moteur pour un poteau." : columnVerificationFailedChecks.some(item => item.id === "column-anchorage-length") ? "Ancrage insuffisant : vérifier les longueurs disponibles en tête et au pied selon la norme sélectionnée." : baelSecondOrderDomainCheck?.status === "non satisfaisant" ? "La stabilité calculée selon BAEL A.4.4 n’est pas satisfaite : augmenter la section, revoir f ou les appuis dans le modèle." : `Section ou armatures insuffisantes : ${columnVerificationFailedChecks.map(item => item.label).join(", ") || "contrôle non satisfait"}.`);
     else toast.info(columnVerificationFeedback ?? selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? "Vérification bloquée : données ou contrôle normatif manquant.");
   }, [columnVerificationRequested, columnVerificationState, selectedAnalysisRow?.id, unsupportedColumnBarCheck, baelSecondOrderDomainCheck, columnVerificationFailedChecks, columnVerificationFeedback, selectedColumnVerificationDesign]);
   const runColumnVerification = () => {
@@ -3329,7 +3339,7 @@ export default function BuildingCreateFlow({
     const verifiedDesign = selectedColumnVerificationDesign;
     const verifiedDemand = columnVerificationMemberDemands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column");
     if (!verifiedDesign || !verifiedDemand) {
-      toast.error("Le résultat BAEL ou les efforts du poteau ne sont plus disponibles; aucune modification n’a été enregistrée.");
+      toast.error("Le résultat de calcul ou les efforts du poteau ne sont plus disponibles; aucune modification n’a été enregistrée.");
       return;
     }
     const token = (valueM: number) => {
@@ -4575,7 +4585,7 @@ export default function BuildingCreateFlow({
               : check.id === "column-second-order" && !finiteDemand
                 ? "amplification indéfinie (M₀≈0)"
                 : check.id === "column-anchorage-length" && finiteDemand
-                  ? `≈ ${demandValue.toFixed(0)} ${check.unit} · indicatif`
+                  ? `requis ${demandValue.toFixed(0)} ${check.unit}${finiteResistance ? ` / disponible min. ${resistanceValue.toFixed(0)} ${check.unit}` : " / disponibilité à renseigner"}`
                   : finiteDemand && finiteResistance ? `${demandValue.toFixed(2)} / ${resistanceValue.toFixed(2)} ${check.unit}` : "";
         const columnActions = check.id === "column-slenderness"
           ? ["Le test compare λ=L₀/i à la limite configurée (valeur initiale du formulaire : 15). Vérifiez que L₀ est bien la longueur de flambement effective et que la limite correspond au référentiel choisi.", "Ce dépassement du seuil géométrique ne prouve pas à lui seul une insuffisance de résistance axiale; ne modifiez la section qu’après confirmation de ces données."]
@@ -4583,8 +4593,10 @@ export default function BuildingCreateFlow({
             ? ["Le moment de premier ordre est nul ou quasi nul : le ratio MEd/M₀ est indéfini, même si le moment M₂ calculé reste fini.", "Ce point n’est pas un échec de section. Vérifiez les Mx/My de la combinaison et faites contrôler l’interaction complète du second ordre."]
             : check.id === "column-second-order"
               ? ["Le moteur compare l’amplification nominale MEd/M₀ à une limite de dépistage interne de 5; ce résultat n’est pas, à lui seul, un verdict normatif de résistance.", "Vérifiez L₀, les moments de la combinaison gouvernante et la méthode complète de second ordre applicable."]
-              : check.id === "column-anchorage-length"
-                ? ["La longueur affichée est issue d’une formule indicative d’adhérence; elle ne constitue pas un contrôle d’ancrage satisfaisant ou non satisfaisant.", "Confirmez adhérence, position des barres, enrobage, crochets, recouvrements et détail d’appui selon le référentiel choisi; ce point ne signifie pas que la section est trop petite."]
+              : check.id === "column-anchorage-length" && check.status === "non satisfaisant"
+                ? ["La longueur réellement disponible en tête ou au pied est inférieure au requis calculé.", "Prolonger les barres droites ou faire valider un détail ancré (crochet/retour ou dispositif conforme) selon le référentiel et la géométrie du nœud; relancer le calcul après correction."]
+                : check.id === "column-anchorage-length"
+                  ? ["Saisir séparément la longueur droite réelle disponible dans le support en tête et au pied; le modèle analytique ne fournit pas le tracé des barres.", "Le requis est calculé automatiquement selon la norme sélectionnée; aucune conformité n’est conclue tant que les deux mesures ne sont pas renseignées."]
                 : check.id === "column-bael-detailing"
                   ? ["Contrôle bloqué car les cadres, zones critiques, confinement et recouvrements ne sont pas encore calculés par le moteur.", "Ce blocage logiciel ne se corrige pas en augmentant la section; le détail doit être vérifié séparément selon le référentiel du projet."]
                   : undefined;
@@ -6304,7 +6316,7 @@ export default function BuildingCreateFlow({
                           {selectedAnalysisRow && columnVerificationGeometry && <>
                             <header className="flex h-14 shrink-0 items-center gap-4 border-b border-[#e4e4e4] bg-white px-4">
                               <button type="button" onClick={closeColumnVerification} aria-label="Retour à l’origine des charges" className="grid h-10 w-10 place-items-center rounded-full text-[#173b73] hover:bg-[#f1f3f7]"><ArrowLeft className="h-6 w-6" /></button>
-                              <DialogHeader className="min-w-0 flex-1 gap-0 text-left"><DialogTitle className="text-[16px] font-bold text-[#173b73]">Poteau {selectedAnalysisRow.id} (BAEL)</DialogTitle><DialogDescription className="text-[10px]">Vérification du poteau sélectionné</DialogDescription></DialogHeader>
+                              <DialogHeader className="min-w-0 flex-1 gap-0 text-left"><DialogTitle className="text-[16px] font-bold text-[#173b73]">Poteau {selectedAnalysisRow.id} · {selected?.norm || norm || "Norme du projet"}</DialogTitle><DialogDescription className="text-[10px]">Vérification du poteau sélectionné</DialogDescription></DialogHeader>
                             </header>
                             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
                               <section className="rounded-xl border border-[#e1e5eb] bg-white p-3">
@@ -6327,10 +6339,11 @@ export default function BuildingCreateFlow({
                                 </div>
                                 <div className="mt-4 border-t border-[#edf0f4] pt-3">
                                   <h4 className="text-[12px] font-semibold text-[#333]">Ancrage réel des barres longitudinales</h4>
-                                  <p className="mt-1 text-[10px] leading-4 text-[#777]">Saisir la longueur droite disponible depuis la face du support, sans compter les parties courbes. Les deux extrémités sont vérifiées selon BAEL A.6.1,221.</p>
+                                  <div className="mt-1 rounded-md bg-[#eef6ff] p-2 text-[10px] leading-4 text-[#244b72]"><b>Requis calculé automatiquement</b><br />{selectedColumnAnchorageRequiredMm !== null ? `Tête : ${selectedColumnAnchorageRequiredMm.toFixed(0)} mm · pied : ${selectedColumnAnchorageRequiredMm.toFixed(0)} mm · HA${selectedColumnVerificationDesign?.columnReport?.longitudinalDiameterMm ?? "—"}` : "Calculé après le dimensionnement et le choix du diamètre HA."}<br />La valeur requise ne préremplit pas la longueur disponible réelle.</div>
+                                  <p className="mt-1 text-[10px] leading-4 text-[#777]">Renseigner les longueurs droites réellement disponibles depuis la face du support, sans les parties courbes; elles sont comparées séparément au requis calculé selon la norme sélectionnée.</p>
                                   <div className="mt-2 grid grid-cols-2 gap-3">
-                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible en tête (mm)<Input aria-label="Longueur d’ancrage disponible en tête, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageTopMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageTopMm: event.target.value, dirty: true } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
-                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible en pied (mm)<Input aria-label="Longueur d’ancrage disponible en pied, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageBottomMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageBottomMm: event.target.value, dirty: true } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
+                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible réel en tête (mm)<Input aria-label="Longueur d’ancrage réellement disponible en tête, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageTopMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageTopMm: event.target.value, dirty: true } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
+                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible réel au pied (mm)<Input aria-label="Longueur d’ancrage réellement disponible au pied, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageBottomMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageBottomMm: event.target.value, dirty: true } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
                                   </div>
                                 </div>
                               </section>
