@@ -755,7 +755,7 @@ export default function BuildingCreateFlow({
   const [columnVerificationSavedKey, setColumnVerificationSavedKey] = useState<string | null>(null);
   const [showColumnBarCatalog, setShowColumnBarCatalog] = useState(false);
   const [columnVerificationLoadsDirty, setColumnVerificationLoadsDirty] = useState(false);
-  const [columnVerificationSelectedBarDiameter, setColumnVerificationSelectedBarDiameter] = useState<number | null>(null);
+  const [columnVerificationSelectedBarDiameters, setColumnVerificationSelectedBarDiameters] = useState<number[]>([]);
   const lastColumnVerificationNotice = useRef("");
   const [visualizationOptions, setVisualizationOptions] = useState({ efforts: false, moments: false, linearLoads: false, surfaceLoads: false });
   const [visualizationDraft, setVisualizationDraft] = useState({ efforts: false, moments: false, linearLoads: false, surfaceLoads: false });
@@ -3246,6 +3246,13 @@ export default function BuildingCreateFlow({
           : unsupportedColumnBarCheck ? "failed"
           : !selectedColumnVerificationDesign || columnVerificationCoreChecks.length < requiredColumnVerificationChecks || columnVerificationCoreChecks.some(item => item.status !== "satisfaisant" && item.status !== "non satisfaisant") ? "blocked"
             : columnVerificationFailedChecks.length ? "failed" : "passed";
+  const selectableColumnBarDiameters = (rcDesignResult?.materialBasis.availableBarDiametersMm ?? [8, 10, 12, 14, 16, 20, 25, 32, 40]).filter(diameter => diameter >= (baelColumnChecksActive ? 8 : 10));
+  const updateColumnBarDiameterSelection = (diameter?: number) => {
+    setColumnVerificationSelectedBarDiameters(current => diameter === undefined
+      ? []
+      : current.includes(diameter) ? current.filter(value => value !== diameter) : [...current, diameter].sort((a, b) => a - b));
+    setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current);
+  };
   const columnSectionIncreaseProposals = useMemo(() => {
     if (columnVerificationState !== "failed" || unsupportedColumnBarCheck || !rcDesignResult || !selectedColumnVerificationDesign || !selectedAnalysisRow || !columnVerificationGeometry) return [];
     const member = columnVerificationMemberDemands.find(item => item.id === selectedAnalysisRow.id && item.type === "column");
@@ -3253,25 +3260,25 @@ export default function BuildingCreateFlow({
     const basis = {
       schemaVersion: 1 as const,
       ...rcDesignResult.materialBasis,
-      availableBarDiametersMm: columnVerificationSelectedBarDiameter
-        ? [columnVerificationSelectedBarDiameter]
+      availableBarDiametersMm: columnVerificationSelectedBarDiameters.length
+        ? rcDesignResult.materialBasis.availableBarDiametersMm.filter(diameter => columnVerificationSelectedBarDiameters.includes(diameter))
         : rcDesignResult.materialBasis.availableBarDiametersMm,
     };
     const factors = loadProgram.combinations.find(item => item.id === solverCombinationId)?.caseFactors ?? {};
     return proposeColumnSectionIncreases({
       basis,
       member,
-      overrides: columnVerificationSelectedBarDiameter ? { [`${member.id}:longitudinal`]: { diameterMm: columnVerificationSelectedBarDiameter, count: selectedColumnVerificationDesign.columnReport?.longitudinalBarCount ?? 4 } } : {},
+      overrides: {},
       selfWeightIncluded: columnVerificationGeometry.selfWeight,
       permanentLoadFactor: factors["case:G"] ?? 1,
       maxIncreaseMm: 500,
     });
-  }, [columnVerificationState, unsupportedColumnBarCheck, rcDesignResult, selectedColumnVerificationDesign, selectedAnalysisRow, columnVerificationGeometry, columnVerificationMemberDemands, columnVerificationSelectedBarDiameter, loadProgram.combinations, solverCombinationId]);
+  }, [columnVerificationState, unsupportedColumnBarCheck, rcDesignResult, selectedColumnVerificationDesign, selectedAnalysisRow, columnVerificationGeometry, columnVerificationMemberDemands, columnVerificationSelectedBarDiameters, loadProgram.combinations, solverCombinationId]);
   const columnVerificationConfigurationKey = JSON.stringify([
     selected?.id, selectedAnalysisRow?.levelId, selectedAnalysisRow?.id,
     columnVerificationGeometry?.shape, columnVerificationGeometry?.widthM, columnVerificationGeometry?.depthM,
     columnVerificationGeometry?.diameterM, columnVerificationGeometry?.heightM,
-    columnVerificationGeometry?.selfWeight, columnVerificationLoads, columnVerificationSelectedBarDiameter,
+    columnVerificationGeometry?.selfWeight, columnVerificationLoads, columnVerificationSelectedBarDiameters,
   ]);
   const columnVerificationAlreadySaved = columnVerificationSavedKey === columnVerificationConfigurationKey;
   useEffect(() => {
@@ -3432,7 +3439,7 @@ export default function BuildingCreateFlow({
     setShowColumnBarCatalog(false);
     setRcDesignResult(null);
     setColumnVerificationLoadsDirty(false);
-    setColumnVerificationSelectedBarDiameter(null);
+    setColumnVerificationSelectedBarDiameters([]);
     lastColumnVerificationNotice.current = "";
     const selectedLevel = selected?.levels.find(level => level.id === selectedAnalysisRow.levelId);
     const selectedElement = selectedLevel?.elements.find(element => element.id === selectedAnalysisRow.id);
@@ -6171,7 +6178,7 @@ export default function BuildingCreateFlow({
                       projectRebarFykMpa={selectedProjectMaterials.rebar.fykMpa}
                       runRequestToken={reinforcementPlanRequestToken}
                       runRequestElementId={columnVerificationRequested && selectedAnalysisRow?.type === "Poteau" ? selectedAnalysisRow.id : null}
-                      runRequestBarDiameterMm={columnVerificationSelectedBarDiameter}
+                      runRequestBarDiametersMm={columnVerificationSelectedBarDiameters}
                       members={columnVerificationMemberDemands}
                       slabs={rcSlabDemands}
                       foundations={rcFoundationDemands}
@@ -6384,10 +6391,10 @@ export default function BuildingCreateFlow({
                               <section className="overflow-hidden rounded-xl border border-[#e1e5eb] bg-white">
                                 <button type="button" aria-expanded={showColumnBarCatalog} onClick={() => setShowColumnBarCatalog(value => !value)} className="flex min-h-10 w-full items-center justify-between px-3 text-left text-[11px] font-semibold text-[#6550a1]"><span className="flex items-center gap-2"><BookOpen className="h-4 w-4" />CATALOGUE D’ARMATURES HA</span><span>{showColumnBarCatalog ? "−" : "+"}</span></button>
                                 {showColumnBarCatalog && <div className="border-t border-[#edf0f4] px-3 py-2.5">
-                                  <p className="mb-2 text-[10px] leading-4 text-[#667085]">Mode automatique : le moteur compare les configurations 4, 6, 8… barres, y compris les groupes mixtes symétriques. Un diamètre sélectionné ci-dessous limite volontairement la recherche à ce HA.</p>
+                                  <p className="mb-2 text-[10px] leading-4 text-[#667085]">Choisissez AUTO pour tout le catalogue, ou cochez un ou plusieurs diamètres. Un seul HA sélectionné impose ce diamètre à toutes les barres; plusieurs HA autorisent une disposition mixte symétrique.</p>
                                   <div className="flex flex-wrap gap-1.5">
-                                    <button type="button" aria-pressed={columnVerificationSelectedBarDiameter === null} onClick={() => { setColumnVerificationSelectedBarDiameter(null); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${columnVerificationSelectedBarDiameter === null ? "border-[#6550a1] bg-[#6550a1] text-white" : "border-[#ded8ea] bg-[#f8f6fb] text-[#5f4691]"}`}>AUTO · MIXTE</button>
-                                    {(rcDesignResult?.materialBasis.availableBarDiametersMm ?? [8, 10, 12, 14, 16, 20, 25, 32, 40]).filter(diameter => diameter >= (baelColumnChecksActive ? 8 : 10)).map((diameter, index) => <button key={`${diameter}-${index}`} type="button" aria-pressed={columnVerificationSelectedBarDiameter === diameter} onClick={() => { setColumnVerificationSelectedBarDiameter(diameter); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${columnVerificationSelectedBarDiameter === diameter ? "border-[#6550a1] bg-[#6550a1] text-white" : "border-[#ded8ea] bg-[#f8f6fb] text-[#5f4691]"}`}>HA {diameter} · {formatHACatalogArea(1, diameter)} cm²</button>)}
+                                    <button type="button" aria-pressed={columnVerificationSelectedBarDiameters.length === 0} onClick={() => updateColumnBarDiameterSelection()} className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${columnVerificationSelectedBarDiameters.length === 0 ? "border-[#6550a1] bg-[#6550a1] text-white" : "border-[#ded8ea] bg-[#f8f6fb] text-[#5f4691]"}`}>AUTO · TOUTES</button>
+                                    {selectableColumnBarDiameters.map(diameter => { const active = columnVerificationSelectedBarDiameters.includes(diameter); return <button key={diameter} type="button" aria-pressed={active} onClick={() => updateColumnBarDiameterSelection(diameter)} className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${active ? "border-[#6550a1] bg-[#6550a1] text-white" : "border-[#ded8ea] bg-[#f8f6fb] text-[#5f4691]"}`}>HA {diameter} · {formatHACatalogArea(1, diameter)} cm²</button>; })}
                                   </div>
                                   <p className="mt-1 text-[9px] text-[#667085]">Aire tabulée par barre; HA 5–6 restent visibles dans le tableau mais ne sont pas admis ici comme armatures longitudinales.</p>
                                   <a href="/assets/ha-bar-area-table.jpg" target="_blank" rel="noreferrer" className="mt-2 block rounded border border-[#e1e5eb] bg-white p-1" title="Ouvrir le tableau des aires HA en taille réelle"><img src="/assets/ha-bar-area-table.jpg" alt="Tableau fourni des aires HA en cm², par diamètre et nombre de barres" loading="lazy" className="mx-auto max-h-64 w-full object-contain" /></a>
