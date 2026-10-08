@@ -108,14 +108,15 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(secondOrder?.formula).toContain("équilibre non linéaire du poteau isolé");
   });
 
-  it("exige deux mesures réelles et compare les longueurs d’ancrage BAEL", () => {
+  it("compare facultativement les longueurs d’ancrage BAEL après dimensionnement", () => {
     const designForAnchorage = (top?: number, bottom?: number) => designReinforcedConcrete({
       basis: baelBasis(),
       members: [{ id: "PA", type: "column", combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, anchorageAvailableTopMm: top, anchorageAvailableBottomMm: bottom, axialKn: 120, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
       slabs: [],
     }).elements[0].checks.find(item => item.id === "column-anchorage-length");
-    expect(designForAnchorage()?.status).toBe("bloqué");
-    expect(designForAnchorage()?.formula).toContain("longueur droite réellement disponible");
+    expect(designForAnchorage()?.status).toBe("à vérifier");
+    expect(designForAnchorage()?.blocking).toBe(false);
+    expect(designForAnchorage()?.formula).toContain("Longueur réellement disponible");
     expect(designForAnchorage(800, 800)?.status).toBe("satisfaisant");
     expect(designForAnchorage(800, 100)?.status).toBe("non satisfaisant");
   });

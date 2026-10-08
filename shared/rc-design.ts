@@ -793,20 +793,17 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const hasAnchorBottom = anchorBottom !== undefined && Number.isFinite(anchorBottom);
   const anchorageLabel = isBael ? "Ancrage disponible · BAEL 91 mod. 99" : "Ancrage disponible · Eurocode 2";
   if (isBael && basis.fckMpa > 60) {
-    checks.push(emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, `fc28=${basis.fckMpa.toFixed(1)} MPa dépasse le domaine BAEL déclaré; aucune longueur requise ni conformité d’ancrage n’est émise.`));
+    checks.push({ ...emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, `fc28=${basis.fckMpa.toFixed(1)} MPa dépasse le domaine BAEL déclaré; aucune longueur requise ni conformité d’ancrage n’est émise.`), blocking: false });
   } else if (anchorageRequiredLengthMm !== null && hasAnchorTop && hasAnchorBottom) {
     const available = Math.min(anchorTop!, anchorBottom!);
     const topStatus = anchorTop! >= anchorageRequiredLengthMm ? "suffisant" : "INSUFFISANT";
     const bottomStatus = anchorBottom! >= anchorageRequiredLengthMm ? "suffisant" : "INSUFFISANT";
-    checks.push(check("column-anchorage-length", anchorageLabel, anchorageRequiredLengthMm, available, "mm", `${anchorageFormula} Tête : ${anchorTop!.toFixed(0)} mm (${topStatus}); pied : ${anchorBottom!.toFixed(0)} mm (${bottomStatus}). La vérification n’est satisfaite que si les deux longueurs disponibles ≥ lreq.`, combinationId, combinationName));
+    checks.push({ ...check("column-anchorage-length", anchorageLabel, anchorageRequiredLengthMm, available, "mm", `${anchorageFormula} Tête : ${anchorTop!.toFixed(0)} mm (${topStatus}); pied : ${anchorBottom!.toFixed(0)} mm (${bottomStatus}). La vérification n’est satisfaite que si les deux longueurs disponibles ≥ lreq.`, combinationId, combinationName), blocking: false });
   } else if (anchorageRequiredLengthMm !== null) {
     const missing = [!hasAnchorTop ? "tête" : null, !hasAnchorBottom ? "pied" : null].filter(Boolean).join(" et ");
-    checks.push({
-      ...emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, `${anchorageFormula} Saisir la longueur droite réellement disponible en ${missing}; la longueur requise est calculée automatiquement et ne remplace pas cette mesure.`),
-      demand: anchorageRequiredLengthMm,
-    });
+    checks.push(unverifiedCheck("column-anchorage-length", anchorageLabel, anchorageRequiredLengthMm, "mm", `${anchorageFormula} Longueur réellement disponible à renseigner en ${missing}; cette vérification de détail est facultative pour le dimensionnement de la section.`, combinationId, combinationName));
   } else {
-    checks.push(emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, "Le calcul de la longueur requise d’ancrage n’est pas disponible pour ces paramètres de norme."));
+    checks.push({ ...emptyCheck("column-anchorage-length", anchorageLabel, "mm", combinationId, combinationName, "Le calcul de la longueur requise d’ancrage n’est pas disponible pour ces paramètres de norme."), blocking: false });
   }
   if (isBael) {
     if (baelSecondX && baelSecondY) {
@@ -854,9 +851,10 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const slendernessX = bucklingLengthMm / Math.sqrt(height * height / 12);
   const slendernessY = bucklingLengthMm / Math.sqrt(width * width / 12);
   const secondOrderRequired = isBael ? !a43WithinDomain : Math.max(slendernessX, slendernessY) > basis.maxColumnSlenderness;
-  const finalStatus: RCColumnCalculationSheet["finalStatus"] = checks.some(item => item.status === "non satisfaisant")
+  const finalStatus: RCColumnCalculationSheet["finalStatus"] = checks.some(item => item.status === "non satisfaisant" && item.blocking !== false)
     ? "NON CONFORME"
-    : checks.some(item => item.status === "bloqué" || item.status === "à vérifier")
+    : checks.some(item => (item.status === "bloqué" || item.status === "à vérifier") && item.blocking !== false)
+      || checks.some(item => item.status !== "satisfaisant" && item.blocking === false)
       ? "À VÉRIFIER"
       : "CONFORME";
   const context = demand.columnContext;
