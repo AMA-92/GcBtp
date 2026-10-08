@@ -204,12 +204,28 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
       slabs: [],
     });
     const design = result.elements[0];
-    const longitudinal = design.reinforcement.find(item => item.id === "P2:longitudinal")!;
-    expect(longitudinal.count).toBeGreaterThan(4);
+    const longitudinal = design.reinforcement.filter(item => item.id === "P2:longitudinal" || item.id.startsWith("P2:longitudinal:"));
+    expect(longitudinal.reduce((sum, item) => sum + item.count, 0)).toBeGreaterThan(4);
+    expect(longitudinal.every(item => (item.barPositionsMm?.length ?? 0) === item.count)).toBe(true);
     expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
     expect(design.checks.find(item => item.id === "column-second-order")?.label).toContain("amplification biaxiale");
     expect(design.checks.find(item => item.id === "column-second-order")?.formula).toContain("L0=3200 mm");
     expect(design.columnReport?.MEdXKnM).toBeGreaterThan(30);
+  });
+
+  it("chooses symmetric mixed HA groups when they satisfy a biaxial column check", () => {
+    const result = designReinforcedConcrete({
+      basis: { ...basis(), availableBarDiametersMm: [10, 12, 16, 20] },
+      members: [{ id: "P-MIX", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 300, shearKn: 0, momentKnM: 20, momentXKnM: 20, momentYKnM: 0 }],
+      slabs: [],
+    });
+    const design = result.elements[0];
+    const longitudinal = design.reinforcement.filter(item => item.id === "P-MIX:longitudinal" || item.id.startsWith("P-MIX:longitudinal:"));
+    expect(longitudinal.length).toBeGreaterThan(1);
+    expect(new Set(longitudinal.map(item => item.diameterMm)).size).toBeGreaterThan(1);
+    expect(longitudinal.every(item => item.barPositionsMm?.length === item.count)).toBe(true);
+    expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.reinforcement.some(item => item.id === "P-MIX:cross-ties" && !!item.tieSegmentsMm?.length)).toBe(true);
   });
 
   it("respects a selected HA diameter and sizes only the number of bars for that diameter", () => {

@@ -7,6 +7,7 @@ import {
   baelMaximumColumnBarPitchMm,
   baelMaximumColumnTieSpacingMm,
   baelMinimumColumnBarCount,
+  calculateBAELColumnCompression,
   calculateBAELSecondOrderAxis,
   minimumBAELColumnSteelAreaMm2,
   solveBAELIsolatedColumnEquilibrium,
@@ -35,6 +36,17 @@ const baelBasis = (): RCDesignBasis => ({
 });
 
 describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
+  it("calcule Imin, i, λ, α, Br et As théorique pour un poteau 20×30", () => {
+    const result = calculateBAELColumnCompression({ shape: "rectangular", widthMm: 200, depthMm: 300, bucklingLengthMm: 1000, axialKn: 776, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15 });
+    expect(result.minimumInertiaMm4).toBe(200_000_000);
+    expect(result.radiusGyrationMm).toBeCloseTo(57.735, 2);
+    expect(result.slenderness).toBeCloseTo(17.321, 2);
+    expect(result.alpha).toBeCloseTo(0.8103, 3);
+    expect(result.reducedConcreteAreaMm2).toBe(50_400);
+    expect(result.theoreticalSteelAreaMm2).toBeGreaterThan(0);
+    expect(result.withinAlphaRange).toBe(true);
+  });
+
   it("applique les excentricités additionnelle et du second ordre de A.4.3,5", () => {
     const result = calculateBAELSecondOrderAxis({ axis: "Mx", axialKn: 100, firstOrderMomentKnM: 10, memberLengthMm: 3000, bucklingLengthMm: 3000, sectionDepthMm: 200, alpha: 1, creepRatio: 2 });
     expect(result.eccentricityAppliedMm).toBeCloseTo(100, 8);
@@ -75,12 +87,28 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(design.checks.find(item => item.id === "column-bael-detailing")?.status).toBe("satisfaisant");
     expect(design.checks.some(item => item.id === "column-anchorage-length")).toBe(false);
     expect(design.checks.some(item => item.status === "à vérifier")).toBe(false);
-    const longitudinal = design.reinforcement.find(item => item.id === "P6:longitudinal");
+    const longitudinal = design.reinforcement.filter(item => item.id === "P6:longitudinal" || item.id.startsWith("P6:longitudinal:"));
     const ties = design.reinforcement.find(item => item.id === "P6:ties");
-    expect(longitudinal?.areaMm2).toBeGreaterThanOrEqual(400);
-    expect(longitudinal?.diameterMm).toBeGreaterThanOrEqual(8);
+    expect(longitudinal.reduce((sum, item) => sum + item.areaMm2, 0)).toBeGreaterThanOrEqual(400);
+    expect(longitudinal.every(item => (item.barPositionsMm?.length ?? 0) === item.count)).toBe(true);
+    expect(longitudinal.every(item => item.diameterMm >= 8)).toBe(true);
     expect(ties?.label).toContain("Cadres BAEL");
     expect(ties?.lengthPerBarM).toBeGreaterThan(0);
+  });
+
+  it("retient les aires du tableau HA et rejette 4HA10 sous As,min avant de retenir 4HA12", () => {
+    const result = designReinforcedConcrete({
+      basis: baelBasis(),
+      members: [{ id: "P-EX", type: "column", combinationId: "ELU", combinationName: "ELU catalogue", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 1000, axialKn: 50, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
+      slabs: [],
+    });
+    const design = result.elements[0];
+    const bars = design.reinforcement.filter(item => item.id === "P-EX:longitudinal" || item.id.startsWith("P-EX:longitudinal:"));
+    expect(design.columnReport?.AsMinimumMm2).toBe(400);
+    expect(design.columnReport?.baelCompression?.reducedConcreteAreaMm2).toBe(50_400);
+    expect(bars.map(item => `${item.count}HA${item.diameterMm}`)).toEqual(["4HA12"]);
+    expect(bars.reduce((sum, item) => sum + item.areaMm2, 0)).toBeCloseTo(452, 8);
+    expect(design.columnReport?.optimizationTrace.some(item => item.includes("4HA10") && item.includes("As,min"))).toBe(true);
   });
 
   it("propose une augmentation B/H qui satisfait l’interaction biaxiale avec les armatures retenues", () => {

@@ -65,7 +65,7 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   maxLinkSpacingMm: isBael ? "400" : "300",
   maxDeflectionRatio: "250",
   maxColumnSlenderness: "15",
-  availableBarDiametersMm: "8, 10, 12, 14, 16, 20, 25",
+  availableBarDiametersMm: "8, 10, 12, 14, 16, 20, 25, 32, 40",
   maxCrackWidthMm: "0.30",
   seismicDetailingEnabled: false,
   seismicDuctilityClass: "DCM",
@@ -124,7 +124,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
         if (savedDraft.maxReinforcementPercent === "4.00") merged.maxReinforcementPercent = base.maxReinforcementPercent;
         if (savedDraft.maxLinkSpacingMm === "300") merged.maxLinkSpacingMm = base.maxLinkSpacingMm;
       }
-      if (savedDraft.availableBarDiametersMm === "8, 10, 12, 16, 20, 25") merged.availableBarDiametersMm = base.availableBarDiametersMm;
+      if (["8, 10, 12, 16, 20, 25", "8, 10, 12, 14, 16, 20, 25"].includes(savedDraft.availableBarDiametersMm ?? "")) merged.availableBarDiametersMm = base.availableBarDiametersMm;
       if (savedDraft.standard && !sameRCStandardFamily(savedDraft.standard, base.standard)) {
         (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness', 'maxCrackWidthMm', 'seismicDetailingEnabled', 'seismicDuctilityClass'] as const).forEach(key => { merged[key] = base[key] as never; });
       }
@@ -373,8 +373,10 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
             <span>Section : {element.columnReport.sectionWidthMm} × {element.columnReport.sectionDepthMm} mm</span><span>Coordonnées : {element.columnReport.xM?.toFixed(2) ?? "—"} / {element.columnReport.yM?.toFixed(2) ?? "—"} m</span>
             <span>NEd : {element.columnReport.NEdKn.toFixed(2)} kN · Mx/My : {element.columnReport.MEdXKnM.toFixed(2)} / {element.columnReport.MEdYKnM.toFixed(2)} kN·m</span><span>VEd / TEd : {element.columnReport.VEdKn.toFixed(2)} kN / {element.columnReport.TEdKnM.toFixed(2)} kN·m</span>
             <span>Flambement L0 : {element.columnReport.bucklingLengthMm.toFixed(0)} mm · λx/λy : {element.columnReport.slendernessX.toFixed(1)} / {element.columnReport.slendernessY.toFixed(1)}</span><span>Second ordre requis : {element.columnReport.secondOrderRequired ? "oui" : "non détecté"} · appui pied : {element.columnReport.baseSupportKind ?? "non renseigné"}</span>
-            <span>As requise / minimale / retenue : {element.columnReport.AsRequiredMm2.toFixed(0)} / {element.columnReport.AsMinimumMm2.toFixed(0)} / {element.columnReport.AsProvidedMm2.toFixed(0)} mm²</span><span>Longitudinal : {element.columnReport.longitudinalBarCount} HA{element.columnReport.longitudinalDiameterMm} · cadres HA{element.columnReport.tieDiameterMm}/{element.columnReport.tieSpacingMm.toFixed(0)} mm</span>
+            <span>As théorique / minimale / requise / retenue : {element.columnReport.AsTheoreticalMm2.toFixed(0)} / {element.columnReport.AsMinimumMm2.toFixed(0)} / {element.columnReport.AsRequiredMm2.toFixed(0)} / {element.columnReport.AsProvidedMm2.toFixed(0)} mm²</span><span>Longitudinal : {element.reinforcement.filter(bar => bar.id === `${element.elementId}:longitudinal` || bar.id.startsWith(`${element.elementId}:longitudinal:`)).map(bar => `${bar.count} HA${bar.diameterMm}`).join(" + ") || `${element.columnReport.longitudinalBarCount} HA${element.columnReport.longitudinalDiameterMm}`} · cadres HA{element.columnReport.tieDiameterMm}/{element.columnReport.tieSpacingMm.toFixed(0)} mm</span>
           </div>
+          {element.columnReport.baelCompression && <div className="mt-1">BAEL compression : Imin {element.columnReport.baelCompression.minimumInertiaMm4.toExponential(2)} mm⁴ · i {element.columnReport.baelCompression.radiusGyrationMm.toFixed(1)} mm · Lf {element.columnReport.bucklingLengthMm.toFixed(0)} mm · λ {element.columnReport.baelCompression.slenderness.toFixed(1)} · α {element.columnReport.baelCompression.alpha.toFixed(3)} · Br {element.columnReport.baelCompression.reducedConcreteAreaMm2.toFixed(0)} mm²</div>}
+          {!!element.columnReport.optimizationTrace.length && <div className="mt-1">Options écartées : {element.columnReport.optimizationTrace.join(" · ")}</div>}
           <div className="mt-1">Éléments au pied : {element.columnReport.connectedAtBase.map(item => `${item.type} ${item.elementId}`).join(", ") || "aucun détecté"}</div>
           <div>Éléments en tête : {element.columnReport.connectedAtTop.map(item => `${item.type} ${item.elementId}`).join(", ") || "aucun détecté"}</div>
           <div className="mt-1 text-amber-800">Statut des contrôles disponibles uniquement; résultat non certifié.</div>
@@ -408,7 +410,14 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
 function ReinforcementSketch({ element }: { element: RCElementDesign }) {
   const find = (suffix: string) => element.reinforcement.find(item => item.id.endsWith(suffix));
   if (element.type === "slab") return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · nappes orthogonales non cotées</span><svg viewBox="0 0 140 58" className="h-14 w-full"><rect x="12" y="5" width="116" height="48" fill="#fff" stroke="#59656a" strokeWidth="2" />{Array.from({ length: 7 }, (_, index) => <line key={`x-${index}`} x1={20 + index * 16} y1="8" x2={20 + index * 16} y2="50" stroke="#2b7880" strokeWidth="1.5" />)}{Array.from({ length: 4 }, (_, index) => <line key={`y-${index}`} x1="15" y1={14 + index * 12} x2="125" y2={14 + index * 12} stroke="#8b5c15" strokeWidth="1.5" />)}</svg></div>;
-  const top = find(":top"), bottom = find(":bottom"), longitudinal = find(":longitudinal");
+  const top = find(":top"), bottom = find(":bottom");
   const drawRows = (count: number, y: number, key: string) => Array.from({ length: Math.min(count, 10) }, (_, index) => <circle key={`${key}-${index}`} cx={32 + (index * 56) / Math.max(1, Math.min(count, 10) - 1)} cy={y} r="3" fill="#b74736" />);
-  return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · détails et enrobage à vérifier</span><svg viewBox="0 0 120 66" className="h-16 w-full"><rect x="24" y="6" width="72" height="54" fill="#fff" stroke="#59656a" strokeWidth="2" /><rect x="31" y="13" width="58" height="40" fill="none" stroke="#2b7880" strokeWidth="1.5" />{element.type === "column" ? drawRows(longitudinal?.count ?? 4, 19, "column") : <>{drawRows(top?.count ?? 0, 19, "top")}{drawRows(bottom?.count ?? 0, 47, "bottom")}</>}</svg></div>;
+  const columnGroups = element.type === "column" ? element.reinforcement.filter(item => item.id === `${element.elementId}:longitudinal` || item.id.startsWith(`${element.elementId}:longitudinal:`)) : [];
+  const columnBars = columnGroups.flatMap((group, groupIndex) => group.barPositionsMm?.length
+    ? group.barPositionsMm.map((position, index) => ({ ...position, diameterMm: group.diameterMm, key: `${groupIndex}-${index}` }))
+    : Array.from({ length: group.count }, (_, index) => ({ xMm: -28 + 56 * index / Math.max(group.count - 1, 1), yMm: 20, diameterMm: group.diameterMm, key: `${groupIndex}-${index}` })));
+  const crossTieGroups = element.type === "column" ? element.reinforcement.filter(item => item.id.endsWith(":cross-ties")) : [];
+  const xFor = (xMm: number) => 60 + xMm / Math.max(element.columnReport?.sectionWidthMm ?? 200, 1) * 58;
+  const yFor = (yMm: number) => 33 - yMm / Math.max(element.columnReport?.sectionDepthMm ?? 300, 1) * 40;
+  return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · détails et enrobage à vérifier</span><svg viewBox="0 0 120 66" className="h-16 w-full"><rect x="24" y="6" width="72" height="54" fill="#fff" stroke="#59656a" strokeWidth="2" /><rect x="31" y="13" width="58" height="40" fill="none" stroke="#2b7880" strokeWidth="1.5" />{element.type === "column" ? <>{crossTieGroups.flatMap(group => (group.tieSegmentsMm ?? []).map((segment, index) => <line key={`${group.id}-${index}`} x1={xFor(segment.x1Mm)} y1={yFor(segment.y1Mm)} x2={xFor(segment.x2Mm)} y2={yFor(segment.y2Mm)} stroke="#2b7880" strokeWidth="1.3" />))}{columnBars.map(bar => <circle key={bar.key} cx={xFor(bar.xMm)} cy={yFor(bar.yMm)} r={Math.max(2, Math.min(4, bar.diameterMm / 4))} fill="#b74736" />)}</> : <>{drawRows(top?.count ?? 0, 19, "top")}{drawRows(bottom?.count ?? 0, 47, "bottom")}</>}</svg></div>;
 }

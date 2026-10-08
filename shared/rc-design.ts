@@ -5,9 +5,10 @@ import type { PlaneFrameResult, PlaneMemberLoad } from "./frame-solver-2d";
 import type { Spatial3DResult } from "./frame-solver-3d";
 import { designStairV2 } from "./stair-design-v2";
 import { resolveRCStandardProfile } from "./rc-standard-profile";
+import { haCatalogBarAreaMm2 } from "./ha-bar-areas";
 import { validateRCNormSelection } from "./rc-norms";
 import { checkColumnSecondOrder, checkCrackWidth, checkRectangularTorsion, checkSeismicDetailing } from "./rc-eurocode-checks";
-import { baelColumnLayoutForCount, baelColumnTieDiameterMm, baelMaximumColumnBarPitchMm, baelMaximumColumnTieSpacingMm, baelMinimumColumnBarCount, calculateBAELSecondOrderAxis, minimumBAELColumnSteelAreaMm2, solveBAELIsolatedColumnEquilibrium, type BAELColumnSectionShape } from "./bael-column-checks";
+import { baelColumnBarPositions, baelColumnTieDiameterMm, baelMaximumColumnBarPitchMm, baelMaximumColumnTieSpacingMm, baelMinimumColumnBarCount, calculateBAELColumnCompression, calculateBAELSecondOrderAxis, minimumBAELColumnSteelAreaMm2, solveBAELIsolatedColumnEquilibrium, type BAELColumnSectionShape } from "./bael-column-checks";
 
 export type RCDesignBasis = {
   schemaVersion: typeof RC_DESIGN_SCHEMA_VERSION;
@@ -124,6 +125,10 @@ export type RebarProposal = {
   lengthPerBarM: number;
   totalLengthM: number;
   massKg: number;
+  /** Positions des centres de barres dans la section, coordonnées X/Y en mm depuis le centre. */
+  barPositionsMm?: Array<{ xMm: number; yMm: number }>;
+  /** Segments transversaux de maintien dans la section, coordonnées en mm depuis le centre. */
+  tieSegmentsMm?: Array<{ x1Mm: number; y1Mm: number; x2Mm: number; y2Mm: number }>;
 };
 export type RCElementDesign = {
   elementId: string;
@@ -155,6 +160,7 @@ export type RCColumnCalculationSheet = {
   MEdYKnM: number;
   VEdKn: number;
   TEdKnM: number;
+  AsTheoreticalMm2: number;
   AsRequiredMm2: number;
   AsMinimumMm2: number;
   AsProvidedMm2: number;
@@ -162,6 +168,14 @@ export type RCColumnCalculationSheet = {
   longitudinalDiameterMm: number;
   tieDiameterMm: number;
   tieSpacingMm: number;
+  optimizationTrace: string[];
+  baelCompression?: {
+    minimumInertiaMm4: number;
+    radiusGyrationMm: number;
+    slenderness: number;
+    alpha: number;
+    reducedConcreteAreaMm2: number;
+  };
   connectedAtBase: RCColumnConnection[];
   connectedAtTop: RCColumnConnection[];
   baseSupportKind?: string;
@@ -600,6 +614,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const maxSteel = (isBael ? 0.05 : basis.maxReinforcementRatio) * areaGross;
   const fcd = (isBael ? 0.85 : basis.alphaCC) * basis.fckMpa / basis.gammaC;
   const fyd = basis.fykMpa / basis.gammaS;
+  const columnBarArea = (diameterMm: number) => haCatalogBarAreaMm2(diameterMm) ?? barArea(diameterMm);
   const axialKn = Math.abs(demand.axialKn);
   const momentX = Math.abs(demand.momentXKnM ?? demand.momentKnM);
   const momentY = Math.abs(demand.momentYKnM ?? 0);
@@ -612,7 +627,9 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const initialImperfectionMm = Math.max(20, length / 250);
   const preselectionMomentX = a43WithinDomain ? designMomentX : momentX + axialKn * initialImperfectionMm / 1000;
   const preselectionMomentY = a43WithinDomain ? designMomentY : momentY + axialKn * initialImperfectionMm / 1000;
-  const requiredSteel = Math.max(minSteel, Math.max(0, axialKn * 1000 - 0.8 * areaGross * fcd) / Math.max(fyd - 0.8 * fcd, 1e-9));
+  const baelCompression = isBael ? calculateBAELColumnCompression({ shape, widthMm: width, depthMm: height, bucklingLengthMm, axialKn, fckMpa: basis.fckMpa, fykMpa: basis.fykMpa, gammaC: basis.gammaC, gammaS: basis.gammaS }) : undefined;
+  const asTheoreticalMm2 = baelCompression?.theoreticalSteelAreaMm2 ?? Math.max(0, axialKn * 1000 - 0.8 * areaGross * fcd) / Math.max(fyd - 0.8 * fcd, 1e-9);
+  const requiredSteel = Math.max(minSteel, asTheoreticalMm2);
   const diameters = basis.availableBarDiametersMm.filter(positive);
   const minLongitudinalDiameterMm = isBael ? 8 : 10;
   const longitudinalDiameters = diameters.filter(diameter => diameter >= minLongitudinalDiameterMm);
@@ -630,24 +647,60 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const ignoredLongitudinalOverride = !!override && !overrideDiameterAdmissible;
   const minimumCount = shape === "circular" ? 6 : 4;
   const barPitchLimitMm = isBael ? baelMaximumColumnBarPitchMm(width, height) : Number.POSITIVE_INFINITY;
-  const candidateFor = (barDiameterMm: number, barCount: number) => {
-    const areaMm2 = barCount * barArea(barDiameterMm);
-    const tieDiameterMm = isBael ? (baelColumnTieDiameterMm(barDiameterMm) ?? 6) : Math.max(6, Math.min(...diameters));
-    const layout = isBael
-      ? baelColumnLayoutForCount(shape, width, height, barCount, barDiameterMm, tieDiameterMm, basis.coverMm, barPitchLimitMm)
-      : { valid: true, minimumCount: 4, maxPitchMm: Number.POSITIVE_INFINITY, clearSpacingMm: (Math.min(width, height) - 2 * basis.coverMm - 2 * barDiameterMm) / Math.max(1, barCount / 2 - 1) };
+  type CandidateBar = { xMm: number; yMm: number; diameterMm: number; areaMm2: number };
+  type CandidateGroup = { diameterMm: number; count: number; areaMm2: number; positions: Array<{ xMm: number; yMm: number }> };
+  const candidateFor = (cornerDiameterMm: number, middleDiameterMm: number, barCount: number) => {
+    const largestDiameterMm = Math.max(cornerDiameterMm, middleDiameterMm);
+    const tieDiameterMm = isBael ? (baelColumnTieDiameterMm(largestDiameterMm) ?? 6) : Math.max(6, Math.min(...diameters));
+    const layout = baelColumnBarPositions(shape, width, height, barCount, largestDiameterMm, tieDiameterMm, basis.coverMm, barPitchLimitMm);
+    const edgeInsetMm = basis.coverMm + tieDiameterMm + largestDiameterMm / 2;
+    const cornerX = width / 2 - edgeInsetMm, cornerY = height / 2 - edgeInsetMm;
+    const bars: CandidateBar[] = layout.positions.map(position => {
+      const isCorner = shape === "rectangular" && Math.abs(Math.abs(position.xMm) - cornerX) < 1e-5 && Math.abs(Math.abs(position.yMm) - cornerY) < 1e-5;
+      const diameterMm = isCorner ? cornerDiameterMm : middleDiameterMm;
+      return { ...position, diameterMm, areaMm2: columnBarArea(diameterMm) };
+    });
+    const areaMm2 = bars.reduce((sum, bar) => sum + bar.areaMm2, 0);
+    const grouped = new Map<number, CandidateGroup>();
+    for (const bar of bars) {
+      const group = grouped.get(bar.diameterMm) ?? { diameterMm: bar.diameterMm, count: 0, areaMm2: 0, positions: [] };
+      group.count++;
+      group.areaMm2 += bar.areaMm2;
+      group.positions.push({ xMm: bar.xMm, yMm: bar.yMm });
+      grouped.set(bar.diameterMm, group);
+    }
+    const groups = [...grouped.values()].sort((a, b) => b.diameterMm - a.diameterMm);
+    let clearSpacingMm = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < bars.length; index++) {
+      const current = bars[index], next = bars[(index + 1) % bars.length];
+      const centerDistanceMm = Math.hypot(current.xMm - next.xMm, current.yMm - next.yMm);
+      clearSpacingMm = Math.min(clearSpacingMm, centerDistanceMm - (current.diameterMm + next.diameterMm) / 2);
+    }
+    const coverValid = bars.every(bar => shape === "circular"
+      ? Math.hypot(bar.xMm, bar.yMm) + bar.diameterMm / 2 <= width / 2 - basis.coverMm - tieDiameterMm + 1e-6
+      : Math.abs(bar.xMm) + bar.diameterMm / 2 <= width / 2 - basis.coverMm - tieDiameterMm + 1e-6
+        && Math.abs(bar.yMm) + bar.diameterMm / 2 <= height / 2 - basis.coverMm - tieDiameterMm + 1e-6);
+    const tieSegmentsMm: Array<{ x1Mm: number; y1Mm: number; x2Mm: number; y2Mm: number }> = [];
+    if (shape === "rectangular") {
+      const leftMid = bars.find(bar => Math.abs(bar.xMm + cornerX) < 1e-5 && Math.abs(bar.yMm) < 1e-5);
+      const rightMid = bars.find(bar => Math.abs(bar.xMm - cornerX) < 1e-5 && Math.abs(bar.yMm) < 1e-5);
+      const bottomMid = bars.find(bar => Math.abs(bar.yMm + cornerY) < 1e-5 && Math.abs(bar.xMm) < 1e-5);
+      const topMid = bars.find(bar => Math.abs(bar.yMm - cornerY) < 1e-5 && Math.abs(bar.xMm) < 1e-5);
+      if (leftMid && rightMid) tieSegmentsMm.push({ x1Mm: leftMid.xMm, y1Mm: leftMid.yMm, x2Mm: rightMid.xMm, y2Mm: rightMid.yMm });
+      if (bottomMid && topMid) tieSegmentsMm.push({ x1Mm: bottomMid.xMm, y1Mm: bottomMid.yMm, x2Mm: topMid.xMm, y2Mm: topMid.yMm });
+    }
     const concreteAreaMm2 = Math.max(0, areaGross - areaMm2);
-    const axialResistanceKn = (0.8 * concreteAreaMm2 * fcd + areaMm2 * fyd) / 1000;
-    const leverX = Math.max(0, height - 2 * (basis.coverMm + tieDiameterMm + barDiameterMm / 2));
-    const leverY = Math.max(0, width - 2 * (basis.coverMm + tieDiameterMm + barDiameterMm / 2));
-    const mxResistanceKnM = areaMm2 * fyd * leverX * 0.25 / 1e6;
-    const myResistanceKnM = areaMm2 * fyd * leverY * 0.25 / 1e6;
+    const axialResistanceKn = baelCompression
+      ? baelCompression.alpha * (baelCompression.reducedConcreteResistanceKn * 1000 + areaMm2 * basis.fykMpa / basis.gammaS) / 1000
+      : (0.8 * concreteAreaMm2 * fcd + areaMm2 * fyd) / 1000;
+    const mxResistanceKnM = fyd * bars.reduce((sum, bar) => sum + bar.areaMm2 * Math.abs(bar.yMm), 0) * 0.5 / 1e6;
+    const myResistanceKnM = fyd * bars.reduce((sum, bar) => sum + bar.areaMm2 * Math.abs(bar.xMm), 0) * 0.5 / 1e6;
     const secondOrderMoment = (firstOrderMoment: number, sectionWidthMm: number, sectionDepthMm: number) => {
       if (isBael || axialKn <= 0 || firstOrderMoment <= 1e-9) return firstOrderMoment;
       return checkColumnSecondOrder({
         NEdKn: axialKn, M0EdKnM: firstOrderMoment, bMm: sectionWidthMm, hMm: sectionDepthMm,
         L0Mm: bucklingLengthMm,
-        dMm: Math.max(50, sectionDepthMm - basis.coverMm - tieDiameterMm - barDiameterMm / 2),
+        dMm: Math.max(50, sectionDepthMm - basis.coverMm - tieDiameterMm - largestDiameterMm / 2),
         AsMm2: areaMm2, fykMpa: basis.fykMpa, gammaS: basis.gammaS,
       }).MEdKnM;
     };
@@ -656,18 +709,34 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     const interactionRatio = axialKn / Math.max(axialResistanceKn, 1e-9)
       + candidateMomentX / Math.max(mxResistanceKnM, 1e-9)
       + candidateMomentY / Math.max(myResistanceKnM, 1e-9);
-    return { diameterMm: barDiameterMm, count: barCount, areaMm2, axialResistanceKn, interactionRatio, candidateMomentX, candidateMomentY, clearSpacingMm: layout.clearSpacingMm, maxPitchMm: layout.maxPitchMm, minimumCount: Math.max(minimumCount, layout.minimumCount), layoutValid: layout.valid && layout.clearSpacingMm >= basis.minClearSpacingMm, tieDiameterMm };
+    return {
+      diameterMm: largestDiameterMm, count: bars.length, areaMm2, groups, bars,
+      axialResistanceKn, mxResistanceKnM, myResistanceKnM, interactionRatio, candidateMomentX, candidateMomentY,
+      clearSpacingMm, maxPitchMm: layout.maxPitchMm,
+      minimumCount: Math.max(minimumCount, layout.minimumCount),
+      layoutValid: layout.valid && coverValid && clearSpacingMm >= basis.minClearSpacingMm,
+      tieDiameterMm,
+      tieSegmentsMm,
+    };
   };
-  const catalogCandidates = longitudinalDiameters.flatMap(barDiameterMm => {
-    const largestCount = Math.max(minimumCount, Math.min(100, Math.floor(maxSteel / barArea(barDiameterMm) / 2) * 2));
-    return Array.from({ length: Math.floor((largestCount - minimumCount) / 2) + 1 }, (_, index) => candidateFor(barDiameterMm, minimumCount + index * 2));
-  });
-  const passingCandidates = catalogCandidates.filter(candidate =>
+  const largestCount = Math.max(minimumCount, Math.min(100, Math.floor(maxSteel / Math.min(...longitudinalDiameters.map(columnBarArea)) / 2) * 2));
+  const catalogCandidates = Array.from({ length: Math.floor((largestCount - minimumCount) / 2) + 1 }, (_, index) => minimumCount + index * 2)
+    .flatMap(barCount => longitudinalDiameters.flatMap(cornerDiameterMm => {
+      const candidates = [candidateFor(cornerDiameterMm, cornerDiameterMm, barCount)];
+      if (shape === "rectangular" && barCount > 4) for (const middleDiameterMm of longitudinalDiameters) {
+        if (middleDiameterMm < cornerDiameterMm) candidates.push(candidateFor(cornerDiameterMm, middleDiameterMm, barCount));
+      }
+      return candidates;
+    }));
+  const compareCandidates = (a: typeof catalogCandidates[number], b: typeof catalogCandidates[number]) =>
+    a.count - b.count || a.areaMm2 - b.areaMm2 || a.groups.length - b.groups.length || a.diameterMm - b.diameterMm;
+  const sortedCandidates = [...catalogCandidates].sort(compareCandidates);
+  const isAcceptableCandidate = (candidate: typeof catalogCandidates[number]) =>
     candidate.areaMm2 >= minSteel && candidate.areaMm2 <= maxSteel
     && candidate.axialResistanceKn >= axialKn
     && candidate.interactionRatio <= 1
-    && candidate.layoutValid && candidate.count >= candidate.minimumCount,
-  ).sort((a, b) => a.areaMm2 - b.areaMm2 || a.diameterMm - b.diameterMm || a.count - b.count);
+    && candidate.layoutValid && candidate.count >= candidate.minimumCount;
+  const passingCandidates = sortedCandidates.filter(isAcceptableCandidate);
   const scoreCandidate = (candidate: typeof catalogCandidates[number]) => Math.max(
     axialKn / Math.max(candidate.axialResistanceKn, 1e-9),
     candidate.interactionRatio,
@@ -680,8 +749,19 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const overrideCount = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count >= minimumCount
     ? Math.max(minimumCount, effectiveOverride.count + (effectiveOverride.count % 2)) : undefined;
   let selectedBars = effectiveOverride && overrideCount
-    ? candidateFor(effectiveOverride.diameterMm, overrideCount)
-    : passingCandidates[0] ?? [...catalogCandidates].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || a.areaMm2 - b.areaMm2)[0] ?? candidateFor(longitudinalDiameters[0], minimumCount);
+    ? candidateFor(effectiveOverride.diameterMm, effectiveOverride.diameterMm, overrideCount)
+    : passingCandidates[0] ?? [...sortedCandidates].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || compareCandidates(a, b))[0] ?? candidateFor(longitudinalDiameters[0], longitudinalDiameters[0], minimumCount);
+  const rejectionReason = (candidate: typeof catalogCandidates[number]) => candidate.areaMm2 < minSteel
+    ? `As=${(candidate.areaMm2 / 100).toFixed(2)} cm² < As,min=${(minSteel / 100).toFixed(2)} cm²`
+    : candidate.areaMm2 > maxSteel ? `As>${(maxSteel / 100).toFixed(2)} cm² maximal`
+    : candidate.axialResistanceKn < axialKn ? `NRd=${candidate.axialResistanceKn.toFixed(1)} kN < NEd=${axialKn.toFixed(1)} kN`
+    : candidate.interactionRatio > 1 ? `interaction N–Mx–My=${candidate.interactionRatio.toFixed(2)} > 1`
+    : !candidate.layoutValid || candidate.count < candidate.minimumCount ? `espacement/détail non conforme (jeu ${candidate.clearSpacingMm.toFixed(0)} mm)`
+    : null;
+  const optimizationTrace = effectiveOverride ? [] : sortedCandidates
+    .filter(candidate => candidate.areaMm2 > 0 && candidate.groups.length > 0 && candidate.areaMm2 < selectedBars.areaMm2 && rejectionReason(candidate))
+    .slice(0, 5)
+    .map(candidate => `${candidate.groups.map(group => `${group.count}HA${group.diameterMm}`).join("+")} (${(candidate.areaMm2 / 100).toFixed(2)} cm²) écarté : ${rejectionReason(candidate)}`);
   let baelIsolatedEquilibrium: ReturnType<typeof solveBAELIsolatedColumnEquilibrium> | null = null;
   if (isBael && !a43WithinDomain && baelSecondX && baelSecondY && basis.fckMpa <= 60) {
     const solveCandidate = (candidate: typeof selectedBars) => solveBAELIsolatedColumnEquilibrium({
@@ -689,20 +769,19 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
       bucklingLengthMm: demand.bucklingLengthMm ?? length,
       axialKn, firstOrderMomentXKnM: momentX, firstOrderMomentYKnM: momentY,
       fckMpa: basis.fckMpa, fykMpa: basis.fykMpa, gammaC: basis.gammaC, gammaS: basis.gammaS,
-      coverMm: basis.coverMm, barDiameterMm: candidate.diameterMm, barCount: candidate.count,
+      coverMm: basis.coverMm, bars: candidate.bars.map(({ xMm, yMm, diameterMm, areaMm2 }) => ({ xMm, yMm, diameterMm, areaMm2 })),
       alpha: 1, creepRatio: 2,
     });
     baelIsolatedEquilibrium = solveCandidate(selectedBars);
     if (!effectiveOverride && !baelIsolatedEquilibrium.withinMaterialLimits) {
-      const options = catalogCandidates
+      const options = sortedCandidates
         .filter(candidate => candidate.areaMm2 >= minSteel && candidate.areaMm2 <= maxSteel && candidate.axialResistanceKn >= axialKn && candidate.layoutValid && candidate.count >= candidate.minimumCount && candidate.areaMm2 >= selectedBars.areaMm2)
-        .sort((a, b) => a.areaMm2 - b.areaMm2 || a.diameterMm - b.diameterMm || a.count - b.count)
         .slice(0, 24);
       let bestUtilization = baelIsolatedEquilibrium.converged
         ? Math.max(baelIsolatedEquilibrium.maxConcreteCompressionStrain / baelIsolatedEquilibrium.concreteLimitStrain, baelIsolatedEquilibrium.maxSteelStrain / 0.01, baelIsolatedEquilibrium.stableEquilibrium ? 0 : 2)
         : Number.POSITIVE_INFINITY;
       for (const candidate of options) {
-        if (candidate.diameterMm === selectedBars.diameterMm && candidate.count === selectedBars.count) continue;
+        if (candidate === selectedBars) continue;
         const trial = solveCandidate(candidate);
         const utilization = trial.converged
           ? Math.max(trial.maxConcreteCompressionStrain / trial.concreteLimitStrain, trial.maxSteelStrain / 0.01, trial.stableEquilibrium ? 0 : 2)
@@ -717,16 +796,16 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     : null;
   const { count, diameterMm: diameter, areaMm2: asProvided } = selectedBars;
   const axialResistance = selectedBars.axialResistanceKn;
-  const mxResistance = asProvided * fyd * Math.max(0, height - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2)) * 0.25 / 1e6;
-  const myResistance = asProvided * fyd * Math.max(0, width - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2)) * 0.25 / 1e6;
+  const mxResistance = selectedBars.mxResistanceKnM;
+  const myResistance = selectedBars.myResistanceKnM;
   const interactionMomentX = baelIsolatedEquilibrium?.converged ? baelIsolatedEquilibrium.totalMomentXKnM : selectedBars.candidateMomentX;
   const interactionMomentY = baelIsolatedEquilibrium?.converged ? baelIsolatedEquilibrium.totalMomentYKnM : selectedBars.candidateMomentY;
   const interaction = baelEquilibriumUtilization ?? (axialKn / Math.max(axialResistance, 1e-9)
     + interactionMomentX / Math.max(mxResistance, 1e-9)
     + interactionMomentY / Math.max(myResistance, 1e-9));
-  const requiredAsX = interactionMomentX * 1e6 / Math.max(fyd * Math.max(height - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2), 1) * 0.25, 1);
-  const requiredAsY = interactionMomentY * 1e6 / Math.max(fyd * Math.max(width - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2), 1) * 0.25, 1);
-  const longitudinalRequiredAreaMm2 = Math.max(minSteel, requiredSteel, requiredAsX, requiredAsY);
+  const requiredAsX = interactionMomentX * asProvided / Math.max(mxResistance, 1e-9);
+  const requiredAsY = interactionMomentY * asProvided / Math.max(myResistance, 1e-9);
+  const longitudinalRequiredAreaMm2 = Math.max(minSteel, asTheoreticalMm2, requiredAsX, requiredAsY);
   const tieDiameter = selectedBars.tieDiameterMm;
   const tieSpacingLimitMm = isBael ? baelMaximumColumnTieSpacingMm(width, height, diameter) : basis.maxLinkSpacingMm;
   const tieCount = Math.ceil(length / Math.max(tieSpacingLimitMm, 1)) + 1;
@@ -743,12 +822,36 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
       : `Enveloppe linéaire de pré-étude; moments après imperfections: Mx,Ed=${interactionMomentX.toFixed(2)} kN·m, My,Ed=${interactionMomentY.toFixed(2)} kN·m.`
     : "NEd/NRd + |Mx|/MRdx + |My|/MRdy ≤ 1 ; enveloppe linéaire non normative";
   const reinforcement: RebarProposal[] = [
-    proposal(`${demand.id}:longitudinal`, `Longitudinal poteau · ${count}HA${diameter} · ${shape === "circular" ? "répartition circulaire régulière" : "répartition sur les faces"}`, diameter, count, longitudinalRequiredAreaMm2, length / 1000),
+    ...selectedBars.groups.map((group, index) => ({
+      ...proposal(
+        index === 0 ? `${demand.id}:longitudinal` : `${demand.id}:longitudinal:group-${index + 1}`,
+        `Longitudinal poteau · ${group.count}HA${group.diameterMm} · ${shape === "circular" ? "répartition circulaire régulière" : "répartition symétrique sur les faces"}`,
+        group.diameterMm,
+        group.count,
+        longitudinalRequiredAreaMm2 * group.areaMm2 / Math.max(asProvided, 1e-9),
+        length / 1000,
+      ),
+      areaMm2: group.areaMm2,
+      barPositionsMm: group.positions,
+    })),
     proposal(`${demand.id}:ties`, `Cadres BAEL · HA ${tieDiameter} / ${tieSpacingMm.toFixed(0)} mm · ceinture continue`, tieDiameter, tieCount, 0, tieLengthM),
   ];
+  if (selectedBars.tieSegmentsMm.length) {
+    const averageSegmentLengthM = selectedBars.tieSegmentsMm.reduce((sum, segment) => sum + Math.hypot(segment.x2Mm - segment.x1Mm, segment.y2Mm - segment.y1Mm) / 1000, 0) / selectedBars.tieSegmentsMm.length;
+    reinforcement.push({
+      ...proposal(`${demand.id}:cross-ties`, `Épingles de maintien · HA ${tieDiameter} / ${tieSpacingMm.toFixed(0)} mm · longueur droite indicative`, tieDiameter, tieCount * selectedBars.tieSegmentsMm.length, 0, averageSegmentLengthM),
+      tieSegmentsMm: selectedBars.tieSegmentsMm,
+    });
+    limitations.push("Les épingles de maintien sont représentées en longueur droite indicative; leurs crochets et détails d’exécution restent à définir.");
+  }
   const checks: RCCheck[] = [
-    check("column-axial", "Compression axiale", axialKn, axialResistance, "kN", "NRd≈0,8·Ac·fcd+As·fyd", combinationId, combinationName),
+    check("column-axial", "Compression axiale", axialKn, axialResistance, "kN", isBael
+      ? "Nu ≤ α·[Br·fc28/(0,9·γb) + As·fe/γs] — BAEL 91 mod. 99"
+      : "NRd≈0,8·(Ac−As)·fcd+As·fyd", combinationId, combinationName),
     check("column-interaction", interactionCheckLabel, interaction, 1, "—", interactionCheckFormula, combinationId, combinationName),
+    check("column-steel-axial", "Armatures théoriques · compression", asTheoreticalMm2, asProvided, "mm²", isBael
+      ? "As,th = max[0 ; (Nu/α − Br·fc28/(0,9·γb))·γs/fe] — hors minimum réglementaire"
+      : "As,th estimée selon l’équilibre axial du modèle de pré-étude", combinationId, combinationName),
     check("column-steel-min", "Armatures longitudinales minimales", minSteel, asProvided, "mm²", isBael ? "As ≥ max(0,2 %·Ag ; 4 cm²/m de périmètre) — A.8.1,21" : "As,prov ≥ ρmin·Ag", combinationId, combinationName),
     check("column-steel-max", "Armatures longitudinales maximales", asProvided, maxSteel, "mm²", isBael ? "As ≤ 5 %·Ag hors recouvrements — A.8.1,21" : "As,prov ≤ ρmax·Ag", combinationId, combinationName),
     check("column-bar-spacing", isBael ? "Répartition des barres sur le contour" : "Espacement libre des barres", isBael ? Math.max(selectedBars.maxPitchMm / Math.max(barPitchLimitMm, 1), basis.minClearSpacingMm / Math.max(selectedBars.clearSpacingMm, 1e-9)) : basis.minClearSpacingMm, isBael ? 1 : selectedBars.clearSpacingMm, isBael ? "—" : "mm", isBael ? "A.8.1,22 : pas de face ≤ min(petit côté+100 mm, 400 mm) et jeu libre conforme au minimum saisi" : "Disposition symétrique indicative ; sclair ≥ minimum déclaré", combinationId, combinationName),
@@ -756,6 +859,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     check("column-tie-spacing", "Espacement des cadres", tieSpacingMm, tieSpacingLimitMm, "mm", isBael ? `A.8.1,3 : s ≤ min(15·φlong=${(15 * diameter).toFixed(0)} mm, 400 mm, petit côté+100 mm)` : "sCadres ≤ espacement maximal déclaré dans la base du projet", combinationId, combinationName),
   ];
   if (isBael) {
+    if (baelCompression && !baelCompression.withinAlphaRange) checks.push(check("column-bael-alpha-range", "Domaine d’élancement BAEL pour α", baelCompression.slenderness, 70, "—", "α(λ) BAEL tabulé jusqu’à λ=70; vérifier la stabilité globale et réduire l’élancement.", combinationId, combinationName));
     if (baelSecondX && baelSecondY) {
       const secondOrderFormula = `Domaine A.4.3,5 : f/h < max(15,20·e1/h) dans les deux axes; α=1, φ=2; ea=${baelSecondX.additionalEccentricityMm.toFixed(1)} mm; e2x=${baelSecondX.secondOrderEccentricityMm.toFixed(1)} mm, e2y=${baelSecondY.secondOrderEccentricityMm.toFixed(1)} mm; M1x=${momentX.toFixed(2)} kN·m, M1y=${momentY.toFixed(2)} kN·m.`;
       if (baelDomainRatio < 1) {
@@ -828,6 +932,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     MEdYKnM: interactionMomentY,
     VEdKn: Math.abs(demand.shearKn),
     TEdKnM: Math.abs(demand.torsionKnM ?? 0),
+    AsTheoreticalMm2: asTheoreticalMm2,
     AsRequiredMm2: longitudinalRequiredAreaMm2,
     AsMinimumMm2: minSteel,
     AsProvidedMm2: asProvided,
@@ -835,6 +940,14 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     longitudinalDiameterMm: diameter,
     tieDiameterMm: tieDiameter,
     tieSpacingMm: tieSpacingMm,
+    optimizationTrace,
+    baelCompression: baelCompression ? {
+      minimumInertiaMm4: baelCompression.minimumInertiaMm4,
+      radiusGyrationMm: baelCompression.radiusGyrationMm,
+      slenderness: baelCompression.slenderness,
+      alpha: baelCompression.alpha,
+      reducedConcreteAreaMm2: baelCompression.reducedConcreteAreaMm2,
+    } : undefined,
     connectedAtBase: context?.connectedAtBase ?? [],
     connectedAtTop: context?.connectedAtTop ?? [],
     baseSupportKind: context?.baseSupportKind,
