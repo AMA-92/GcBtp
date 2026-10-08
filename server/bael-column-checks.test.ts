@@ -129,7 +129,7 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(design.columnReport?.AsMinimumMm2).toBe(400);
     expect(design.columnReport?.baelCompression?.reducedConcreteAreaMm2).toBe(50_400);
     expect(design.columnReport?.baelCompression?.alpha).toBeCloseTo(0.8301, 3);
-    expect(design.columnReport?.AsTheoreticalMm2).toBeLessThan(400);
+    expect(design.columnReport?.AsTheoreticalMm2).toBeCloseTo(3.4924, 3);
     expect(design.columnReport?.AsRequiredMm2).toBe(400);
     expect(bars.map(item => `${item.count}HA${item.diameterMm}`)).toEqual(["4HA12"]);
     expect(bars.reduce((sum, item) => sum + item.areaMm2, 0)).toBeCloseTo(452, 8);
