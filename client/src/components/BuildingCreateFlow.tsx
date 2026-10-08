@@ -6437,7 +6437,6 @@ export default function BuildingCreateFlow({
                                   </div>;
                                 })}</div> : <p className="mt-2 rounded-lg bg-white p-2 text-[10px] leading-4">Aucune section conforme trouvée dans la plage testée (jusqu’à +0,50 m par dimension). Vérifiez les charges, le catalogue HA et la longueur efficace, ou augmentez davantage la section.</p>}
                               </section>}
-                              <p className="mt-2 text-[9px] leading-3.5 text-white/80">Pré-étude numérique, pas une certification ni un visa d’exécution. Hypothèse de calcul : f = L; les liaisons réelles ne sont pas déduites automatiquement. Hors domaine A.4.3,5, A.4.4 est résolu pour le poteau isolé avec moments constants et mode sinusoïdal; la stabilité globale de l’ossature et ses redistributions ne sont pas recalculées. Dans le domaine A.4.3,5, l’interaction de section reste une enveloppe de pré-étude.</p>
                               </section>
                               {selectedColumnVerificationDesign && <>
                                 <section aria-live="polite" className="rounded-xl border border-[#e1e5eb] bg-white p-3">

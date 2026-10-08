@@ -719,30 +719,50 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
       tieSegmentsMm,
     };
   };
-  const largestCount = Math.max(minimumCount, requestedBarCount ?? 0, Math.min(100, Math.floor(maxSteel / Math.min(...longitudinalDiameters.map(columnBarArea)) / 2) * 2));
-  const generatedCounts = Array.from({ length: Math.floor((largestCount - minimumCount) / 2) + 1 }, (_, index) => minimumCount + index * 2);
-  if (minimumCount <= 9 && largestCount >= 9) generatedCounts.push(9);
-  if (Number.isInteger(requestedBarCount) && requestedBarCount! >= minimumCount && requestedBarCount! <= 100) generatedCounts.push(requestedBarCount!);
-  const catalogCandidates = [...new Set(generatedCounts)].sort((a, b) => a - b)
-    .flatMap(barCount => longitudinalDiameters.flatMap(cornerDiameterMm => {
+  const overrideCount = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count >= minimumCount
+    ? effectiveOverride.count : undefined;
+  const targetBarCount = Number.isInteger(requestedBarCount) && requestedBarCount! >= minimumCount
+    ? requestedBarCount : overrideCount;
+  const largestCount = Math.max(minimumCount, targetBarCount ?? 0, Math.min(100, Math.floor(maxSteel / Math.min(...longitudinalDiameters.map(columnBarArea)) / 2) * 2));
+  const generatedCounts = targetBarCount !== undefined
+    ? [targetBarCount]
+    : Array.from({ length: Math.floor((largestCount - minimumCount) / 2) + 1 }, (_, index) => minimumCount + index * 2);
+  if (targetBarCount === undefined && minimumCount <= 9 && largestCount >= 9) generatedCounts.push(9);
+  const compareCandidates = (a: ReturnType<typeof candidateFor>, b: ReturnType<typeof candidateFor>) =>
+    a.count - b.count || a.areaMm2 - b.areaMm2 || a.groups.length - b.groups.length || a.diameterMm - b.diameterMm;
+  const isAcceptableCandidate = (candidate: ReturnType<typeof candidateFor>) =>
+    candidate.areaMm2 >= minSteel && candidate.areaMm2 <= maxSteel
+    && candidate.axialResistanceKn >= axialKn
+    && candidate.interactionRatio <= 1
+    && candidate.layoutValid && candidate.count >= candidate.minimumCount;
+  const catalogCandidates: Array<ReturnType<typeof candidateFor>> = [];
+  const needsBAELEquilibriumAlternatives = isBael && !a43WithinDomain && !effectiveOverride;
+  let initialPassingCandidate: ReturnType<typeof candidateFor> | undefined;
+  for (const barCount of [...new Set(generatedCounts)].sort((a, b) => a - b)) {
+    const tier = longitudinalDiameters.flatMap(cornerDiameterMm => {
       const candidates = [candidateFor(cornerDiameterMm, cornerDiameterMm, barCount)];
       if (shape === "rectangular" && barCount > 4) for (const middleDiameterMm of longitudinalDiameters) {
         if (middleDiameterMm < cornerDiameterMm) candidates.push(candidateFor(cornerDiameterMm, middleDiameterMm, barCount));
       }
       return candidates;
-    }));
-  const compareCandidates = (a: typeof catalogCandidates[number], b: typeof catalogCandidates[number]) =>
-    a.count - b.count || a.areaMm2 - b.areaMm2 || a.groups.length - b.groups.length || a.diameterMm - b.diameterMm;
+    }).sort(compareCandidates);
+    catalogCandidates.push(...tier);
+    if (!initialPassingCandidate) {
+      initialPassingCandidate = tier.find(candidate =>
+        (!effectiveOverride || candidate.groups.every(group => group.diameterMm === effectiveOverride.diameterMm))
+        && isAcceptableCandidate(candidate));
+    }
+    if (initialPassingCandidate && !needsBAELEquilibriumAlternatives) break;
+    if (initialPassingCandidate && needsBAELEquilibriumAlternatives) {
+      const equilibriumOptions = catalogCandidates.filter(candidate =>
+        candidate.areaMm2 >= initialPassingCandidate!.areaMm2
+        && candidate.axialResistanceKn >= axialKn
+        && candidate.layoutValid
+        && candidate.count >= candidate.minimumCount);
+      if (equilibriumOptions.length >= 24) break;
+    }
+  }
   const sortedCandidates = [...catalogCandidates].sort(compareCandidates);
-  const isAcceptableCandidate = (candidate: typeof catalogCandidates[number]) =>
-    candidate.areaMm2 >= minSteel && candidate.areaMm2 <= maxSteel
-    && candidate.axialResistanceKn >= axialKn
-    && candidate.interactionRatio <= 1
-    && candidate.layoutValid && candidate.count >= candidate.minimumCount;
-  const overrideCount = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count >= minimumCount
-    ? effectiveOverride.count : undefined;
-  const targetBarCount = Number.isInteger(requestedBarCount) && requestedBarCount! >= minimumCount
-    ? requestedBarCount : overrideCount;
   const constrainedCandidates = sortedCandidates.filter(candidate =>
     (targetBarCount === undefined || candidate.count === targetBarCount)
     && (!effectiveOverride || candidate.groups.every(group => group.diameterMm === effectiveOverride.diameterMm)));
@@ -1242,42 +1262,47 @@ export function proposeColumnSectionIncreases(input: {
   const columnBarCountOverrides = input.columnBarCountOverride ? { [member.id]: input.columnBarCountOverride } : undefined;
   const designCurrent = designReinforcedConcrete({ basis, members: [member], slabs: [], overrides: input.overrides, columnBarCountOverrides }).elements[0];
   const currentInteraction = designCurrent?.checks.find(item => item.id === "column-interaction")?.utilization ?? null;
-  const candidates: Array<[number, number]> = [];
-  if (circular) {
-    for (let index = 1; index <= maxSteps; index += 1) {
-      const diameter = currentWidth + index * stepMm;
-      candidates.push([diameter, diameter]);
-    }
-  } else {
-    for (let widthStep = 0; widthStep <= maxSteps; widthStep += 1) {
-      for (let depthStep = 0; depthStep <= maxSteps; depthStep += 1) {
-        if (widthStep === 0 && depthStep === 0) continue;
-        candidates.push([currentWidth + widthStep * stepMm, currentDepth + depthStep * stepMm]);
-      }
-    }
-  }
-  candidates.sort((a, b) => areaM2(a[0], a[1]) - areaM2(b[0], b[1])
-    || Number((a[0] > currentWidth) && (a[1] > currentDepth)) - Number((b[0] > currentWidth) && (b[1] > currentDepth))
-    || a[0] - b[0] || a[1] - b[1]);
-
   const passing: Array<{ dimensions: [number, number]; utilization: number }> = [];
   const currentAreaM2 = areaM2(currentWidth, currentDepth);
-  for (const dimensions of candidates) {
-    const candidateAreaM2 = areaM2(dimensions[0], dimensions[1]);
-    const additionalSelfWeightKn = input.selfWeightIncluded
-      ? Math.max(0, candidateAreaM2 - currentAreaM2) * (member.lengthMm / 1000) * densityKnM3 * permanentLoadFactor
-      : 0;
-    const candidateDemand = {
-      ...member,
-      sectionWidthMm: dimensions[0],
-      sectionDepthMm: dimensions[1],
-      axialKn: Math.abs(member.axialKn) + additionalSelfWeightKn,
-    };
-    const design = designReinforcedConcrete({ basis, members: [candidateDemand], slabs: [], overrides: input.overrides, columnBarCountOverrides }).elements[0];
-    if (!design || !meetsModalChecks(design)) continue;
-    const interactionUtilization = design.checks.find(item => item.id === "column-interaction")?.utilization;
-    passing.push({ dimensions, utilization: interactionUtilization ?? maxUtilization(design) });
+  const paths: Array<{ widthSteps: number; depthSteps: number }> = circular
+    ? [{ widthSteps: 1, depthSteps: 1 }]
+    : [
+        { widthSteps: 1, depthSteps: 0 },
+        { widthSteps: 0, depthSteps: 1 },
+        { widthSteps: 1, depthSteps: 1 },
+        { widthSteps: 2, depthSteps: 1 },
+        { widthSteps: 1, depthSteps: 2 },
+      ];
+  for (const path of paths) {
+    const seen = new Set<string>();
+    for (let index = 1; index <= maxSteps; index += 1) {
+      const widthStep = Math.min(maxSteps, index * path.widthSteps);
+      const depthStep = Math.min(maxSteps, index * path.depthSteps);
+      const dimensions: [number, number] = circular
+        ? [currentWidth + index * stepMm, currentWidth + index * stepMm]
+        : [currentWidth + widthStep * stepMm, currentDepth + depthStep * stepMm];
+      const key = dimensions.join("x");
+      if (seen.has(key)) break;
+      seen.add(key);
+      const candidateAreaM2 = areaM2(dimensions[0], dimensions[1]);
+      const additionalSelfWeightKn = input.selfWeightIncluded
+        ? Math.max(0, candidateAreaM2 - currentAreaM2) * (member.lengthMm / 1000) * densityKnM3 * permanentLoadFactor
+        : 0;
+      const candidateDemand = {
+        ...member,
+        sectionWidthMm: dimensions[0],
+        sectionDepthMm: dimensions[1],
+        axialKn: Math.abs(member.axialKn) + additionalSelfWeightKn,
+      };
+      const design = designReinforcedConcrete({ basis, members: [candidateDemand], slabs: [], overrides: input.overrides, columnBarCountOverrides }).elements[0];
+      if (!design || !meetsModalChecks(design)) continue;
+      const interactionUtilization = design.checks.find(item => item.id === "column-interaction")?.utilization;
+      passing.push({ dimensions, utilization: interactionUtilization ?? maxUtilization(design) });
+      break;
+    }
   }
+  passing.sort((a, b) => areaM2(a.dimensions[0], a.dimensions[1]) - areaM2(b.dimensions[0], b.dimensions[1])
+    || a.dimensions[0] - b.dimensions[0] || a.dimensions[1] - b.dimensions[1]);
 
   const unique = new Set<string>();
   const selected: typeof passing = [];
