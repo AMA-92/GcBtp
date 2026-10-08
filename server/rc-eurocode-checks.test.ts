@@ -1,16 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { calculateEurocode2StraightAnchorageMm, checkColumnSecondOrder, checkCrackWidth, checkRectangularTorsion, checkSeismicDetailing } from "@shared/rc-eurocode-checks";
+import { checkColumnSecondOrder, checkCrackWidth, checkRectangularTorsion, checkSeismicDetailing } from "@shared/rc-eurocode-checks";
 
 describe("contrôles Eurocode paramétriques", () => {
-  it("calcule la longueur d’ancrage EC2 et distingue la qualité d’adhérence", () => {
-    const good = calculateEurocode2StraightAnchorageMm({ barDiameterMm: 12, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, bondCondition: "good" });
-    const poor = calculateEurocode2StraightAnchorageMm({ barDiameterMm: 12, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, bondCondition: "poor" });
-    expect(good.designLengthMm).toBeGreaterThan(480);
-    expect(good.designLengthMm).toBeLessThan(500);
-    expect(poor.designLengthMm).toBeGreaterThan(good.designLengthMm);
-    expect(good.alphaProduct).toBe(1);
-  });
-
   it("calcule une ouverture de fissure finie et vérifie la limite", () => {
     const result = checkCrackWidth({ MserKnM: 35, AsTensionMm2: 1200, effectiveDepthMm: 450, widthMm: 300, heightMm: 500, coverMm: 30, barDiameterMm: 16, fykMpa: 500, maxCrackWidthMm: 0.3 });
     expect(result.wkMm).toBeGreaterThan(0);

@@ -165,7 +165,7 @@ type LoadApplicationReport = {
   lineLoadCount: number;
 };
 type ColumnVerificationLoad = { id: string; category: string; label: string; axialKn: string };
-type ColumnVerificationGeometry = { shape: "rectangular" | "circular"; widthM: string; depthM: string; diameterM: string; heightM: string; anchorageTopMm: string; anchorageBottomMm: string; levelId: string; selfWeight: boolean; dirty: boolean };
+type ColumnVerificationGeometry = { shape: "rectangular" | "circular"; widthM: string; depthM: string; diameterM: string; heightM: string; levelId: string; selfWeight: boolean; dirty: boolean };
 type ClimateDraft = {
   schemaVersion: 1;
   sourceReference: string;
@@ -837,11 +837,6 @@ export default function BuildingCreateFlow({
       const parsed = Number(value.trim().replace(",", "."));
       return Number.isFinite(parsed) ? parsed : 0;
     };
-    const optionalNumericInput = (value: string): number | undefined => {
-      if (!value.trim()) return undefined;
-      const parsed = Number(value.trim().replace(",", "."));
-      return Number.isFinite(parsed) ? parsed : undefined;
-    };
     const combination = loadProgram.combinations.find(item => item.id === solverCombinationId);
     const factors = combination?.caseFactors ?? {};
     const factorG = factors["case:G"] ?? 1;
@@ -880,8 +875,6 @@ export default function BuildingCreateFlow({
       sectionShape: columnVerificationGeometry.shape,
       lengthMm: lengthMm > 0 ? lengthMm : demand.lengthMm,
       bucklingLengthMm: lengthMm,
-      anchorageAvailableTopMm: optionalNumericInput(columnVerificationGeometry.anchorageTopMm),
-      anchorageAvailableBottomMm: optionalNumericInput(columnVerificationGeometry.anchorageBottomMm),
       axialKn,
       momentXKnM,
       momentYKnM,
@@ -3232,26 +3225,6 @@ export default function BuildingCreateFlow({
     ? rcMemberExtraction.demands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column")
     : undefined;
   const selectedColumnVerificationDesign = rcDesignResult?.elements.find(element => element.elementId === selectedAnalysisRow?.id && element.type === "column");
-  const selectedColumnAnchorageCheck = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-anchorage-length");
-  const selectedColumnAnchorageRequiredMm = typeof selectedColumnAnchorageCheck?.demand === "number" && Number.isFinite(selectedColumnAnchorageCheck.demand)
-    ? selectedColumnAnchorageCheck.demand
-    : null;
-  const parseOptionalMillimeters = (value: string) => {
-    if (!value.trim()) return null;
-    const parsed = Number(value.trim().replace(",", "."));
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const selectedColumnAnchorageTopAvailableMm = columnVerificationGeometry ? parseOptionalMillimeters(columnVerificationGeometry.anchorageTopMm) : null;
-  const selectedColumnAnchorageBottomAvailableMm = columnVerificationGeometry ? parseOptionalMillimeters(columnVerificationGeometry.anchorageBottomMm) : null;
-  const selectedColumnAnchorageLiveStatus = !selectedColumnVerificationDesign
-    ? "à calculer"
-    : selectedColumnAnchorageRequiredMm === null
-      ? "non calculable"
-      : selectedColumnAnchorageTopAvailableMm === null || selectedColumnAnchorageBottomAvailableMm === null
-        ? "à renseigner"
-        : selectedColumnAnchorageTopAvailableMm >= selectedColumnAnchorageRequiredMm && selectedColumnAnchorageBottomAvailableMm >= selectedColumnAnchorageRequiredMm
-          ? "satisfaisant"
-          : "insuffisant";
   const baelColumnChecksActive = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-bael-detailing")?.label.includes("BAEL") ?? false;
   const columnVerificationCheckIds = new Set([
     "column-axial", "column-interaction", "column-steel-min", "column-steel-max", "column-bar-spacing", "column-bar-layout-count", "column-tie-spacing",
@@ -3276,7 +3249,6 @@ export default function BuildingCreateFlow({
     selected?.id, selectedAnalysisRow?.levelId, selectedAnalysisRow?.id,
     columnVerificationGeometry?.shape, columnVerificationGeometry?.widthM, columnVerificationGeometry?.depthM,
     columnVerificationGeometry?.diameterM, columnVerificationGeometry?.heightM,
-    columnVerificationGeometry?.anchorageTopMm, columnVerificationGeometry?.anchorageBottomMm,
     columnVerificationGeometry?.selfWeight, columnVerificationLoads, columnVerificationSelectedBarDiameter,
   ]);
   const columnVerificationAlreadySaved = columnVerificationSavedKey === columnVerificationConfigurationKey;
@@ -3290,7 +3262,7 @@ export default function BuildingCreateFlow({
     const noticeKey = `${selectedAnalysisRow?.id ?? "none"}:${columnVerificationState}:${unsupportedColumnBarCheck?.id ?? columnVerificationFailedChecks.map(item => item.id).join(",")}`;
     if (lastColumnVerificationNotice.current === noticeKey) return;
     lastColumnVerificationNotice.current = noticeKey;
-    if (columnVerificationState === "passed") toast.success(`Section dimensionnée pour ${selectedAnalysisRow?.id ?? "le poteau"}; l’ancrage se vérifie séparément après ferraillage.`);
+    if (columnVerificationState === "passed") toast.success(`Section dimensionnée pour ${selectedAnalysisRow?.id ?? "le poteau"}.`);
     else if (columnVerificationState === "failed") toast.error(unsupportedColumnBarCheck ? "Diamètre longitudinal non admis par le moteur pour un poteau." : baelSecondOrderDomainCheck?.status === "non satisfaisant" ? "La stabilité calculée selon BAEL A.4.4 n’est pas satisfaite : augmenter la section, revoir f ou les appuis dans le modèle." : `Section ou armatures insuffisantes : ${columnVerificationFailedChecks.map(item => item.label).join(", ") || "contrôle non satisfait"}.`);
     else toast.info(columnVerificationFeedback ?? selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? "Vérification bloquée : données ou contrôle normatif manquant.");
   }, [columnVerificationRequested, columnVerificationState, selectedAnalysisRow?.id, unsupportedColumnBarCheck, baelSecondOrderDomainCheck, columnVerificationFailedChecks, columnVerificationFeedback, selectedColumnVerificationDesign]);
@@ -3387,15 +3359,6 @@ export default function BuildingCreateFlow({
         ? current
         : [...current, { family, type, name: sectionName, dimensions, color: preservedColor }]);
     }
-    const snapshotChecks = verifiedDesign.checks.map(item => {
-      if (item.id !== "column-anchorage-length" || selectedColumnAnchorageRequiredMm === null) return item;
-      if (selectedColumnAnchorageTopAvailableMm === null || selectedColumnAnchorageBottomAvailableMm === null) {
-        return { ...item, status: "à vérifier" as const, demand: selectedColumnAnchorageRequiredMm, resistance: null, utilization: null, formula: `${item.formula} Longueurs disponibles réelles non complètes à la date d’enregistrement.` };
-      }
-      const available = Math.min(selectedColumnAnchorageTopAvailableMm, selectedColumnAnchorageBottomAvailableMm);
-      const status = selectedColumnAnchorageTopAvailableMm >= selectedColumnAnchorageRequiredMm && selectedColumnAnchorageBottomAvailableMm >= selectedColumnAnchorageRequiredMm ? "satisfaisant" as const : "non satisfaisant" as const;
-      return { ...item, status, demand: selectedColumnAnchorageRequiredMm, resistance: available, utilization: available > 0 ? selectedColumnAnchorageRequiredMm / available : null, formula: `${item.formula} Mesures enregistrées : tête=${selectedColumnAnchorageTopAvailableMm.toFixed(0)} mm; pied=${selectedColumnAnchorageBottomAvailableMm.toFixed(0)} mm.` };
-    });
     const snapshot: ColumnVerificationSnapshot = {
       savedAt: new Date().toISOString(),
       standard: selected.norm,
@@ -3415,7 +3378,7 @@ export default function BuildingCreateFlow({
         momentYKnM: verifiedDemand.momentYKnM ?? 0,
       },
       reinforcement: verifiedDesign.reinforcement.map(item => ({ label: item.label, diameterMm: item.diameterMm, count: item.count, areaMm2: item.areaMm2, requiredAreaMm2: item.requiredAreaMm2 })),
-      checks: snapshotChecks.map(item => ({ id: item.id, label: item.label, status: item.status, demand: item.demand, resistance: item.resistance, utilization: item.utilization, unit: item.unit, formula: item.formula })),
+      checks: verifiedDesign.checks.map(item => ({ id: item.id, label: item.label, status: item.status, demand: item.demand, resistance: item.resistance, utilization: item.utilization, unit: item.unit, formula: item.formula })),
     };
     const levels = selected.levels.map(level => level.id !== levelId ? level : {
       ...level,
@@ -3460,8 +3423,6 @@ export default function BuildingCreateFlow({
       depthM: circular ? "" : rawDimensions[1] === undefined ? "0.30" : String(toMeters(rawDimensions[1])),
       diameterM: circular ? String(toMeters(rawDimensions[0] ?? 0.25)) : "",
       heightM: columnHeightM > 0 ? columnHeightM.toFixed(2) : "",
-      anchorageTopMm: "",
-      anchorageBottomMm: "",
       levelId: selectedLevel?.id ?? selectedAnalysisRow.levelId,
       selfWeight: true,
       dirty: false,
@@ -4611,22 +4572,16 @@ export default function BuildingCreateFlow({
               ? `amplification ${demandValue.toFixed(2)} / seuil ${resistanceValue.toFixed(2)}`
               : check.id === "column-second-order" && !finiteDemand
                 ? "amplification indéfinie (M₀≈0)"
-                : check.id === "column-anchorage-length" && finiteDemand
-                  ? `requis ${demandValue.toFixed(0)} ${check.unit}${finiteResistance ? ` / disponible min. ${resistanceValue.toFixed(0)} ${check.unit}` : " / disponibilité à renseigner"}`
-                  : finiteDemand && finiteResistance ? `${demandValue.toFixed(2)} / ${resistanceValue.toFixed(2)} ${check.unit}` : "";
+                : finiteDemand && finiteResistance ? `${demandValue.toFixed(2)} / ${resistanceValue.toFixed(2)} ${check.unit}` : "";
         const columnActions = check.id === "column-slenderness"
           ? ["Le test compare λ=L₀/i à la limite configurée (valeur initiale du formulaire : 15). Vérifiez que L₀ est bien la longueur de flambement effective et que la limite correspond au référentiel choisi.", "Ce dépassement du seuil géométrique ne prouve pas à lui seul une insuffisance de résistance axiale; ne modifiez la section qu’après confirmation de ces données."]
           : check.id === "column-second-order" && check.status === "à vérifier"
             ? ["Le moment de premier ordre est nul ou quasi nul : le ratio MEd/M₀ est indéfini, même si le moment M₂ calculé reste fini.", "Ce point n’est pas un échec de section. Vérifiez les Mx/My de la combinaison et faites contrôler l’interaction complète du second ordre."]
             : check.id === "column-second-order"
               ? ["Le moteur compare l’amplification nominale MEd/M₀ à une limite de dépistage interne de 5; ce résultat n’est pas, à lui seul, un verdict normatif de résistance.", "Vérifiez L₀, les moments de la combinaison gouvernante et la méthode complète de second ordre applicable."]
-              : check.id === "column-anchorage-length" && check.status === "non satisfaisant"
-                ? ["La longueur réellement disponible en tête ou au pied est inférieure au requis calculé.", "Prolonger les barres droites ou faire valider un détail ancré (crochet/retour ou dispositif conforme) selon le référentiel et la géométrie du nœud; relancer le calcul après correction."]
-                : check.id === "column-anchorage-length"
-                  ? ["Saisir séparément la longueur droite réelle disponible dans le support en tête et au pied; le modèle analytique ne fournit pas le tracé des barres.", "Le requis est calculé automatiquement selon la norme sélectionnée; aucune conformité n’est conclue tant que les deux mesures ne sont pas renseignées."]
-                : check.id === "column-bael-detailing"
-                  ? ["Contrôle bloqué car les cadres, zones critiques, confinement et recouvrements ne sont pas encore calculés par le moteur.", "Ce blocage logiciel ne se corrige pas en augmentant la section; le détail doit être vérifié séparément selon le référentiel du projet."]
-                  : undefined;
+              : check.id === "column-bael-detailing"
+                ? ["Contrôle bloqué car les cadres, zones critiques, confinement et recouvrements ne sont pas encore calculés par le moteur.", "Ce blocage logiciel ne se corrige pas en augmentant la section; le détail doit être vérifié séparément selon le référentiel du projet."]
+                : undefined;
         const defaultActions = /poin|cisaillement/i.test(check.label)
           ? ["Augmenter la section ou l’épaisseur seulement si la vérification de résistance le justifie.", "Vérifier le ferraillage transversal et les paramètres de calcul."]
           : /flèche|déformation|flexion/i.test(check.label)
@@ -6396,28 +6351,16 @@ export default function BuildingCreateFlow({
                                 {showColumnBarCatalog && <div className="border-t border-[#edf0f4] px-3 py-2.5"><p className="mb-2 text-[10px] leading-4 text-[#667085]">Choisissez un diamètre : le moteur ne proposera que ce HA et cherchera le nombre de barres nécessaire pour la section, N, Mx/My et les espacements.</p><div className="flex flex-wrap gap-1.5">{(rcDesignResult?.materialBasis.availableBarDiametersMm ?? [8, 10, 12, 14, 16, 20, 25]).map((diameter, index) => <button key={`${diameter}-${index}`} type="button" aria-pressed={columnVerificationSelectedBarDiameter === diameter} onClick={() => { setColumnVerificationSelectedBarDiameter(diameter); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${columnVerificationSelectedBarDiameter === diameter ? "border-[#6550a1] bg-[#6550a1] text-white" : "border-[#ded8ea] bg-[#f8f6fb] text-[#5f4691]"}`}>HA {diameter}</button>)}</div>{selectedColumnVerificationDesign?.reinforcement.find(item => item.id.endsWith(":longitudinal")) && <p className="mt-2 text-[10px] font-semibold text-[#344054]">Dernière disposition calculée : {selectedColumnVerificationDesign.reinforcement.find(item => item.id.endsWith(":longitudinal"))?.count} HA {selectedColumnVerificationDesign.reinforcement.find(item => item.id.endsWith(":longitudinal"))?.diameterMm}</p>}</div>}
                               </section>
                               <section aria-live="polite" className={`rounded-xl border p-3 ${columnVerificationState === "passed" ? "border-emerald-700 bg-[#27883d] text-white" : columnVerificationState === "failed" ? "border-red-700 bg-[#c73535] text-white" : "border-orange-400 bg-[#ed7900] text-white"}`}>
-                                <div className="flex items-start justify-between gap-3"><div><h3 className="text-[13px] font-bold">{columnVerificationState === "passed" ? "DIMENSIONNEMENT DE SECTION SATISFAISANT" : columnVerificationState === "failed" ? unsupportedColumnBarCheck ? "DIAMÈTRE HA NON ADMIS" : "SECTION INSUFFISANTE" : columnVerificationState === "running" ? "VÉRIFICATION EN COURS" : columnVerificationState === "stale" ? "SECTION MODIFIÉE · À REVÉRIFIER" : columnVerificationState === "blocked" ? "VÉRIFICATION BLOQUÉE" : "VÉRIFICATION À LANCER"}</h3><p className="mt-1 text-[10px] leading-4 text-white/90">{columnVerificationFeedback ?? (columnVerificationState === "passed" ? "La section et les armatures sont dimensionnées. Le contrôle des longueurs d’ancrage reste séparé et facultatif à ce stade." : columnVerificationState === "failed" ? "Au moins un contrôle de résistance ou de disposition n’est pas satisfait. Consultez les contrôles et recommandations ci-dessous." : columnVerificationState === "running" ? "Le moteur recherche une disposition dans le catalogue HA sélectionné…" : columnVerificationState === "stale" ? "La géométrie ou le diamètre HA a changé. Relancez la vérification pour évaluer cette variante." : columnVerificationState === "blocked" ? (selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? rcDesignResult?.errors[0] ?? "Les efforts, le catalogue ou les paramètres nécessaires ne permettent pas de conclure.") : "Lancez le calcul pour comparer les charges et les moments à la section du poteau.")}</p></div><span className="rounded-full bg-white/20 px-2 py-1 text-[9px] font-bold">{columnVerificationState === "passed" ? "OK · PRÉ-ÉTUDE" : columnVerificationState === "failed" ? "NON SATISFAIT" : columnVerificationState === "running" ? "CALCUL" : "EN ATTENTE"}</span></div>
+                                <div className="flex items-start justify-between gap-3"><div><h3 className="text-[13px] font-bold">{columnVerificationState === "passed" ? "DIMENSIONNEMENT DE SECTION SATISFAISANT" : columnVerificationState === "failed" ? unsupportedColumnBarCheck ? "DIAMÈTRE HA NON ADMIS" : "SECTION INSUFFISANTE" : columnVerificationState === "running" ? "VÉRIFICATION EN COURS" : columnVerificationState === "stale" ? "SECTION MODIFIÉE · À REVÉRIFIER" : columnVerificationState === "blocked" ? "VÉRIFICATION BLOQUÉE" : "VÉRIFICATION À LANCER"}</h3><p className="mt-1 text-[10px] leading-4 text-white/90">{columnVerificationFeedback ?? (columnVerificationState === "passed" ? "La section et les armatures sont dimensionnées." : columnVerificationState === "failed" ? "Au moins un contrôle de résistance ou de disposition n’est pas satisfait. Consultez les contrôles et recommandations ci-dessous." : columnVerificationState === "running" ? "Le moteur recherche une disposition dans le catalogue HA sélectionné…" : columnVerificationState === "stale" ? "La géométrie ou le diamètre HA a changé. Relancez la vérification pour évaluer cette variante." : columnVerificationState === "blocked" ? (selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? rcDesignResult?.errors[0] ?? "Les efforts, le catalogue ou les paramètres nécessaires ne permettent pas de conclure.") : "Lancez le calcul pour comparer les charges et les moments à la section du poteau.")}</p></div><span className="rounded-full bg-white/20 px-2 py-1 text-[9px] font-bold">{columnVerificationState === "passed" ? "OK · PRÉ-ÉTUDE" : columnVerificationState === "failed" ? "NON SATISFAIT" : columnVerificationState === "running" ? "CALCUL" : "EN ATTENTE"}</span></div>
                                 {columnVerificationState === "blocked" && selectedColumnVerificationDesign && <div className="mt-2.5 space-y-1.5 border-t border-white/25 pt-2.5 text-[10px]">{columnVerificationCoreChecks.filter(item => item.status === "bloqué").map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>{item.label}</b><small className="mt-0.5 block">{item.formula}</small></div>)}</div>}
-                                {(columnVerificationState === "passed" || columnVerificationState === "failed") && selectedColumnVerificationDesign && <div className="mt-2.5 space-y-1.5 border-t border-white/25 pt-2.5 text-[11px]"><div className="flex justify-between gap-2"><span>Effort axial de calcul</span><b>{(columnVerificationMemberDemands.find(demand => demand.id === selectedAnalysisRow.id)?.axialKn ?? 0).toFixed(1)} kN</b></div><div className="flex justify-between gap-2"><span>Mx / My utilisés</span><b>{(selectedColumnSolvedMoments?.momentXKnM ?? selectedColumnSolvedMoments?.momentKnM ?? 0).toFixed(2)} / {(selectedColumnSolvedMoments?.momentYKnM ?? 0).toFixed(2)} kN·m</b></div>{selectedColumnVerificationDesign.reinforcement.filter(item => item.id.endsWith(":longitudinal") || item.id.endsWith(":ties") || item.id.endsWith(":anchorage")).map(item => <div key={item.id} className="flex justify-between gap-2"><span>{item.id.endsWith(":longitudinal") ? "Armatures longitudinales" : item.id.endsWith(":ties") ? "Cadres transversaux" : "Ancrages aux extrémités"}</span><b className="text-right">{item.id.endsWith(":longitudinal") ? `${item.count} HA ${item.diameterMm}` : item.id.endsWith(":ties") ? item.label.replace(/^Cadres[^·]*· /, "") : item.label}</b></div>)}{baelSecondOrderDomainCheck && baelColumnChecksActive && <p className="rounded-md bg-black/10 px-2 py-1 text-[9px] leading-4">{baelSecondOrderDomainCheck.formula}</p>}{selectedColumnVerificationDesign.checks.filter(item => item.id === "column-anchorage-length" || item.id === "column-bael-detailing").map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>{item.label} · {item.status}</b><small className="mt-0.5 block">{item.id === "column-anchorage-length" ? item.formula : item.status === "satisfaisant" ? "A.8.1 calculé : taux minimal/maximal, répartition périphérique et espacement des cadres." : item.status === "non satisfaisant" ? "Au moins une disposition BAEL calculée (acier, pas ou espacement) est dépassée." : "Aucune conclusion avec les données disponibles."}</small></div>)}{columnVerificationFailedChecks.map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>À corriger · {item.label}{item.utilization !== null ? ` (${(item.utilization * 100).toFixed(0)} %)` : ""}</b><small className="mt-0.5 block">{item.id === "column-axial" ? "Augmenter la section b/h, améliorer la classe du béton après validation, ou réduire l’effort transmis." : item.id === "column-interaction" ? "Augmenter b et/ou h, choisir un diamètre HA supérieur ou revoir l’agencement des barres." : item.id === "column-bar-spacing" ? "La disposition est trop serrée : augmenter la face de la section ou choisir moins de barres plus grosses." : item.id === "column-steel-max" ? "Le taux d’acier dépasse la limite déclarée : augmenter la section béton et recalculer." : item.id === "column-steel-min" ? "Augmenter les armatures longitudinales au minimum requis." : item.id === "column-second-order" ? (item.label.includes("A.4.4") ? `${item.formula} Augmenter la section ou revoir la longueur efficace f et les appuis.` : "Vérifier le domaine de validité BAEL A.4.3,5 et les hypothèses du poteau.") : item.id === "column-bael-detailing" ? "Revoir la section, le diamètre HA, la répartition des barres ou le diamètre/pas des cadres selon A.8.1." : item.id === "column-tie-spacing" ? "Réduire le pas des cadres conformément à la limite calculée BAEL." : item.id === "column-bar-layout-count" ? "Ajouter des barres et les répartir régulièrement sur les faces/contour." : "Choisir un diamètre longitudinal admis par le catalogue du référentiel sélectionné."}</small></div>)}</div>}
-                                <p className="mt-2 text-[9px] leading-3.5 text-white/80">Pré-étude numérique, pas une certification ni un visa d’exécution. Hypothèse de calcul : f = L; les liaisons réelles ne sont pas déduites automatiquement. Hors domaine A.4.3,5, A.4.4 est résolu pour le poteau isolé avec moments constants et mode sinusoïdal; la stabilité globale de l’ossature et ses redistributions ne sont pas recalculées. Dans le domaine A.4.3,5, l’interaction de section reste une enveloppe de pré-étude. Le détail d’ancrage reste facultatif pendant le dimensionnement et doit être confirmé après choix des barres.</p>
+                                {(columnVerificationState === "passed" || columnVerificationState === "failed") && selectedColumnVerificationDesign && <div className="mt-2.5 space-y-1.5 border-t border-white/25 pt-2.5 text-[11px]"><div className="flex justify-between gap-2"><span>Effort axial de calcul</span><b>{(columnVerificationMemberDemands.find(demand => demand.id === selectedAnalysisRow.id)?.axialKn ?? 0).toFixed(1)} kN</b></div><div className="flex justify-between gap-2"><span>Mx / My utilisés</span><b>{(selectedColumnSolvedMoments?.momentXKnM ?? selectedColumnSolvedMoments?.momentKnM ?? 0).toFixed(2)} / {(selectedColumnSolvedMoments?.momentYKnM ?? 0).toFixed(2)} kN·m</b></div>{selectedColumnVerificationDesign.reinforcement.filter(item => item.id.endsWith(":longitudinal") || item.id.endsWith(":ties")).map(item => <div key={item.id} className="flex justify-between gap-2"><span>{item.id.endsWith(":longitudinal") ? "Armatures longitudinales" : "Cadres transversaux"}</span><b className="text-right">{item.id.endsWith(":longitudinal") ? `${item.count} HA ${item.diameterMm}` : item.label.replace(/^Cadres[^·]*· /, "")}</b></div>)}{baelSecondOrderDomainCheck && baelColumnChecksActive && <p className="rounded-md bg-black/10 px-2 py-1 text-[9px] leading-4">{baelSecondOrderDomainCheck.formula}</p>}{selectedColumnVerificationDesign.checks.filter(item => item.id === "column-bael-detailing").map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>{item.label} · {item.status}</b><small className="mt-0.5 block">{item.status === "satisfaisant" ? "A.8.1 calculé : taux minimal/maximal, répartition périphérique et espacement des cadres." : item.status === "non satisfaisant" ? "Au moins une disposition BAEL calculée (acier, pas ou espacement) est dépassée." : "Aucune conclusion avec les données disponibles."}</small></div>)}{columnVerificationFailedChecks.map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>À corriger · {item.label}{item.utilization !== null ? ` (${(item.utilization * 100).toFixed(0)} %)` : ""}</b><small className="mt-0.5 block">{item.id === "column-axial" ? "Augmenter la section b/h, améliorer la classe du béton après validation, ou réduire l’effort transmis." : item.id === "column-interaction" ? "Augmenter b et/ou h, choisir un diamètre HA supérieur ou revoir l’agencement des barres." : item.id === "column-bar-spacing" ? "La disposition est trop serrée : augmenter la face de la section ou choisir moins de barres plus grosses." : item.id === "column-steel-max" ? "Le taux d’acier dépasse la limite déclarée : augmenter la section béton et recalculer." : item.id === "column-steel-min" ? "Augmenter les armatures longitudinales au minimum requis." : item.id === "column-second-order" ? (item.label.includes("A.4.4") ? `${item.formula} Augmenter la section ou revoir la longueur efficace f et les appuis.` : "Vérifier le domaine de validité BAEL A.4.3,5 et les hypothèses du poteau.") : item.id === "column-bael-detailing" ? "Revoir la section, le diamètre HA, la répartition des barres ou le diamètre/pas des cadres selon A.8.1." : item.id === "column-tie-spacing" ? "Réduire le pas des cadres conformément à la limite calculée BAEL." : item.id === "column-bar-layout-count" ? "Ajouter des barres et les répartir régulièrement sur les faces/contour." : "Choisir un diamètre longitudinal admis par le catalogue du référentiel sélectionné."}</small></div>)}</div>}
+                                <p className="mt-2 text-[9px] leading-3.5 text-white/80">Pré-étude numérique, pas une certification ni un visa d’exécution. Hypothèse de calcul : f = L; les liaisons réelles ne sont pas déduites automatiquement. Hors domaine A.4.3,5, A.4.4 est résolu pour le poteau isolé avec moments constants et mode sinusoïdal; la stabilité globale de l’ossature et ses redistributions ne sont pas recalculées. Dans le domaine A.4.3,5, l’interaction de section reste une enveloppe de pré-étude.</p>
                               </section>
                               {selectedColumnVerificationDesign && <>
-                                <section className="rounded-xl border border-[#d9e2ee] bg-white p-3">
-                                  <h3 className="text-[12px] font-semibold text-[#174b86]">Ancrage des barres · détail facultatif après ferraillage</h3>
-                                  <div className={`mt-2 rounded-md p-2 text-[10px] leading-4 ${selectedColumnAnchorageLiveStatus === "satisfaisant" ? "bg-emerald-50 text-emerald-800" : selectedColumnAnchorageLiveStatus === "insuffisant" ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-800"}`}>
-                                    <b>Requis automatiquement :</b> {selectedColumnAnchorageRequiredMm !== null ? `${selectedColumnAnchorageRequiredMm.toFixed(0)} mm en tête et au pied · HA${selectedColumnVerificationDesign.columnReport?.longitudinalDiameterMm ?? "—"}` : "indisponible pour le domaine de calcul sélectionné"}<br />
-                                    <b>Disponibilité mesurée :</b> {selectedColumnAnchorageTopAvailableMm === null ? "tête à renseigner" : `tête ${selectedColumnAnchorageTopAvailableMm.toFixed(0)} mm`} · {selectedColumnAnchorageBottomAvailableMm === null ? "pied à renseigner" : `pied ${selectedColumnAnchorageBottomAvailableMm.toFixed(0)} mm`} · <b>{selectedColumnAnchorageLiveStatus.toUpperCase()}</b>
-                                  </div>
-                                  <div className="mt-2 grid grid-cols-2 gap-3">
-                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible réel en tête (mm)<Input aria-label="Longueur d’ancrage réellement disponible en tête, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageTopMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageTopMm: event.target.value } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
-                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible réel au pied (mm)<Input aria-label="Longueur d’ancrage réellement disponible au pied, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageBottomMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageBottomMm: event.target.value } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
-                                  </div>
-                                  <p className="mt-1 text-[9px] leading-4 text-[#718093]">Ces mesures n’empêchent ni le calcul des charges ni le dimensionnement de la section. Le verdict s’actualise à leur saisie et est repris dans la fiche enregistrée.</p>
-                                </section>
                                 <section aria-live="polite" className="rounded-xl border border-[#e1e5eb] bg-white p-3">
                                   <h3 className="mb-2 text-[12px] font-semibold text-[#174b86]">Avertissements de ce poteau</h3>
                                   <div className="space-y-1.5">
-                                    {selectedColumnVerificationDesign.checks.filter(item => item.id !== "column-anchorage-length" && item.status !== "satisfaisant").map(item => <div key={item.id} className="rounded-md bg-[#fff5e8] px-2 py-1.5 text-[10px] text-[#744b14]"><b>{item.label} · {item.status}</b><small className="mt-0.5 block leading-4">{item.formula}</small></div>)}
+                                    {selectedColumnVerificationDesign.checks.filter(item => item.status !== "satisfaisant").map(item => <div key={item.id} className="rounded-md bg-[#fff5e8] px-2 py-1.5 text-[10px] text-[#744b14]"><b>{item.label} · {item.status}</b><small className="mt-0.5 block leading-4">{item.formula}</small></div>)}
                                     {selectedColumnVerificationDesign.limitations.map((item, index) => <div key={`limitation-${index}`} className="rounded-md bg-[#f3f5f8] px-2 py-1.5 text-[10px] leading-4 text-[#576273]">{item}</div>)}
                                     {rcDesignResult?.errors.map((item, index) => <div key={`design-error-${index}`} className="rounded-md bg-red-50 px-2 py-1.5 text-[10px] leading-4 text-red-800">{item}</div>)}
                                     {rcDesignResult?.warnings.map((item, index) => <div key={`design-warning-${index}`} className="rounded-md bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-800">{item}</div>)}

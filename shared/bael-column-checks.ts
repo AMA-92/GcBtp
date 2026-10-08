@@ -64,25 +64,6 @@ export function minimumBAELColumnSteelAreaMm2(shape: BAELColumnSectionShape, wid
   return Math.max(0.002 * areaMm2, 0.4 * perimeterMm);
 }
 
-/** BAEL A.6.1,221; psi_s=1.5 for HA bars; BAEL A.2.1,12 ft28=0.6+0.06fc28 up to 60 MPa. */
-export function calculateBAELStraightAnchorageMm(barDiameterMm: number, fykMpa: number, fckMpa: number, psiS = 1.5) {
-  if (![barDiameterMm, fykMpa, fckMpa, psiS].every(Number.isFinite) || barDiameterMm <= 0 || fykMpa <= 0 || fckMpa <= 0 || fckMpa > 60 || psiS <= 0) {
-    throw new Error("Le calcul BAEL du scellement droit exige 0 < fc28 ≤ 60 MPa et des paramètres positifs.");
-  }
-  const ft28Mpa = 0.6 + 0.06 * fckMpa;
-  const tauSuMpa = 0.6 * psiS ** 2 * ft28Mpa;
-  return { lengthMm: barDiameterMm * fykMpa / (4 * tauSuMpa), ratioDiameters: fykMpa / (4 * tauSuMpa), ft28Mpa, tauSuMpa };
-}
-
-/** Projet GcBtp: conservative reference 50Φ for FeE500, scaled to the declared steel yield strength. */
-export function calculateBAELReferenceAnchorageMm(barDiameterMm: number, fykMpa: number) {
-  if (![barDiameterMm, fykMpa].every(Number.isFinite) || barDiameterMm <= 0 || fykMpa <= 0) {
-    throw new Error("Le calcul de la longueur de référence BAEL exige un diamètre et un fyk positifs.");
-  }
-  const ratioDiameters = 50 * fykMpa / 500;
-  return { ratioDiameters, lengthMm: barDiameterMm * ratioDiameters };
-}
-
 export function baelMaximumColumnBarPitchMm(widthMm: number, depthMm: number) {
   return Math.min(Math.min(widthMm, depthMm) + 100, 400);
 }

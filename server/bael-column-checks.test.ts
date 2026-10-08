@@ -8,8 +8,6 @@ import {
   baelMaximumColumnTieSpacingMm,
   baelMinimumColumnBarCount,
   calculateBAELSecondOrderAxis,
-  calculateBAELReferenceAnchorageMm,
-  calculateBAELStraightAnchorageMm,
   minimumBAELColumnSteelAreaMm2,
   solveBAELIsolatedColumnEquilibrium,
 } from "@shared/bael-column-checks";
@@ -29,7 +27,6 @@ const baelBasis = (): RCDesignBasis => ({
   minReinforcementRatio: 0.002,
   maxReinforcementRatio: 0.05,
   concreteShearStressLimitMpa: 0.55,
-  bondStressMpa: 2.835,
   minClearSpacingMm: 20,
   maxLinkSpacingMm: 400,
   maxDeflectionRatio: 250,
@@ -56,22 +53,18 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(result.withinSimplifiedMethodDomain).toBe(true);
   });
 
-  it("applique les minima, pas de barres, cadres et scellement BAEL", () => {
+  it("applique les minima, pas de barres et cadres BAEL", () => {
     expect(minimumBAELColumnSteelAreaMm2("rectangular", 200, 300)).toBe(400);
     expect(minimumBAELColumnSteelAreaMm2("circular", 300, 300)).toBeCloseTo(0.4 * Math.PI * 300, 8);
     expect(baelMaximumColumnBarPitchMm(200, 300)).toBe(300);
     expect(baelMaximumColumnTieSpacingMm(200, 300, 12)).toBe(180);
     expect(baelColumnTieDiameterMm(14)).toBe(6);
-    const anchorage = calculateBAELStraightAnchorageMm(10, 500, 25);
-    expect(anchorage.tauSuMpa).toBeCloseTo(2.835, 8);
-    expect(anchorage.lengthMm).toBeCloseTo(440.9171076, 5);
-    expect(calculateBAELReferenceAnchorageMm(12, 500).lengthMm).toBe(600);
   });
 
-  it("dimensionne une section rectangulaire avec second ordre, cadres et ancrage calculés", () => {
+  it("dimensionne une section rectangulaire avec second ordre et cadres", () => {
     const result = designReinforcedConcrete({
       basis: baelBasis(),
-      members: [{ id: "P6", type: "column", combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, anchorageAvailableTopMm: 800, anchorageAvailableBottomMm: 800, axialKn: 145.2, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
+      members: [{ id: "P6", type: "column", combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, axialKn: 145.2, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
       slabs: [],
     });
     const design = result.elements[0];
@@ -80,20 +73,14 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(secondOrder?.formula).toContain("Mx,Ed=");
     expect(secondOrder?.formula).toContain("My,Ed=");
     expect(design.checks.find(item => item.id === "column-bael-detailing")?.status).toBe("satisfaisant");
-    expect(design.checks.find(item => item.id === "column-anchorage-length")?.status).toBe("satisfaisant");
+    expect(design.checks.some(item => item.id === "column-anchorage-length")).toBe(false);
     expect(design.checks.some(item => item.status === "à vérifier")).toBe(false);
     const longitudinal = design.reinforcement.find(item => item.id === "P6:longitudinal");
     const ties = design.reinforcement.find(item => item.id === "P6:ties");
-    const anchor = design.reinforcement.find(item => item.id === "P6:anchorage");
-    const anchorageCheck = design.checks.find(item => item.id === "column-anchorage-length");
     expect(longitudinal?.areaMm2).toBeGreaterThanOrEqual(400);
     expect(longitudinal?.diameterMm).toBeGreaterThanOrEqual(8);
     expect(ties?.label).toContain("Cadres BAEL");
     expect(ties?.lengthPerBarM).toBeGreaterThan(0);
-    expect(anchor?.label).toContain("par extrémité");
-    expect(anchor?.lengthPerBarM).toBeGreaterThan(0);
-    expect(anchorageCheck?.demand).toBe(longitudinal!.diameterMm * 50);
-    expect(anchorageCheck?.status).toBe("satisfaisant");
   });
 
   it("prend le relais par A.4.4 hors domaine A.4.3,5 et rend un verdict de stabilité", () => {
@@ -106,19 +93,6 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(secondOrder?.status).toBe("satisfaisant");
     expect(secondOrder?.label).toContain("A.4.4");
     expect(secondOrder?.formula).toContain("équilibre non linéaire du poteau isolé");
-  });
-
-  it("compare facultativement les longueurs d’ancrage BAEL après dimensionnement", () => {
-    const designForAnchorage = (top?: number, bottom?: number) => designReinforcedConcrete({
-      basis: baelBasis(),
-      members: [{ id: "PA", type: "column", combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, anchorageAvailableTopMm: top, anchorageAvailableBottomMm: bottom, axialKn: 120, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
-      slabs: [],
-    }).elements[0].checks.find(item => item.id === "column-anchorage-length");
-    expect(designForAnchorage()?.status).toBe("à vérifier");
-    expect(designForAnchorage()?.blocking).toBe(false);
-    expect(designForAnchorage()?.formula).toContain("Longueur réellement disponible");
-    expect(designForAnchorage(800, 800)?.status).toBe("satisfaisant");
-    expect(designForAnchorage(800, 100)?.status).toBe("non satisfaisant");
   });
 
   it("recherche un équilibre non linéaire A.4.4 pour un poteau isolé avec moments biaxiaux", () => {

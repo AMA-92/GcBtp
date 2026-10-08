@@ -19,12 +19,9 @@ type Draft = {
   gammaS: string;
   alphaCC: string;
   coverMm: string;
-  anchorageBondCondition: "good" | "poor";
-  anchorageAlphaProduct: string;
   minReinforcementPercent: string;
   maxReinforcementPercent: string;
   concreteShearStressLimitMpa: string;
-  bondStressMpa: string;
   minClearSpacingMm: string;
   maxLinkSpacingMm: string;
   maxDeflectionRatio: string;
@@ -61,12 +58,9 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   gammaS: "1.15",
   alphaCC: String(standardProfile.suggestedAlphaCC ?? 0.85),
   coverMm: String(concrete.cover),
-  anchorageBondCondition: "poor",
-  anchorageAlphaProduct: "1.00",
   minReinforcementPercent: isBael ? "0.20" : "0.13",
   maxReinforcementPercent: isBael ? "5.00" : "4.00",
   concreteShearStressLimitMpa: "0.55",
-  bondStressMpa: isBael ? String((0.6 * 1.5 ** 2 * (0.6 + 0.06 * concrete.fck)).toFixed(3)) : "2.25",
   minClearSpacingMm: "20",
   maxLinkSpacingMm: isBael ? "400" : "300",
   maxDeflectionRatio: "250",
@@ -120,17 +114,19 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     try {
       const saved = sessionStorage.getItem(`gcbtp-rc-design:${projectId}`);
       const parsed = saved ? JSON.parse(saved) as { draft?: Partial<Draft>; overrides?: RCDesignOverrides } : {};
-      const savedDraft = parsed.draft ?? {};
+      const savedDraft = { ...(parsed.draft ?? {}) } as Partial<Draft> & Record<string, unknown>;
+      delete savedDraft.anchorageBondCondition;
+      delete savedDraft.anchorageAlphaProduct;
+      delete savedDraft.bondStressMpa;
       const merged: Draft = { ...base, ...savedDraft, standard: base.standard };
       if (resolveRCStandardProfile(base.standard).family === "bael-91-99" && savedDraft.basisConfirmed !== true) {
         if (savedDraft.minReinforcementPercent === "0.13") merged.minReinforcementPercent = base.minReinforcementPercent;
         if (savedDraft.maxReinforcementPercent === "4.00") merged.maxReinforcementPercent = base.maxReinforcementPercent;
-        if (savedDraft.bondStressMpa === "2.25") merged.bondStressMpa = base.bondStressMpa;
         if (savedDraft.maxLinkSpacingMm === "300") merged.maxLinkSpacingMm = base.maxLinkSpacingMm;
       }
       if (savedDraft.availableBarDiametersMm === "8, 10, 12, 16, 20, 25") merged.availableBarDiametersMm = base.availableBarDiametersMm;
       if (savedDraft.standard && !sameRCStandardFamily(savedDraft.standard, base.standard)) {
-        (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'bondStressMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness', 'maxCrackWidthMm', 'seismicDetailingEnabled', 'seismicDuctilityClass'] as const).forEach(key => { merged[key] = base[key] as never; });
+        (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness', 'maxCrackWidthMm', 'seismicDetailingEnabled', 'seismicDuctilityClass'] as const).forEach(key => { merged[key] = base[key] as never; });
       }
       // Les anciennes sessions contenaient des champs vides : reprendre le catalogue
       // plutôt que conserver silencieusement une base de calcul incomplète.
@@ -175,12 +171,9 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     gammaS: numeric(draft.gammaS),
     alphaCC: numeric(draft.alphaCC),
     coverMm: numeric(draft.coverMm),
-    anchorageBondCondition: draft.anchorageBondCondition,
-    anchorageAlphaProduct: numeric(draft.anchorageAlphaProduct),
     minReinforcementRatio: numeric(draft.minReinforcementPercent) / 100,
     maxReinforcementRatio: numeric(draft.maxReinforcementPercent) / 100,
     concreteShearStressLimitMpa: numeric(draft.concreteShearStressLimitMpa),
-    bondStressMpa: numeric(draft.bondStressMpa),
     minClearSpacingMm: numeric(draft.minClearSpacingMm),
     maxLinkSpacingMm: numeric(draft.maxLinkSpacingMm),
     maxDeflectionRatio: numeric(draft.maxDeflectionRatio),
@@ -307,7 +300,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     ["fckMpa", "fck béton", "MPa"], ["fykMpa", "fyk acier", "MPa"],
     ["gammaC", "γc", "—"], ["gammaS", "γs", "—"], ["alphaCC", resolveRCStandardProfile(projectNorm).family === "bael-91-99" ? "Facteur béton d’étude" : "αcc", "—"],
     ["coverMm", "Enrobage nominal", "mm"], ["minReinforcementPercent", "ρ armatures min.", "%"], ["maxReinforcementPercent", "ρ armatures max.", "%"],
-    ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"], ["bondStressMpa", "τbd générique (hors lbd EC2)", "MPa"],
+    ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"],
     ["minClearSpacingMm", "Espacement libre min.", "mm"], ["maxLinkSpacingMm", "Espacement cadres max.", "mm"],
     ["maxDeflectionRatio", "Limite de flèche L/", "—"], ["maxColumnSlenderness", "Limite d’élancement λ", "—"], ["maxCrackWidthMm", "wk,max", "mm"],
   ];
@@ -318,7 +311,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       <div><b className="text-[12px]">Béton armé · dimensionnement et ferraillage</b><p className="mt-1 text-[9px] text-[#765f36]">Dalles, poutres, poteaux, longrines, voiles, semelles et volées d’escalier sont traités après résolution des efforts ou de leur pré-étude dédiée. Les sorties ne sont pas une note réglementaire ni une autorisation d’exécution.</p></div>
       <span className="shrink-0 rounded bg-[#f9e7c4] px-2 py-1 font-semibold">Non réglementaire</span>
     </div>
-    <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">fck et fyk sont proposés depuis les catalogues matériaux du projet ; vérifiez les certificats et la norme contractuelle. Coefficients code, annexes, enrobage, adhérence et détails restent à renseigner/valider ; les valeurs nominales catalogue ne constituent pas une vérification normative.</div>
+    <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">fck et fyk sont proposés depuis les catalogues matériaux du projet ; vérifiez les certificats et la norme contractuelle. Coefficients code, annexes, enrobage et détails restent à renseigner/valider ; les valeurs nominales catalogue ne constituent pas une vérification normative.</div>
     {sourceWarnings.map((warning, index) => <div key={`source-${index}`} className="rounded bg-amber-50 p-2 text-amber-900">Source / périmètre · {warning}</div>)}
     <div className="grid grid-cols-2 gap-2">
       <div className="rounded border bg-[#f8fafb] p-2"><b>Norme sélectionnée dans les paramètres du projet :</b> {projectNorm || "non renseignée"}<div className="mt-1 text-[8px]">Pour changer de norme, modifiez les paramètres du projet. {selectedStandardProfile.note}</div></div>
@@ -328,10 +321,6 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     <div className="grid grid-cols-2 gap-2">
       {fields.map(([key, label, unit]) => <label key={key}>{label} <span className="text-[#93856d]">{unit}</span><input type="number" step="any" className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft[key] as string} onChange={event => update(key, event.target.value)} /></label>)}
       <label className="col-span-2">Diamètres d’acier disponibles · mm<input className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.availableBarDiametersMm} onChange={event => update("availableBarDiametersMm", event.target.value)} /><span className="text-[8px]">Séparer par virgule, espace ou point-virgule.</span></label>
-      {selectedStandardProfile.family === "eurocode-2" && <>
-        <label>Adhérence des barres<select className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.anchorageBondCondition} onChange={event => update("anchorageBondCondition", event.target.value as Draft["anchorageBondCondition"])}><option value="good">Bonne — à confirmer</option><option value="poor">Mauvaise — conservatrice</option></select></label>
-        <label>Produit α1·α2·α3·α4·α5<input type="number" min="0.01" max="1" step="0.01" className="mt-1 h-8 w-full rounded border bg-white px-2" value={draft.anchorageAlphaProduct} onChange={event => update("anchorageAlphaProduct", event.target.value)} /><span className="text-[8px]">1,00 sans réduction de forme/confinement (conservateur).</span></label>
-      </>}
     </div>
     <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[9px] text-amber-950">Règle de projet : <b>HA8 est interdit comme armature longitudinale principale d’un poteau</b> (il peut rester admissible en cadre/étrier). Les contrôles wk, torsion, second ordre nominal et détail sismique activables restent soumis à l’édition exacte des Eurocodes et à la revue d’un ingénieur.</div>
       <label className="flex items-start gap-2 rounded bg-white p-2"><input type="checkbox" checked={draft.basisConfirmed} onChange={event => update("basisConfirmed", event.target.checked)} /><span>J’ai vérifié ces paramètres contre les documents du projet. Cette attestation de saisie ne transforme pas le calcul générique en vérification normative.</span></label>
@@ -421,5 +410,5 @@ function ReinforcementSketch({ element }: { element: RCElementDesign }) {
   if (element.type === "slab") return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · nappes orthogonales non cotées</span><svg viewBox="0 0 140 58" className="h-14 w-full"><rect x="12" y="5" width="116" height="48" fill="#fff" stroke="#59656a" strokeWidth="2" />{Array.from({ length: 7 }, (_, index) => <line key={`x-${index}`} x1={20 + index * 16} y1="8" x2={20 + index * 16} y2="50" stroke="#2b7880" strokeWidth="1.5" />)}{Array.from({ length: 4 }, (_, index) => <line key={`y-${index}`} x1="15" y1={14 + index * 12} x2="125" y2={14 + index * 12} stroke="#8b5c15" strokeWidth="1.5" />)}</svg></div>;
   const top = find(":top"), bottom = find(":bottom"), longitudinal = find(":longitudinal");
   const drawRows = (count: number, y: number, key: string) => Array.from({ length: Math.min(count, 10) }, (_, index) => <circle key={`${key}-${index}`} cx={32 + (index * 56) / Math.max(1, Math.min(count, 10) - 1)} cy={y} r="3" fill="#b74736" />);
-  return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · détails, enrobage et ancrages à vérifier</span><svg viewBox="0 0 120 66" className="h-16 w-full"><rect x="24" y="6" width="72" height="54" fill="#fff" stroke="#59656a" strokeWidth="2" /><rect x="31" y="13" width="58" height="40" fill="none" stroke="#2b7880" strokeWidth="1.5" />{element.type === "column" ? drawRows(longitudinal?.count ?? 4, 19, "column") : <>{drawRows(top?.count ?? 0, 19, "top")}{drawRows(bottom?.count ?? 0, 47, "bottom")}</>}</svg></div>;
+  return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · détails et enrobage à vérifier</span><svg viewBox="0 0 120 66" className="h-16 w-full"><rect x="24" y="6" width="72" height="54" fill="#fff" stroke="#59656a" strokeWidth="2" /><rect x="31" y="13" width="58" height="40" fill="none" stroke="#2b7880" strokeWidth="1.5" />{element.type === "column" ? drawRows(longitudinal?.count ?? 4, 19, "column") : <>{drawRows(top?.count ?? 0, 19, "top")}{drawRows(bottom?.count ?? 0, 47, "bottom")}</>}</svg></div>;
 }
