@@ -37,6 +37,21 @@ export type RCDesignBasis = {
 
 export type RebarOverride = { diameterMm: number; count: number };
 export type RCDesignOverrides = Record<string, RebarOverride>;
+export type RCColumnConnection = { elementId: string; type: string; role: "connected-member" | "surface" | "support" };
+export type RCColumnContext = {
+  classification: "poteau-de-fondation" | "RDC" | "étage-intermédiaire" | "dernier-niveau" | "non-déterminé";
+  position: "angle" | "rive" | "intérieur" | "non-déterminée";
+  xM: number;
+  yM: number;
+  zBaseM: number;
+  zTopM: number;
+  baseNodeId: string;
+  topNodeId: string;
+  connectedAtBase: RCColumnConnection[];
+  connectedAtTop: RCColumnConnection[];
+  baseSupportKind?: string;
+  supportAssumption?: string;
+};
 export type RCMemberDemand = {
   id: string;
   levelLabel?: string;
@@ -61,6 +76,7 @@ export type RCMemberDemand = {
   serviceDeflectionMm?: number;
   torsionKnM?: number;
   memberSubtype?: "beam" | "tie-beam";
+  columnContext?: RCColumnContext;
 };
 export type RCSlabDemand = {
   id: string;
@@ -120,6 +136,39 @@ export type RCElementDesign = {
   checks: RCCheck[];
   reinforcement: RebarProposal[];
   limitations: string[];
+  columnReport?: RCColumnCalculationSheet;
+};
+export type RCColumnCalculationSheet = {
+  classification: RCColumnContext["classification"];
+  position: RCColumnContext["position"];
+  levelLabel?: string;
+  xM?: number;
+  yM?: number;
+  sectionWidthMm: number;
+  sectionDepthMm: number;
+  heightMm: number;
+  bucklingLengthMm: number;
+  slendernessX: number;
+  slendernessY: number;
+  secondOrderRequired: boolean;
+  combinationId: string;
+  combinationName: string;
+  NEdKn: number;
+  MEdXKnM: number;
+  MEdYKnM: number;
+  VEdKn: number;
+  TEdKnM: number;
+  AsRequiredMm2: number;
+  AsMinimumMm2: number;
+  AsProvidedMm2: number;
+  longitudinalBarCount: number;
+  longitudinalDiameterMm: number;
+  tieDiameterMm: number;
+  tieSpacingMm: number;
+  connectedAtBase: RCColumnConnection[];
+  connectedAtTop: RCColumnConnection[];
+  baseSupportKind?: string;
+  finalStatus: "CONFORME" | "NON CONFORME" | "À VÉRIFIER";
 };
 export type RCFootingDemand = {
   id: string;
@@ -184,6 +233,68 @@ export type RCDesignResult = {
   };
 };
 
+function deriveColumnContext(model: AnalyticalModel, frame: AnalyticalModel["frames"][number]): RCColumnContext | undefined {
+  const base = model.nodes.find(node => node.id === frame.startNodeId);
+  const top = model.nodes.find(node => node.id === frame.endNodeId);
+  if (!base || !top) return undefined;
+  const [baseNode, topNode] = base.z <= top.z ? [base, top] : [top, base];
+  const connectionsAt = (nodeId: string): RCColumnConnection[] => {
+    const members = model.frames.filter(item => item.id !== frame.id && (item.startNodeId === nodeId || item.endNodeId === nodeId))
+      .map(item => ({ elementId: item.sourceElementId, type: item.sourceType, role: "connected-member" as const }));
+    const surfaces = model.surfaces.filter(item => item.nodeIds.includes(nodeId))
+      .map(item => ({ elementId: item.sourceElementId, type: item.sourceType || item.kind, role: "surface" as const }));
+    const supports = (model.supports ?? []).filter(item => item.nodeId === nodeId)
+      .map(item => ({ elementId: item.sourceElementId, type: item.kind, role: "support" as const }));
+    return [...members, ...surfaces, ...supports];
+  };
+  const connectedAtBase = connectionsAt(baseNode.id);
+  const connectedAtTop = connectionsAt(topNode.id);
+  const baseSupport = connectedAtBase.find(item => item.role === "support");
+  const hasColumnAbove = connectedAtTop.some(item => item.type === "Poteau");
+  const hasColumnBelow = connectedAtBase.some(item => item.type === "Poteau");
+  const isFoundationLevel = /fondation|foundation/i.test(frame.levelId);
+  const classification: RCColumnContext["classification"] = isFoundationLevel
+    ? "poteau-de-fondation"
+    : baseSupport && hasColumnAbove
+      ? "RDC"
+      : hasColumnAbove && hasColumnBelow
+        ? "étage-intermédiaire"
+        : !hasColumnAbove
+          ? "dernier-niveau"
+          : baseSupport
+            ? "RDC"
+            : "non-déterminé";
+
+  const columnNodes = model.frames.filter(item => item.sourceType === "Poteau")
+    .flatMap(item => [item.startNodeId, item.endNodeId])
+    .map(id => model.nodes.find(node => node.id === id))
+    .filter((node): node is NonNullable<typeof node> => Boolean(node));
+  const xs = columnNodes.map(node => node.x), ys = columnNodes.map(node => node.y);
+  const tolerance = Math.max(model.nodeMergeToleranceM ?? 0.01, 0.025);
+  const hasXExtent = xs.length > 1 && Math.max(...xs) - Math.min(...xs) > tolerance;
+  const hasYExtent = ys.length > 1 && Math.max(...ys) - Math.min(...ys) > tolerance;
+  let position: RCColumnContext["position"] = "non-déterminée";
+  if (hasXExtent && hasYExtent) {
+    const atXEdge = Math.abs(baseNode.x - Math.min(...xs)) <= tolerance || Math.abs(baseNode.x - Math.max(...xs)) <= tolerance;
+    const atYEdge = Math.abs(baseNode.y - Math.min(...ys)) <= tolerance || Math.abs(baseNode.y - Math.max(...ys)) <= tolerance;
+    position = atXEdge && atYEdge ? "angle" : atXEdge || atYEdge ? "rive" : "intérieur";
+  }
+  return {
+    classification,
+    position,
+    xM: (baseNode.x + topNode.x) / 2,
+    yM: (baseNode.y + topNode.y) / 2,
+    zBaseM: baseNode.z,
+    zTopM: topNode.z,
+    baseNodeId: baseNode.id,
+    topNodeId: topNode.id,
+    connectedAtBase,
+    connectedAtTop,
+    baseSupportKind: baseSupport?.type,
+    supportAssumption: baseSupport?.elementId,
+  };
+}
+
 export function deriveRCMemberDemandsFromPlane(input: {
   model: AnalyticalModel;
   result: PlaneFrameResult;
@@ -231,7 +342,7 @@ export function deriveRCMemberDemandsFromPlane(input: {
       torsionKnM: 0,
     };
     if (frame.sourceType === "Poteau") {
-      demands.push({ ...common, type: "column", momentXKnM: input.result.plane === "YZ" ? momentKnM : 0, momentYKnM: input.result.plane === "XZ" ? momentKnM : 0 });
+      demands.push({ ...common, type: "column", momentXKnM: input.result.plane === "YZ" ? momentKnM : 0, momentYKnM: input.result.plane === "XZ" ? momentKnM : 0, columnContext: deriveColumnContext(input.model, frame) });
     } else {
       demands.push({ ...common, type: "beam", memberSubtype: frame.sourceType === "Longrine de redressement" ? "tie-beam" : "beam", positiveMomentKnM, negativeMomentKnM });
     }
@@ -275,7 +386,7 @@ export function deriveRCMemberDemandsFromSpatial(input: {
       positiveMomentKnM: frame.sourceType === "Poutre" ? positiveMoment : undefined,
       negativeMomentKnM: frame.sourceType === "Poutre" ? negativeMoment : undefined,
     };
-    demands.push({ ...common, type: frame.sourceType === "Poteau" ? "column" : "beam" });
+    demands.push({ ...common, type: frame.sourceType === "Poteau" ? "column" : "beam", ...(frame.sourceType === "Poteau" ? { columnContext: deriveColumnContext(input.model, frame) } : {}) });
   }
   if (!demands.length) warnings.push("Aucune poutre, longrine ou poteau 3D résolu n’est disponible pour le dimensionnement.");
   return { demands, warnings };
@@ -477,6 +588,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const isBael = resolveRCStandardProfile(basis.standard).family === "bael-91-99";
   const shape: BAELColumnSectionShape = demand.sectionShape ?? "rectangular";
   const width = demand.sectionWidthMm, height = demand.sectionDepthMm, length = demand.lengthMm;
+  const bucklingLengthMm = demand.bucklingLengthMm ?? length;
   const limitations: string[] = isBael ? [
     "Second ordre BAEL : A.4.3,5 dans son domaine (α=1, φ=2, f saisi séparément); hors domaine, équilibre non linéaire A.4.4 du poteau isolé, avec f comme longueur efficace, moment de premier ordre constant sur la hauteur et mode sinusoïdal articulé.",
     "Hors domaine A.4.3,5, A.4.4 vérifie la compatibilité par fibres au point calculé; dans le domaine A.4.3,5, la résistance N–Mx–My reste une enveloppe simplifiée. Aucun des deux cas ne démontre la stabilité globale de l’ossature ni les redistributions après modification de section. Résultat de pré-étude, non certifiable et non assimilable à un visa d’exécution.",
@@ -484,6 +596,8 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     "Interaction N–Mx–My par somme linéaire de capacités axiales et uniaxiales : pré-contrôle conservateur, non un diagramme normatif d’interaction.",
     "Le second ordre utilise le contrôle du profil Eurocode sélectionné; l’interaction complète et les dispositions de confinement sismique doivent être contrôlées séparément.",
   ];
+  if (!demand.columnContext) limitations.push("Classification géométrique et connectivité non déduites : aucun contexte de modèle structural n’a été fourni pour ce poteau.");
+  if (!positive(demand.bucklingLengthMm ?? 0)) limitations.push("Longueur de flambement non fournie : la hauteur du poteau est utilisée comme longueur efficace provisoire; confirmer les liaisons en tête et en pied.");
   if (!positive(width) || !positive(height) || !positive(length)) return { elementId: demand.id, type: "column", combinationId, combinationName, checks: [emptyCheck("geometry", "Géométrie de poteau", "mm", combinationId, combinationName, "b, h, L > 0")], reinforcement: [], limitations };
   const areaGross = shape === "circular" ? Math.PI * width ** 2 / 4 : width * height;
   const minSteel = isBael ? minimumBAELColumnSteelAreaMm2(shape, width, height) : basis.minReinforcementRatio * areaGross;
@@ -493,8 +607,8 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const axialKn = Math.abs(demand.axialKn);
   const momentX = Math.abs(demand.momentXKnM ?? demand.momentKnM);
   const momentY = Math.abs(demand.momentYKnM ?? 0);
-  const baelSecondX = isBael && axialKn > 0 ? calculateBAELSecondOrderAxis({ axis: "Mx", axialKn, firstOrderMomentKnM: momentX, memberLengthMm: length, bucklingLengthMm: demand.bucklingLengthMm ?? length, sectionDepthMm: height, alpha: 1, creepRatio: 2 }) : null;
-  const baelSecondY = isBael && axialKn > 0 ? calculateBAELSecondOrderAxis({ axis: "My", axialKn, firstOrderMomentKnM: momentY, memberLengthMm: length, bucklingLengthMm: demand.bucklingLengthMm ?? length, sectionDepthMm: width, alpha: 1, creepRatio: 2 }) : null;
+  const baelSecondX = isBael && axialKn > 0 ? calculateBAELSecondOrderAxis({ axis: "Mx", axialKn, firstOrderMomentKnM: momentX, memberLengthMm: length, bucklingLengthMm, sectionDepthMm: height, alpha: 1, creepRatio: 2 }) : null;
+  const baelSecondY = isBael && axialKn > 0 ? calculateBAELSecondOrderAxis({ axis: "My", axialKn, firstOrderMomentKnM: momentY, memberLengthMm: length, bucklingLengthMm, sectionDepthMm: width, alpha: 1, creepRatio: 2 }) : null;
   const designMomentX = baelSecondX?.totalMomentKnM ?? momentX;
   const designMomentY = baelSecondY?.totalMomentKnM ?? momentY;
   const baelDomainRatio = baelSecondX && baelSecondY ? Math.max(baelSecondX.slendernessRatio / baelSecondX.allowableSlendernessRatio, baelSecondY.slendernessRatio / baelSecondY.allowableSlendernessRatio) : 0;
@@ -532,10 +646,21 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     const leverY = Math.max(0, width - 2 * (basis.coverMm + tieDiameterMm + barDiameterMm / 2));
     const mxResistanceKnM = areaMm2 * fyd * leverX * 0.25 / 1e6;
     const myResistanceKnM = areaMm2 * fyd * leverY * 0.25 / 1e6;
+    const secondOrderMoment = (firstOrderMoment: number, sectionWidthMm: number, sectionDepthMm: number) => {
+      if (isBael || axialKn <= 0 || firstOrderMoment <= 1e-9) return firstOrderMoment;
+      return checkColumnSecondOrder({
+        NEdKn: axialKn, M0EdKnM: firstOrderMoment, bMm: sectionWidthMm, hMm: sectionDepthMm,
+        L0Mm: bucklingLengthMm,
+        dMm: Math.max(50, sectionDepthMm - basis.coverMm - tieDiameterMm - barDiameterMm / 2),
+        AsMm2: areaMm2, fykMpa: basis.fykMpa, gammaS: basis.gammaS,
+      }).MEdKnM;
+    };
+    const candidateMomentX = secondOrderMoment(preselectionMomentX, width, height);
+    const candidateMomentY = secondOrderMoment(preselectionMomentY, height, width);
     const interactionRatio = axialKn / Math.max(axialResistanceKn, 1e-9)
-      + preselectionMomentX / Math.max(mxResistanceKnM, 1e-9)
-      + preselectionMomentY / Math.max(myResistanceKnM, 1e-9);
-    return { diameterMm: barDiameterMm, count: barCount, areaMm2, axialResistanceKn, interactionRatio, clearSpacingMm: layout.clearSpacingMm, maxPitchMm: layout.maxPitchMm, minimumCount: Math.max(minimumCount, layout.minimumCount), layoutValid: layout.valid && layout.clearSpacingMm >= basis.minClearSpacingMm, tieDiameterMm };
+      + candidateMomentX / Math.max(mxResistanceKnM, 1e-9)
+      + candidateMomentY / Math.max(myResistanceKnM, 1e-9);
+    return { diameterMm: barDiameterMm, count: barCount, areaMm2, axialResistanceKn, interactionRatio, candidateMomentX, candidateMomentY, clearSpacingMm: layout.clearSpacingMm, maxPitchMm: layout.maxPitchMm, minimumCount: Math.max(minimumCount, layout.minimumCount), layoutValid: layout.valid && layout.clearSpacingMm >= basis.minClearSpacingMm, tieDiameterMm };
   };
   const catalogCandidates = longitudinalDiameters.flatMap(barDiameterMm => {
     const largestCount = Math.max(minimumCount, Math.min(100, Math.floor(maxSteel / barArea(barDiameterMm) / 2) * 2));
@@ -598,11 +723,14 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const axialResistance = selectedBars.axialResistanceKn;
   const mxResistance = asProvided * fyd * Math.max(0, height - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2)) * 0.25 / 1e6;
   const myResistance = asProvided * fyd * Math.max(0, width - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2)) * 0.25 / 1e6;
-  const interactionMomentX = baelIsolatedEquilibrium?.converged ? baelIsolatedEquilibrium.totalMomentXKnM : preselectionMomentX;
-  const interactionMomentY = baelIsolatedEquilibrium?.converged ? baelIsolatedEquilibrium.totalMomentYKnM : preselectionMomentY;
+  const interactionMomentX = baelIsolatedEquilibrium?.converged ? baelIsolatedEquilibrium.totalMomentXKnM : selectedBars.candidateMomentX;
+  const interactionMomentY = baelIsolatedEquilibrium?.converged ? baelIsolatedEquilibrium.totalMomentYKnM : selectedBars.candidateMomentY;
   const interaction = baelEquilibriumUtilization ?? (axialKn / Math.max(axialResistance, 1e-9)
     + interactionMomentX / Math.max(mxResistance, 1e-9)
     + interactionMomentY / Math.max(myResistance, 1e-9));
+  const requiredAsX = interactionMomentX * 1e6 / Math.max(fyd * Math.max(height - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2), 1) * 0.25, 1);
+  const requiredAsY = interactionMomentY * 1e6 / Math.max(fyd * Math.max(width - 2 * (basis.coverMm + selectedBars.tieDiameterMm + diameter / 2), 1) * 0.25, 1);
+  const longitudinalRequiredAreaMm2 = Math.max(minSteel, requiredSteel, requiredAsX, requiredAsY);
   const tieDiameter = selectedBars.tieDiameterMm;
   const tieSpacingLimitMm = isBael ? baelMaximumColumnTieSpacingMm(width, height, diameter) : basis.maxLinkSpacingMm;
   const tieCount = Math.ceil(length / Math.max(tieSpacingLimitMm, 1)) + 1;
@@ -619,7 +747,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
       : `Enveloppe linéaire de pré-étude; moments après imperfections: Mx,Ed=${interactionMomentX.toFixed(2)} kN·m, My,Ed=${interactionMomentY.toFixed(2)} kN·m.`
     : "NEd/NRd + |Mx|/MRdx + |My|/MRdy ≤ 1 ; enveloppe linéaire non normative";
   const reinforcement: RebarProposal[] = [
-    proposal(`${demand.id}:longitudinal`, `Longitudinal poteau · ${count}HA${diameter} · ${shape === "circular" ? "répartition circulaire régulière" : "répartition sur les faces"}`, diameter, count, requiredSteel, length / 1000),
+    proposal(`${demand.id}:longitudinal`, `Longitudinal poteau · ${count}HA${diameter} · ${shape === "circular" ? "répartition circulaire régulière" : "répartition sur les faces"}`, diameter, count, longitudinalRequiredAreaMm2, length / 1000),
     proposal(`${demand.id}:ties`, `Cadres BAEL · HA ${tieDiameter} / ${tieSpacingMm.toFixed(0)} mm · ceinture continue`, tieDiameter, tieCount, 0, tieLengthM),
   ];
   let baelAnchorageRatio: number | null = null;
@@ -678,15 +806,16 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     checks.push(check("column-bael-detailing", "Détails BAEL · barres et cadres A.8.1", Math.max(detailUtilization, baelScopeRatio), 1, "—", "A.8.1,21–3 : minimum/maximum d’acier, répartition, diamètre normalisé et pas des cadres. Les recouvrements entre étages ne sont pas modélisés dans cette fiche.", combinationId, combinationName));
     if (basis.fckMpa > 60) limitations.push("BAEL A.2.1,12/A.8.1 hors domaine déclaré pour fc28 > 60 MPa : aucune conclusion de conformité BAEL n’est émise.");
   } else {
-    const slendernessX = length / Math.sqrt(height * height / 12);
-    const slendernessY = length / Math.sqrt(width * width / 12);
+    const slendernessX = bucklingLengthMm / Math.sqrt(height * height / 12);
+    const slendernessY = bucklingLengthMm / Math.sqrt(width * width / 12);
     checks.push(check("column-slenderness", "Élancement mécanique", Math.max(slendernessX, slendernessY), basis.maxColumnSlenderness, "—", "λ = L0/i ; seuil déclaré avant contrôle de second ordre", combinationId, combinationName));
-    const firstOrderMoment = Math.max(momentX, momentY);
-    const secondOrder = checkColumnSecondOrder({ NEdKn: axialKn, M0EdKnM: firstOrderMoment, bMm: width, hMm: height, L0Mm: length, dMm: Math.max(50, Math.min(width, height) - basis.coverMm - tieDiameter - diameter / 2), AsMm2: asProvided, fykMpa: basis.fykMpa, gammaS: basis.gammaS });
-    checks.push(firstOrderMoment <= 1e-9
-      ? unverifiedCheck("column-second-order", "Second ordre · moment de premier ordre nul", secondOrder.MEdKnM, "kN·m", "M0≈0 : le ratio d’amplification MEd/M0 est indéfini. Le résultat indicatif ne remplace pas le contrôle de profil.", combinationId, combinationName)
-      : check("column-second-order", "Second ordre · moment amplifié", secondOrder.amplification, 5, "—", "Contrôle du profil Eurocode sélectionné", combinationId, combinationName));
-    if (secondOrder.warnings.length) limitations.push(...secondOrder.warnings);
+    const secondOrderX = checkColumnSecondOrder({ NEdKn: axialKn, M0EdKnM: momentX, bMm: width, hMm: height, L0Mm: bucklingLengthMm, dMm: Math.max(50, height - basis.coverMm - tieDiameter - diameter / 2), AsMm2: asProvided, fykMpa: basis.fykMpa, gammaS: basis.gammaS });
+    const secondOrderY = checkColumnSecondOrder({ NEdKn: axialKn, M0EdKnM: momentY, bMm: height, hMm: width, L0Mm: bucklingLengthMm, dMm: Math.max(50, width - basis.coverMm - tieDiameter - diameter / 2), AsMm2: asProvided, fykMpa: basis.fykMpa, gammaS: basis.gammaS });
+    const secondOrderAmplification = Math.max(momentX > 1e-9 ? secondOrderX.amplification : 0, momentY > 1e-9 ? secondOrderY.amplification : 0);
+    checks.push(momentX <= 1e-9 && momentY <= 1e-9
+      ? unverifiedCheck("column-second-order", "Second ordre · moments de premier ordre nuls", Math.max(secondOrderX.MEdKnM, secondOrderY.MEdKnM), "kN·m", "M0≈0 dans les deux axes : le ratio d’amplification est indéfini. L’imperfection calculée ne constitue pas une validation normative.", combinationId, combinationName)
+      : check("column-second-order", "Second ordre · amplification biaxiale", secondOrderAmplification, 5, "—", `Contrôle indicatif par courbure nominale dans X et Y; L0=${bucklingLengthMm.toFixed(0)} mm. MEd,x=${secondOrderX.MEdKnM.toFixed(2)} kN·m; MEd,y=${secondOrderY.MEdKnM.toFixed(2)} kN·m.`, combinationId, combinationName));
+    if (secondOrderX.warnings.length || secondOrderY.warnings.length) limitations.push(...secondOrderX.warnings, ...secondOrderY.warnings);
     const indicativeAnchorageLengthMm = diameter * fyd / (4 * basis.bondStressMpa);
     checks.push(unverifiedCheck("column-anchorage-length", "Longueur d’ancrage requise · indicative", indicativeAnchorageLengthMm, "mm", "La longueur disponible au nœud et les règles du profil sélectionné doivent être évaluées.", combinationId, combinationName));
     checks.push(emptyCheck("column-bael-detailing", "Détails réglementaires Eurocode 2", "—", combinationId, combinationName, "Les contrôles complets d’ancrage, recouvrement et détails EC2 ne sont pas implémentés par cette fiche."));
@@ -697,7 +826,48 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     if (seismic.warnings.length) limitations.push(...seismic.warnings);
   } else if (basis.seismicDetailingEnabled) checks.push(emptyCheck("column-seismic-detailing", "Détail sismique poteau", "—", combinationId, combinationName, "Classe de ductilité et paramètres de détail requis"));
   if (ignoredLongitudinalOverride) checks.push(emptyCheck("column-longitudinal-override", "Override longitudinal ignoré", "mm", combinationId, combinationName, `Override ignoré : le diamètre longitudinal doit être disponible au catalogue et supérieur ou égal à ${minLongitudinalDiameterMm} mm.`));
-  return { elementId: demand.id, type: "column", combinationId, combinationName, checks, reinforcement, limitations };
+  const slendernessX = bucklingLengthMm / Math.sqrt(height * height / 12);
+  const slendernessY = bucklingLengthMm / Math.sqrt(width * width / 12);
+  const secondOrderRequired = isBael ? !a43WithinDomain : Math.max(slendernessX, slendernessY) > basis.maxColumnSlenderness;
+  const finalStatus: RCColumnCalculationSheet["finalStatus"] = checks.some(item => item.status === "non satisfaisant" || item.status === "bloqué")
+    ? "NON CONFORME"
+    : checks.some(item => item.status === "à vérifier")
+      ? "À VÉRIFIER"
+      : "CONFORME";
+  const context = demand.columnContext;
+  const columnReport: RCColumnCalculationSheet = {
+    classification: context?.classification ?? "non-déterminé",
+    position: context?.position ?? "non-déterminée",
+    levelLabel: demand.levelLabel,
+    xM: context?.xM,
+    yM: context?.yM,
+    sectionWidthMm: width,
+    sectionDepthMm: height,
+    heightMm: length,
+    bucklingLengthMm,
+    slendernessX,
+    slendernessY,
+    secondOrderRequired,
+    combinationId,
+    combinationName,
+    NEdKn: axialKn,
+    MEdXKnM: interactionMomentX,
+    MEdYKnM: interactionMomentY,
+    VEdKn: Math.abs(demand.shearKn),
+    TEdKnM: Math.abs(demand.torsionKnM ?? 0),
+    AsRequiredMm2: longitudinalRequiredAreaMm2,
+    AsMinimumMm2: minSteel,
+    AsProvidedMm2: asProvided,
+    longitudinalBarCount: count,
+    longitudinalDiameterMm: diameter,
+    tieDiameterMm: tieDiameter,
+    tieSpacingMm: tieSpacingMm,
+    connectedAtBase: context?.connectedAtBase ?? [],
+    connectedAtTop: context?.connectedAtTop ?? [],
+    baseSupportKind: context?.baseSupportKind,
+    finalStatus,
+  };
+  return { elementId: demand.id, type: "column", combinationId, combinationName, checks, reinforcement, limitations, columnReport };
 }
 
 function designSlab(demand: RCSlabDemand, basis: RCDesignBasis, overrides: RCDesignOverrides): RCElementDesign {

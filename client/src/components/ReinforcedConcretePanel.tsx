@@ -367,6 +367,19 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
           <div className="font-bold">{element.type === "beam" ? "Poutre" : element.type === "tie-beam" ? "Longrine de redressement" : element.type === "column" ? "Poteau" : element.type === "footing" ? "Semelle" : element.type === "wall" ? "Voile" : "Dalle"} {element.elementId} · combinaison gouvernante déclarée : {element.combinationName} ({element.combinationId})</div>
           <button type="button" onClick={() => downloadReinforcementPdf(element)} disabled={dirty} className="shrink-0 rounded bg-[#e9f1f3] px-2 py-1 text-[8px] font-bold text-[#173b4c] disabled:opacity-40">A4 / PDF</button>
         </div>
+        {element.columnReport && <div className="rounded border border-[#b9d7e1] bg-[#f6fbfd] p-2 text-[9px]">
+          <b>Fiche poteau · {element.columnReport.finalStatus}</b>
+          <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5">
+            <span>Niveau / type : {element.columnReport.levelLabel ?? "non renseigné"} · {element.columnReport.classification}</span><span>Position : {element.columnReport.position}</span>
+            <span>Section : {element.columnReport.sectionWidthMm} × {element.columnReport.sectionDepthMm} mm</span><span>Coordonnées : {element.columnReport.xM?.toFixed(2) ?? "—"} / {element.columnReport.yM?.toFixed(2) ?? "—"} m</span>
+            <span>NEd : {element.columnReport.NEdKn.toFixed(2)} kN · Mx/My : {element.columnReport.MEdXKnM.toFixed(2)} / {element.columnReport.MEdYKnM.toFixed(2)} kN·m</span><span>VEd / TEd : {element.columnReport.VEdKn.toFixed(2)} kN / {element.columnReport.TEdKnM.toFixed(2)} kN·m</span>
+            <span>Flambement L0 : {element.columnReport.bucklingLengthMm.toFixed(0)} mm · λx/λy : {element.columnReport.slendernessX.toFixed(1)} / {element.columnReport.slendernessY.toFixed(1)}</span><span>Second ordre requis : {element.columnReport.secondOrderRequired ? "oui" : "non détecté"} · appui pied : {element.columnReport.baseSupportKind ?? "non renseigné"}</span>
+            <span>As requise / minimale / retenue : {element.columnReport.AsRequiredMm2.toFixed(0)} / {element.columnReport.AsMinimumMm2.toFixed(0)} / {element.columnReport.AsProvidedMm2.toFixed(0)} mm²</span><span>Longitudinal : {element.columnReport.longitudinalBarCount} HA{element.columnReport.longitudinalDiameterMm} · cadres HA{element.columnReport.tieDiameterMm}/{element.columnReport.tieSpacingMm.toFixed(0)} mm</span>
+          </div>
+          <div className="mt-1">Éléments au pied : {element.columnReport.connectedAtBase.map(item => `${item.type} ${item.elementId}`).join(", ") || "aucun détecté"}</div>
+          <div>Éléments en tête : {element.columnReport.connectedAtTop.map(item => `${item.type} ${item.elementId}`).join(", ") || "aucun détecté"}</div>
+          <div className="mt-1 text-amber-800">Statut des contrôles disponibles uniquement; résultat non certifié.</div>
+        </div>}
         <ReinforcementSketch element={element} />
         {element.reinforcement.map(bar => {
           const override = overrides[bar.id] ?? { diameterMm: bar.diameterMm, count: bar.count };

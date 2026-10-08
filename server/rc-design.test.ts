@@ -125,6 +125,46 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
   });
 
+  it("classifies a modeled corner column, records connected members, and exposes its calculation sheet", () => {
+    const frames = [
+      { id: "F:P1", sourceElementId: "P1", sourceType: "Poteau", startNodeId: "A0", endNodeId: "A1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:P1U", sourceElementId: "P1U", sourceType: "Poteau", startNodeId: "A1", endNodeId: "A2", sectionId: "S1", levelId: "r1" },
+      { id: "F:P2", sourceElementId: "P2", sourceType: "Poteau", startNodeId: "B0", endNodeId: "B1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:P3", sourceElementId: "P3", sourceType: "Poteau", startNodeId: "C0", endNodeId: "C1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:P4", sourceElementId: "P4", sourceType: "Poteau", startNodeId: "D0", endNodeId: "D1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:B1", sourceElementId: "B1", sourceType: "Poutre", startNodeId: "A1", endNodeId: "BE", sectionId: "S1", levelId: "rdc" },
+    ];
+    const model = {
+      frames,
+      sections: [{ id: "S1", dimensionsM: [0.3, 0.3] }],
+      nodes: [
+        { id: "A0", x: 0, y: 0, z: 0 }, { id: "A1", x: 0, y: 0, z: 3 }, { id: "A2", x: 0, y: 0, z: 6 },
+        { id: "B0", x: 4, y: 0, z: 0 }, { id: "B1", x: 4, y: 0, z: 3 },
+        { id: "C0", x: 0, y: 3, z: 0 }, { id: "C1", x: 0, y: 3, z: 3 },
+        { id: "D0", x: 4, y: 3, z: 0 }, { id: "D1", x: 4, y: 3, z: 3 }, { id: "BE", x: 4, y: 0, z: 3 },
+      ],
+      surfaces: [],
+      supports: [{ id: "SUP:P1", sourceElementId: "S1", nodeId: "A0", kind: "fixed-base", role: "foundation-contact", restrainedDofs: ["ux", "uy", "uz"], selectionReason: "Appui sur semelle", status: "declared" }],
+      nodeMergeToleranceM: 0.01,
+    } as unknown as AnalyticalModel;
+    const extracted = deriveRCMemberDemandsFromSpatial({
+      model,
+      result: { elements: [{ elementId: "F:P1", sourceElementId: "P1", lengthM: 3, start: { axialKn: 500 }, end: { axialKn: 480 }, momentYEnvelope: { minKnM: -8, maxKnM: 20 }, momentZEnvelope: { minKnM: -3, maxKnM: 5 }, maxAbsShearKn: 12, maxAbsTorsionKnM: 1 }] } as any,
+      combinationId: "comb:uls", combinationName: "ELU enveloppe",
+    });
+    const context = extracted.demands[0].columnContext!;
+    expect(context.position).toBe("angle");
+    expect(context.classification).toBe("RDC");
+    expect(context.connectedAtBase.some(item => item.role === "support" && item.elementId === "S1")).toBe(true);
+    expect(context.connectedAtTop.map(item => item.elementId)).toEqual(expect.arrayContaining(["B1", "P1U"]));
+    const design = designReinforcedConcrete({ basis: basis(), members: extracted.demands, slabs: [] }).elements[0];
+    expect(design.columnReport?.position).toBe("angle");
+    expect(design.columnReport?.combinationName).toBe("ELU enveloppe");
+    expect(design.columnReport?.NEdKn).toBe(500);
+    expect(design.columnReport?.TEdKnM).toBe(1);
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsMinimumMm2 ?? Infinity);
+  });
+
   it("reports the configured slenderness limit and does not mark zero first-order moment as a second-order failure", () => {
     const result = designReinforcedConcrete({
       basis: { ...basis(), maxColumnSlenderness: 15 },
@@ -152,6 +192,9 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     const longitudinal = design.reinforcement.find(item => item.id === "P2:longitudinal")!;
     expect(longitudinal.count).toBeGreaterThan(4);
     expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-second-order")?.label).toContain("amplification biaxiale");
+    expect(design.checks.find(item => item.id === "column-second-order")?.formula).toContain("L0=3200 mm");
+    expect(design.columnReport?.MEdXKnM).toBeGreaterThan(30);
   });
 
   it("respects a selected HA diameter and sizes only the number of bars for that diameter", () => {

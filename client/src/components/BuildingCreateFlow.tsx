@@ -800,14 +800,35 @@ export default function BuildingCreateFlow({
     })), `note de calcul ${projectFileName}`);
   };
   const rcMemberExtraction = useMemo(() => {
+    const addLevelMetadata = (demand: RCMemberDemand): RCMemberDemand => {
+      const levelIndex = selected?.levels.findIndex(level => level.elements.some(element => element.id === demand.id)) ?? -1;
+      const level = levelIndex >= 0 ? selected?.levels[levelIndex] : undefined;
+      const levelLabel = level?.label ?? "Niveau non renseigné";
+      if (!demand.columnContext || levelIndex < 0 || !selected) return { ...demand, levelLabel };
+      const columnLevels = selected.levels.flatMap((item, index) => item.elements.some(element => element.type === "Poteau") ? [index] : []);
+      const firstColumnLevel = columnLevels[0];
+      const lastColumnLevel = columnLevels[columnLevels.length - 1];
+      const classification = /fondation|foundation/i.test(levelLabel)
+        ? "poteau-de-fondation"
+        : /\brdc\b|rez[- ]de[- ]chauss/i.test(levelLabel)
+          ? "RDC"
+          : levelIndex === firstColumnLevel && demand.columnContext.baseSupportKind
+            ? "RDC"
+            : levelIndex === lastColumnLevel
+              ? "dernier-niveau"
+              : levelIndex > (firstColumnLevel ?? levelIndex) && levelIndex < (lastColumnLevel ?? levelIndex)
+                ? "étage-intermédiaire"
+                : demand.columnContext.classification;
+      return { ...demand, levelLabel, columnContext: { ...demand.columnContext, classification } };
+    };
     if (analyticalModel && spatial3DResult) {
       const extracted = deriveRCMemberDemandsFromSpatial({ model: analyticalModel, result: spatial3DResult, combinationId: solverCombinationId, combinationName: loadProgram.combinations.find(item => item.id === solverCombinationId)?.name ?? solverCombinationId });
-      return { ...extracted, demands: extracted.demands.map(d => ({ ...d, levelLabel: selected?.levels.find(level => level.elements.some(element => element.id === d.id))?.label ?? "Niveau non renseigné" })) };
+      return { ...extracted, demands: extracted.demands.map(addLevelMetadata) };
     }
     if (!analyticalModel || !planeAnalysis?.result || !planeAnalysis.combinationId || !planeAnalysis.combinationName) return { demands: [] as RCMemberDemand[], warnings: [] as string[] };
     const extracted = deriveRCMemberDemandsFromPlane({ model: analyticalModel, result: planeAnalysis.result, combinationId: planeAnalysis.combinationId, combinationName: planeAnalysis.combinationName, memberLoads: planeAnalysis.memberLoads });
-    return { ...extracted, demands: extracted.demands.map(d => ({ ...d, levelLabel: selected?.levels.find(level => level.elements.some(element => element.id === d.id))?.label ?? "Niveau non renseigné" })) };
-  }, [analyticalModel, spatial3DResult, solverCombinationId, loadProgram.combinations, planeAnalysis]);
+    return { ...extracted, demands: extracted.demands.map(addLevelMetadata) };
+  }, [analyticalModel, spatial3DResult, solverCombinationId, loadProgram.combinations, planeAnalysis, selected]);
   const columnVerificationMemberDemands = useMemo(() => {
     if (selectedAnalysisRow?.type !== "Poteau" || !columnVerificationGeometry) return rcMemberExtraction.demands;
     const sourceDemand = rcMemberExtraction.demands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column");
