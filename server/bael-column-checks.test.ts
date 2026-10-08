@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FRENCH_BAEL_LEGACY_STANDARD } from "@shared/french-standard-profile";
-import { designReinforcedConcrete, type RCDesignBasis } from "@shared/rc-design";
+import { designReinforcedConcrete, proposeColumnSectionIncreases, type RCDesignBasis } from "@shared/rc-design";
 import {
   baelColumnLayoutForCount,
   baelColumnTieDiameterMm,
@@ -81,6 +81,22 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(longitudinal?.diameterMm).toBeGreaterThanOrEqual(8);
     expect(ties?.label).toContain("Cadres BAEL");
     expect(ties?.lengthPerBarM).toBeGreaterThan(0);
+  });
+
+  it("propose une augmentation B/H qui satisfait l’interaction biaxiale avec les armatures retenues", () => {
+    const basis = { ...baelBasis(), availableBarDiametersMm: [14] };
+    const member = { id: "P-RES", type: "column" as const, combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 1000, axialKn: 776, shearKn: 0, momentKnM: 0.48, momentXKnM: 0.39, momentYKnM: 0.48 };
+    const proposals = proposeColumnSectionIncreases({
+      basis,
+      member,
+      overrides: { "P-RES:longitudinal": { diameterMm: 14, count: 18 } },
+      selfWeightIncluded: true,
+      permanentLoadFactor: 1.35,
+    });
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(proposals.every(item => item.proposedSection.dimensions[0] >= 200 && item.proposedSection.dimensions[1] >= 300)).toBe(true);
+    expect(proposals.every(item => item.utilization <= 1)).toBe(true);
+    expect(proposals[0].proposedSection.dimensions).not.toEqual([200, 300]);
   });
 
   it("prend le relais par A.4.4 hors domaine A.4.3,5 et rend un verdict de stabilité", () => {

@@ -1081,6 +1081,110 @@ export function proposeOptimizedRCSections(input: {
   return proposals;
 }
 
+/** Cherche des sections de poteau plus grandes qui satisfont les contrôles utilisés dans la fiche. */
+export function proposeColumnSectionIncreases(input: {
+  basis: RCDesignBasis;
+  member: RCMemberDemand;
+  overrides?: RCDesignOverrides;
+  selfWeightIncluded?: boolean;
+  permanentLoadFactor?: number;
+  concreteDensityKnM3?: number;
+  maxIncreaseMm?: number;
+}): RCOptimizationProposal[] {
+  const { basis, member } = input;
+  if (member.type !== "column" || validateRCDesignBasis(basis).length) return [];
+  const currentWidth = member.sectionWidthMm;
+  const currentDepth = member.sectionDepthMm;
+  if (![currentWidth, currentDepth, member.lengthMm].every(Number.isFinite) || currentWidth <= 0 || currentDepth <= 0 || member.lengthMm <= 0) return [];
+
+  const circular = member.sectionShape === "circular";
+  const stepMm = 50;
+  const maxSteps = Math.max(1, Math.min(16, Math.ceil((input.maxIncreaseMm ?? 500) / stepMm)));
+  const densityKnM3 = input.concreteDensityKnM3 ?? 25;
+  const permanentLoadFactor = input.permanentLoadFactor ?? 1;
+  const areaM2 = (widthMm: number, depthMm: number) => circular
+    ? Math.PI * (widthMm / 1000) ** 2 / 4
+    : (widthMm * depthMm) / 1e6;
+  const isBael = resolveRCStandardProfile(basis.standard).family === "bael-91-99";
+  const requiredCheckIds = [
+    "column-axial", "column-interaction", "column-steel-min", "column-steel-max",
+    "column-bar-spacing", "column-bar-layout-count", "column-tie-spacing",
+    ...(isBael ? ["column-second-order", "column-bael-detailing"] : []),
+  ];
+  const meetsModalChecks = (design: RCElementDesign) => {
+    const coreChecks = design.checks.filter(item => requiredCheckIds.includes(item.id));
+    return coreChecks.length === requiredCheckIds.length
+      && coreChecks.every(item => item.status === "satisfaisant")
+      && !design.checks.some(item => item.id === "column-longitudinal-diameter");
+  };
+  const designCurrent = designReinforcedConcrete({ basis, members: [member], slabs: [], overrides: input.overrides }).elements[0];
+  const currentInteraction = designCurrent?.checks.find(item => item.id === "column-interaction")?.utilization ?? null;
+  const candidates: Array<[number, number]> = [];
+  if (circular) {
+    for (let index = 1; index <= maxSteps; index += 1) {
+      const diameter = currentWidth + index * stepMm;
+      candidates.push([diameter, diameter]);
+    }
+  } else {
+    for (let widthStep = 0; widthStep <= maxSteps; widthStep += 1) {
+      for (let depthStep = 0; depthStep <= maxSteps; depthStep += 1) {
+        if (widthStep === 0 && depthStep === 0) continue;
+        candidates.push([currentWidth + widthStep * stepMm, currentDepth + depthStep * stepMm]);
+      }
+    }
+  }
+  candidates.sort((a, b) => areaM2(a[0], a[1]) - areaM2(b[0], b[1])
+    || Number((a[0] > currentWidth) && (a[1] > currentDepth)) - Number((b[0] > currentWidth) && (b[1] > currentDepth))
+    || a[0] - b[0] || a[1] - b[1]);
+
+  const passing: Array<{ dimensions: [number, number]; utilization: number }> = [];
+  const currentAreaM2 = areaM2(currentWidth, currentDepth);
+  for (const dimensions of candidates) {
+    const candidateAreaM2 = areaM2(dimensions[0], dimensions[1]);
+    const additionalSelfWeightKn = input.selfWeightIncluded
+      ? Math.max(0, candidateAreaM2 - currentAreaM2) * (member.lengthMm / 1000) * densityKnM3 * permanentLoadFactor
+      : 0;
+    const candidateDemand = {
+      ...member,
+      sectionWidthMm: dimensions[0],
+      sectionDepthMm: dimensions[1],
+      axialKn: Math.abs(member.axialKn) + additionalSelfWeightKn,
+    };
+    const design = designReinforcedConcrete({ basis, members: [candidateDemand], slabs: [], overrides: input.overrides }).elements[0];
+    if (!design || !meetsModalChecks(design)) continue;
+    const interactionUtilization = design.checks.find(item => item.id === "column-interaction")?.utilization;
+    passing.push({ dimensions, utilization: interactionUtilization ?? maxUtilization(design) });
+  }
+
+  const unique = new Set<string>();
+  const selected: typeof passing = [];
+  const add = (candidate: typeof passing[number] | undefined) => {
+    if (!candidate) return;
+    const key = candidate.dimensions.join("x");
+    if (unique.has(key)) return;
+    unique.add(key);
+    selected.push(candidate);
+  };
+  const minimum = passing[0];
+  add(minimum);
+  if (!circular) {
+    add(passing.find(item => item.dimensions[0] > currentWidth && item.dimensions[1] === currentDepth));
+    add(passing.find(item => item.dimensions[0] === currentWidth && item.dimensions[1] > currentDepth));
+    add(passing.find(item => item.dimensions[0] > currentWidth && item.dimensions[1] > currentDepth));
+  }
+  return selected.slice(0, 3).map(item => ({
+    elementId: member.id,
+    levelLabel: member.levelLabel,
+    type: "column",
+    currentSection: { dimensions: [currentWidth, currentDepth], unit: "mm" },
+    proposedSection: { dimensions: item.dimensions, unit: "mm" },
+    utilization: item.utilization,
+    currentUtilization: currentInteraction,
+    reason: `Section testée avec les mêmes efforts et armatures; poids propre ajusté si activé (${item.dimensions[0]} × ${item.dimensions[1]} mm).`,
+    estimatedMaterialRatio: areaM2(item.dimensions[0], item.dimensions[1]) / currentAreaM2,
+  }));
+}
+
 export function designReinforcedConcrete(input: { basis: RCDesignBasis; members: RCMemberDemand[]; slabs: RCSlabDemand[]; foundations?: RCFootingDemand[]; stairs?: RCStairDemand[]; overrides?: RCDesignOverrides }): RCDesignResult {
   const errors = validateRCDesignBasis(input.basis);
   const warnings: string[] = [];

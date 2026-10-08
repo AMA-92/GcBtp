@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
+import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, designReinforcedConcrete, proposeColumnSectionIncreases, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
 import { solvePlaneFrame } from "@shared/frame-solver-2d";
 import { designStairV2 } from "@shared/stair-design-v2";
 import type { AnalyticalModel } from "@shared/analytical-model";
@@ -123,6 +123,21 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(ties.diameterMm).toBe(8);
     expect(result.schedule.length).toBeGreaterThan(0);
     expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
+  });
+
+  it("proposes larger A/B column dimensions under Eurocode 2 while retaining the selected bars", () => {
+    const eurocodeBasis = { ...basis(), availableBarDiametersMm: [14] };
+    const member = { id: "P-EC2", type: "column" as const, combinationId: "ELU", combinationName: "ELU EC2", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, axialKn: 776, shearKn: 0, momentKnM: 0.48, momentXKnM: 0.39, momentYKnM: 0.48 };
+    const proposals = proposeColumnSectionIncreases({
+      basis: eurocodeBasis,
+      member,
+      overrides: { "P-EC2:longitudinal": { diameterMm: 14, count: 18 } },
+      selfWeightIncluded: true,
+      permanentLoadFactor: 1.35,
+    });
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(proposals.every(item => item.proposedSection.dimensions[0] >= 200 && item.proposedSection.dimensions[1] >= 300)).toBe(true);
+    expect(proposals.every(item => item.utilization <= 1)).toBe(true);
   });
 
   it("classifies a modeled corner column, records connected members, and exposes its calculation sheet", () => {
