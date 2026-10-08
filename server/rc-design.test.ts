@@ -218,10 +218,12 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
       basis: { ...basis(), availableBarDiametersMm: [10, 12, 16, 20] },
       members: [{ id: "P-MIX", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 300, shearKn: 0, momentKnM: 20, momentXKnM: 20, momentYKnM: 0 }],
       slabs: [],
+      columnBarCountOverrides: { "P-MIX": 8 },
     });
     const design = result.elements[0];
     const longitudinal = design.reinforcement.filter(item => item.id === "P-MIX:longitudinal" || item.id.startsWith("P-MIX:longitudinal:"));
     expect(longitudinal.length).toBeGreaterThan(1);
+    expect(longitudinal.reduce((sum, item) => sum + item.count, 0)).toBe(8);
     expect(new Set(longitudinal.map(item => item.diameterMm)).size).toBeGreaterThan(1);
     expect(longitudinal.every(item => item.barPositionsMm?.length === item.count)).toBe(true);
     expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");

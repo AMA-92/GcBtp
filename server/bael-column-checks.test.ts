@@ -3,6 +3,7 @@ import { FRENCH_BAEL_LEGACY_STANDARD } from "@shared/french-standard-profile";
 import { designReinforcedConcrete, proposeColumnSectionIncreases, type RCDesignBasis } from "@shared/rc-design";
 import {
   baelColumnLayoutForCount,
+  baelColumnBarPositions,
   baelColumnTieDiameterMm,
   baelMaximumColumnBarPitchMm,
   baelMaximumColumnTieSpacingMm,
@@ -45,6 +46,27 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(result.reducedConcreteAreaMm2).toBe(50_400);
     expect(result.theoreticalSteelAreaMm2).toBeGreaterThan(0);
     expect(result.withinAlphaRange).toBe(true);
+  });
+
+  it("place 9 barres rectangulaires de façon centrée et respecte la quantité imposée", () => {
+    const layout = baelColumnBarPositions("rectangular", 300, 300, 9, 12, 6, 30, Number.POSITIVE_INFINITY);
+    expect(layout.valid).toBe(true);
+    expect(layout.positions).toHaveLength(9);
+    expect(layout.positions).toContainEqual({ xMm: 0, yMm: 0 });
+
+    const result = designReinforcedConcrete({
+      basis: { ...baelBasis(), availableBarDiametersMm: [12] },
+      members: [{ id: "P9", type: "column", combinationId: "ELU", combinationName: "ELU", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 1000, axialKn: 100, shearKn: 0, momentKnM: 5, momentXKnM: 5, momentYKnM: 0 }],
+      slabs: [],
+      columnBarCountOverrides: { P9: 9 },
+    });
+    const design = result.elements[0];
+    const bars = design.reinforcement.filter(item => item.id === "P9:longitudinal" || item.id.startsWith("P9:longitudinal:"));
+    expect(bars).toHaveLength(1);
+    expect(bars[0].count).toBe(9);
+    expect(bars[0].diameterMm).toBe(12);
+    expect(bars[0].barPositionsMm).toContainEqual({ xMm: 0, yMm: 0 });
+    expect(design.checks.find(item => item.id === "column-bar-layout-count")?.status).toBe("satisfaisant");
   });
 
   it("applique les excentricités additionnelle et du second ordre de A.4.3,5", () => {

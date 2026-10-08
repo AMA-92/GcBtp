@@ -92,9 +92,10 @@ type Props = {
   runRequestToken?: number;
   runRequestElementId?: string | null;
   runRequestBarDiametersMm?: number[] | null;
+  runRequestBarCount?: number | null;
 };
 
-export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set(), runRequestToken = 0, runRequestElementId = null, runRequestBarDiametersMm = null }: Props) {
+export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set(), runRequestToken = 0, runRequestElementId = null, runRequestBarDiametersMm = null, runRequestBarCount = null }: Props) {
   const [draft, setDraft] = useState<Draft>(() => createDraft(projectNorm, projectConcreteFckMpa, projectRebarFykMpa));
   const [overrides, setOverrides] = useState<RCDesignOverrides>({});
   const [result, setResult] = useState<RCDesignResult | null>(null);
@@ -199,11 +200,12 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     const selectedBasis = elementId && runRequestBarDiametersMm?.length
       ? { ...basis, availableBarDiametersMm: basis.availableBarDiametersMm.filter(diameter => runRequestBarDiametersMm.includes(diameter)) }
       : basis;
-    const next = designReinforcedConcrete({ basis: selectedBasis, members: focused, slabs: elementId ? [] : slabs, foundations: elementId ? [] : foundations, stairs: elementId ? [] : stairs, overrides });
+    const next = designReinforcedConcrete({ basis: selectedBasis, members: focused, slabs: elementId ? [] : slabs, foundations: elementId ? [] : foundations, stairs: elementId ? [] : stairs, overrides, columnBarCountOverrides: elementId && runRequestBarCount !== null ? { [elementId]: runRequestBarCount } : undefined });
     if (elementId && runRequestBarDiametersMm?.length) {
       next.materialBasis = { ...basis } as Omit<RCDesignBasis, "schemaVersion">;
       next.warnings.push(`Diamètres HA retenus pour cette vérification : ${runRequestBarDiametersMm.join(", ")}.`);
     }
+    if (elementId && runRequestBarCount !== null) next.warnings.push(`Nombre longitudinal imposé pour cette vérification : ${runRequestBarCount} barres.`);
     if (!validateRCDesignBasis(selectedBasis).length) {
       const wallDesigns = elementId ? [] : walls.map(wall => designWall(wall, selectedBasis, overrides));
       next.elements.push(...wallDesigns);

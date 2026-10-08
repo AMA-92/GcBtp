@@ -593,7 +593,7 @@ function designFooting(demand: RCFootingDemand, basis: RCDesignBasis, overrides:
   return {elementId:demand.id,type:"footing",combinationId,combinationName,checks,reinforcement,limitations};
 }
 
-function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: RCDesignOverrides): RCElementDesign {
+function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: RCDesignOverrides, requestedBarCount?: number): RCElementDesign {
   const combinationId = demand.combinationId, combinationName = demand.combinationName;
   const isBael = resolveRCStandardProfile(basis.standard).family === "bael-91-99";
   const shape: BAELColumnSectionShape = demand.sectionShape ?? "rectangular";
@@ -671,8 +671,8 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     }
     const groups = [...grouped.values()].sort((a, b) => b.diameterMm - a.diameterMm);
     let clearSpacingMm = Number.POSITIVE_INFINITY;
-    for (let index = 0; index < bars.length; index++) {
-      const current = bars[index], next = bars[(index + 1) % bars.length];
+    for (let index = 0; index < bars.length; index++) for (let other = index + 1; other < bars.length; other++) {
+      const current = bars[index], next = bars[other];
       const centerDistanceMm = Math.hypot(current.xMm - next.xMm, current.yMm - next.yMm);
       clearSpacingMm = Math.min(clearSpacingMm, centerDistanceMm - (current.diameterMm + next.diameterMm) / 2);
     }
@@ -719,8 +719,11 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
       tieSegmentsMm,
     };
   };
-  const largestCount = Math.max(minimumCount, Math.min(100, Math.floor(maxSteel / Math.min(...longitudinalDiameters.map(columnBarArea)) / 2) * 2));
-  const catalogCandidates = Array.from({ length: Math.floor((largestCount - minimumCount) / 2) + 1 }, (_, index) => minimumCount + index * 2)
+  const largestCount = Math.max(minimumCount, requestedBarCount ?? 0, Math.min(100, Math.floor(maxSteel / Math.min(...longitudinalDiameters.map(columnBarArea)) / 2) * 2));
+  const generatedCounts = Array.from({ length: Math.floor((largestCount - minimumCount) / 2) + 1 }, (_, index) => minimumCount + index * 2);
+  if (minimumCount <= 9 && largestCount >= 9) generatedCounts.push(9);
+  if (Number.isInteger(requestedBarCount) && requestedBarCount! >= minimumCount && requestedBarCount! <= 100) generatedCounts.push(requestedBarCount!);
+  const catalogCandidates = [...new Set(generatedCounts)].sort((a, b) => a - b)
     .flatMap(barCount => longitudinalDiameters.flatMap(cornerDiameterMm => {
       const candidates = [candidateFor(cornerDiameterMm, cornerDiameterMm, barCount)];
       if (shape === "rectangular" && barCount > 4) for (const middleDiameterMm of longitudinalDiameters) {
@@ -736,7 +739,14 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     && candidate.axialResistanceKn >= axialKn
     && candidate.interactionRatio <= 1
     && candidate.layoutValid && candidate.count >= candidate.minimumCount;
-  const passingCandidates = sortedCandidates.filter(isAcceptableCandidate);
+  const overrideCount = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count >= minimumCount
+    ? effectiveOverride.count : undefined;
+  const targetBarCount = Number.isInteger(requestedBarCount) && requestedBarCount! >= minimumCount
+    ? requestedBarCount : overrideCount;
+  const constrainedCandidates = sortedCandidates.filter(candidate =>
+    (targetBarCount === undefined || candidate.count === targetBarCount)
+    && (!effectiveOverride || candidate.groups.every(group => group.diameterMm === effectiveOverride.diameterMm)));
+  const passingCandidates = constrainedCandidates.filter(isAcceptableCandidate);
   const scoreCandidate = (candidate: typeof catalogCandidates[number]) => Math.max(
     axialKn / Math.max(candidate.axialResistanceKn, 1e-9),
     candidate.interactionRatio,
@@ -746,11 +756,9 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     candidate.minimumCount / Math.max(candidate.count, 1),
     isBael ? candidate.maxPitchMm / Math.max(barPitchLimitMm, 1) : 0,
   );
-  const overrideCount = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count >= minimumCount
-    ? Math.max(minimumCount, effectiveOverride.count + (effectiveOverride.count % 2)) : undefined;
   let selectedBars = effectiveOverride && overrideCount
-    ? candidateFor(effectiveOverride.diameterMm, effectiveOverride.diameterMm, overrideCount)
-    : passingCandidates[0] ?? [...sortedCandidates].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || compareCandidates(a, b))[0] ?? candidateFor(longitudinalDiameters[0], longitudinalDiameters[0], minimumCount);
+    ? candidateFor(effectiveOverride.diameterMm, effectiveOverride.diameterMm, targetBarCount ?? overrideCount)
+    : passingCandidates[0] ?? [...constrainedCandidates].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || compareCandidates(a, b))[0] ?? candidateFor(longitudinalDiameters[0], longitudinalDiameters[0], targetBarCount ?? minimumCount);
   const rejectionReason = (candidate: typeof catalogCandidates[number]) => candidate.areaMm2 < minSteel
     ? `As=${(candidate.areaMm2 / 100).toFixed(2)} cm² < As,min=${(minSteel / 100).toFixed(2)} cm²`
     : candidate.areaMm2 > maxSteel ? `As>${(maxSteel / 100).toFixed(2)} cm² maximal`
@@ -1199,6 +1207,7 @@ export function proposeColumnSectionIncreases(input: {
   basis: RCDesignBasis;
   member: RCMemberDemand;
   overrides?: RCDesignOverrides;
+  columnBarCountOverride?: number;
   selfWeightIncluded?: boolean;
   permanentLoadFactor?: number;
   concreteDensityKnM3?: number;
@@ -1230,7 +1239,8 @@ export function proposeColumnSectionIncreases(input: {
       && coreChecks.every(item => item.status === "satisfaisant")
       && !design.checks.some(item => item.id === "column-longitudinal-diameter");
   };
-  const designCurrent = designReinforcedConcrete({ basis, members: [member], slabs: [], overrides: input.overrides }).elements[0];
+  const columnBarCountOverrides = input.columnBarCountOverride ? { [member.id]: input.columnBarCountOverride } : undefined;
+  const designCurrent = designReinforcedConcrete({ basis, members: [member], slabs: [], overrides: input.overrides, columnBarCountOverrides }).elements[0];
   const currentInteraction = designCurrent?.checks.find(item => item.id === "column-interaction")?.utilization ?? null;
   const candidates: Array<[number, number]> = [];
   if (circular) {
@@ -1263,7 +1273,7 @@ export function proposeColumnSectionIncreases(input: {
       sectionDepthMm: dimensions[1],
       axialKn: Math.abs(member.axialKn) + additionalSelfWeightKn,
     };
-    const design = designReinforcedConcrete({ basis, members: [candidateDemand], slabs: [], overrides: input.overrides }).elements[0];
+    const design = designReinforcedConcrete({ basis, members: [candidateDemand], slabs: [], overrides: input.overrides, columnBarCountOverrides }).elements[0];
     if (!design || !meetsModalChecks(design)) continue;
     const interactionUtilization = design.checks.find(item => item.id === "column-interaction")?.utilization;
     passing.push({ dimensions, utilization: interactionUtilization ?? maxUtilization(design) });
@@ -1298,7 +1308,7 @@ export function proposeColumnSectionIncreases(input: {
   }));
 }
 
-export function designReinforcedConcrete(input: { basis: RCDesignBasis; members: RCMemberDemand[]; slabs: RCSlabDemand[]; foundations?: RCFootingDemand[]; stairs?: RCStairDemand[]; overrides?: RCDesignOverrides }): RCDesignResult {
+export function designReinforcedConcrete(input: { basis: RCDesignBasis; members: RCMemberDemand[]; slabs: RCSlabDemand[]; foundations?: RCFootingDemand[]; stairs?: RCStairDemand[]; overrides?: RCDesignOverrides; columnBarCountOverrides?: Record<string, number> }): RCDesignResult {
   const errors = validateRCDesignBasis(input.basis);
   const warnings: string[] = [];
   const standardProfile = resolveRCStandardProfile(input.basis.standard);
@@ -1312,7 +1322,7 @@ export function designReinforcedConcrete(input: { basis: RCDesignBasis; members:
   if (input.members.some(item => !item.combinationId || !item.combinationName)) errors.push("Une combinaison gouvernante doit être identifiée pour chaque membre.");
   const elements: RCElementDesign[] = errors.length ? [] : [
     ...input.members.map(item => {
-      const design = item.type === "beam" ? designBeam(item, input.basis, input.overrides ?? {}) : designColumn(item, input.basis, input.overrides ?? {});
+      const design = item.type === "beam" ? designBeam(item, input.basis, input.overrides ?? {}) : designColumn(item, input.basis, input.overrides ?? {}, input.columnBarCountOverrides?.[item.id]);
       if (item.memberSubtype === "tie-beam") design.type = "tie-beam";
       return design;
     }),

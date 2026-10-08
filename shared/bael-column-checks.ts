@@ -147,9 +147,10 @@ export function baelColumnLayoutForCount(shape: BAELColumnSectionShape, widthMm:
     return { valid: count >= minimumCount && maxPitch <= maxPitchMm && clearSpacingMm >= 0, minimumCount, maxPitchMm: maxPitch, clearSpacingMm };
   }
   let best: { nWidth: number; nDepth: number; maxPitchMm: number; clearSpacingMm: number } | null = null;
+  const perimeterBarCount = count % 2 === 1 ? count - 1 : count;
   for (let nWidth = 2; nWidth <= count + 2; nWidth++) {
     for (let nDepth = 2; nDepth <= count + 2; nDepth++) {
-      if (2 * nWidth + 2 * nDepth - 4 !== count) continue;
+      if (2 * nWidth + 2 * nDepth - 4 !== perimeterBarCount) continue;
       const pitchWidth = Math.max(0, widthMm - 2 * edgeInsetMm) / (nWidth - 1);
       const pitchDepth = Math.max(0, depthMm - 2 * edgeInsetMm) / (nDepth - 1);
       const maxPitch = Math.max(pitchWidth, pitchDepth);
@@ -175,9 +176,10 @@ export function baelColumnBarPositions(shape: BAELColumnSectionShape, widthMm: n
   }
   const x0 = -widthMm / 2 + inset, x1 = widthMm / 2 - inset;
   const y0 = -depthMm / 2 + inset, y1 = depthMm / 2 - inset;
+  const perimeterBarCount = count % 2 === 1 ? count - 1 : count;
   let best: { nWidth: number; nDepth: number; maxPitchMm: number } | null = null;
   for (let nWidth = 2; nWidth <= count + 2; nWidth++) for (let nDepth = 2; nDepth <= count + 2; nDepth++) {
-    if (2 * nWidth + 2 * nDepth - 4 !== count) continue;
+    if (2 * nWidth + 2 * nDepth - 4 !== perimeterBarCount) continue;
     const pitch = Math.max((x1 - x0) / (nWidth - 1), (y1 - y0) / (nDepth - 1));
     if (!best || pitch < best.maxPitchMm) best = { nWidth, nDepth, maxPitchMm: pitch };
   }
@@ -187,7 +189,12 @@ export function baelColumnBarPositions(shape: BAELColumnSectionShape, widthMm: n
   for (let index = 1; index < best.nDepth; index++) positions.push({ xMm: x1, yMm: y0 + (y1 - y0) * index / (best.nDepth - 1) });
   for (let index = best.nWidth - 2; index >= 0; index--) positions.push({ xMm: x0 + (x1 - x0) * index / (best.nWidth - 1), yMm: y1 });
   for (let index = best.nDepth - 2; index > 0; index--) positions.push({ xMm: x0, yMm: y0 + (y1 - y0) * index / (best.nDepth - 1) });
-  return { ...layout, maxPitchMm: best.maxPitchMm, positions };
+  if (count % 2 === 1) positions.push({ xMm: 0, yMm: 0 });
+  let clearSpacingMm = layout.clearSpacingMm;
+  for (let index = 0; index < positions.length; index++) for (let other = index + 1; other < positions.length; other++) {
+    clearSpacingMm = Math.min(clearSpacingMm, Math.hypot(positions[index].xMm - positions[other].xMm, positions[index].yMm - positions[other].yMm) - diameterMm);
+  }
+  return { ...layout, valid: layout.valid && clearSpacingMm >= 0, maxPitchMm: best.maxPitchMm, clearSpacingMm, positions };
 }
 
 
