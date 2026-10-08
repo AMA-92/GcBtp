@@ -111,6 +111,21 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(design.columnReport?.optimizationTrace.some(item => item.includes("4HA10") && item.includes("As,min"))).toBe(true);
   });
 
+  it("retient une disposition symétrique mixte BAEL avec épingles lorsque les efforts l’exigent", () => {
+    const result = designReinforcedConcrete({
+      basis: baelBasis(),
+      members: [{ id: "P-BAEL-MIX", type: "column", combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 1000, axialKn: 200, shearKn: 0, momentKnM: 15, momentXKnM: 15, momentYKnM: 0 }],
+      slabs: [],
+    });
+    const design = result.elements[0];
+    const bars = design.reinforcement.filter(item => item.id === "P-BAEL-MIX:longitudinal" || item.id.startsWith("P-BAEL-MIX:longitudinal:"));
+    expect(bars.length).toBeGreaterThan(1);
+    expect(new Set(bars.map(item => item.diameterMm)).size).toBeGreaterThan(1);
+    expect(bars.every(item => item.barPositionsMm?.length === item.count)).toBe(true);
+    expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.reinforcement.some(item => item.id === "P-BAEL-MIX:cross-ties" && !!item.tieSegmentsMm?.length)).toBe(true);
+  });
+
   it("propose une augmentation B/H qui satisfait l’interaction biaxiale avec les armatures retenues", () => {
     const basis = { ...baelBasis(), availableBarDiametersMm: [14] };
     const member = { id: "P-RES", type: "column" as const, combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 1000, axialKn: 776, shearKn: 0, momentKnM: 0.48, momentXKnM: 0.39, momentYKnM: 0.48 };
