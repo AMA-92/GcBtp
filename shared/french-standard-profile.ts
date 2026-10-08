@@ -12,13 +12,13 @@ export const FRENCH_EUROCODE_PROFILE = {
   id: "france-eurocodes",
   label: "Eurocodes français — NF EN et annexes nationales françaises",
   projectStandard: FRENCH_EUROCODE_DEFAULT_STANDARD,
-  nationalAnnex: "France — première génération Eurocodes; vérifier les éditions applicables au marché du projet",
+  nationalAnnex: "France — édition/annexe à confirmer; transition vers la deuxième génération en cours (publication de la NA française annoncée pour 2027)",
   actionReference: "NF EN 1990:2003 + NF EN 1990/NA:2011; NF EN 1991-1-1:2003 + NF P 06-111-2:2004/A1:2009",
   concreteReference: "NF EN 1992-1-1/NA — édition applicable à confirmer",
   geotechnicalReference: "NF EN 1997-1/NA + NF P 94-261:2013/A1:2017 pour les fondations superficielles; vérifier la compatibilité des éditions",
   seismicReference: "NF EN 1998 et annexe nationale française, si l'analyse sismique est requise",
   sourceReference: "AFNOR — NF EN/NA français; NF P 94-261/A1; éditions et parties applicables à confirmer",
-  notice: "Profil français de calcul par défaut GcBtp. Le pays, la ville et le site restent déterminants pour les actions et les données géotechniques. Ce profil ne remplace pas les obligations locales ni la vérification par un ingénieur habilité.",
+  notice: "Profil de pré-étude français. Le pays, la ville, le site, le marché et l’édition normative restent déterminants. Ce profil ne remplace pas les obligations locales ni la vérification par un ingénieur habilité.",
   sources: {
     eurocodes: "https://normalisation.afnor.org/thematiques/eurocodes/",
     eurocode0NationalAnnex: "https://www.boutique.afnor.org/fr-fr/norme/nf-en-1990-na/eurocodes-structuraux-bases-de-calcul-des-structures-annexe-nationale-a-la-/fa170943/38424",
@@ -48,6 +48,6 @@ export function normalizeProjectStandard(standard: string | null | undefined): s
 
 export function getFrenchCalculationBasisLabel(standard: string | null | undefined): string {
   return isBaelStandard(standard)
-    ? "BAEL 91 mod. 99 — référentiel français historique de béton armé; actions et géotechnique à définir séparément"
-    : FRENCH_EUROCODE_PROFILE.label;
+    ? "BAEL 91 mod. 99 — référentiel historique sélectionné par défaut dans GcBtp; AFNOR marque les documents DTU correspondants annulés; applicabilité contractuelle à confirmer"
+    : `${FRENCH_EUROCODE_PROFILE.label}; confirmer l’édition EN et l’annexe nationale française de même génération`;
 }

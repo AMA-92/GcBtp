@@ -27,6 +27,10 @@ export type LevelLoadSummary = { floorCount: number; beamCount: number; columnCo
 export type BuildingLoadModel = {
   contributions: TributaryContribution[];
   beamToColumns: Record<string, string[]>;
+  columnBeamContributions: Record<string, Array<{ beamId: string; gk: number; qk: number }>>;
+  columnOtherContributions: Record<string, Array<{ source: string; gk: number; qk: number }>>;
+  columnTransferredContributions: Record<string, Array<{ sourceColumnId: string; gk: number; qk: number }>>;
+  columnSelfWeights: Record<string, number>;
   columnToFoundation: Record<string, string>;
   floors: RectangularFloor[];
   surfaceAssignments: Array<{ id: string; parentElementId: string; meshSurfaceId: string; loadName: string; sourceType: string; kind: "floor" | "flight" | "landing" | "balcony"; areaM2: number; gkKnM2: number; qkKnM2: number; gkKn: number; qkKn: number }>;
@@ -50,7 +54,6 @@ const addLoad = (target: Record<string, PropagatedLoad>, id: string, load: Propa
 
 function floorThickness(config: Partial<FloorConfig> | undefined) { const parts = (config?.thickness ?? "16+4 cm").match(/\d+(?:[.,]\d+)?/g)?.map(value => Number(value.replace(",", "."))) ?? [20]; return Math.max(0.05, parts.reduce((sum, value) => sum + value, 0) / 100); }
 function floorSelfWeightRate(config: Partial<FloorConfig> | undefined) { if ((config?.type ?? "Corps creux") === "Dalle pleine") return 25 * floorThickness(config); const hollow = numeric((config?.hollowBlockHeight ?? "16").replace(",", "."), 16); const compression = numeric((config?.compressionSlab ?? "4").replace(",", "."), 4); const ribConcrete = 0.08 + Math.max(0, compression - 4) * 0.01; const blockWeight = 0.5 + Math.max(0, hollow - 16) * 0.03; return 25 * (compression / 100 + ribConcrete) + blockWeight; }
-function beamAtPoint(element: BuildingElementForLoads, beam: BeamSupport) { return samePoint(element, { x: beam.x1, y: beam.y1 }) || samePoint(element, { x: beam.x2, y: beam.y2 }); }
 const emptyLoad = (): PropagatedLoad => ({ gk: 0, qk: 0, sources: [] });
 const sectionDimensions = (section: string, fallback: [number, number]) => { const match = section.match(/(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+(?:[.,]\d+)?)/i); return match ? [Number(match[1].replace(",", ".")) / 100, Number(match[2].replace(",", ".")) / 100] as [number, number] : fallback; };
 const selfWeight = (gk: number, source: string): PropagatedLoad => ({ gk, qk: 0, sources: [source] });
@@ -74,6 +77,15 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
     x: axisIndexToMetric(point.x, options.xAxisPositionsM, gridScale),
     y: axisIndexToMetric(point.y, options.yAxisPositionsM, gridScale),
   });
+  // Les éléments peuvent subir un très léger écart après conversion de grille.
+  // Comparer en mètres plutôt qu’en indices d’axe rend la liaison cohérente
+  // même lorsque les espacements sont non uniformes.
+  const beamAtPoint = (element: BuildingElementForLoads, beam: BeamSupport) => {
+    const point = metricPoint(element);
+    const start = metricPoint({ x: beam.x1, y: beam.y1 });
+    const end = metricPoint({ x: beam.x2, y: beam.y2 });
+    return Math.hypot(point.x - start.x, point.y - start.y) <= 0.02 || Math.hypot(point.x - end.x, point.y - end.y) <= 0.02;
+  };
   const levelHeights = options.levelHeights ?? {};
   const levelHeight = (id: string) => Math.max(numeric(levelHeights[id], id === "foundation" ? 1 : 3.2), 0.1);
   for (const id of discovered) if (!levelOrder.includes(id)) levelOrder.push(id);
@@ -173,6 +185,9 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
   const localBeamLoads: Record<string, PropagatedLoad> = {};
   const localColumnLoads: Record<string, PropagatedLoad> = {};
   const beamToColumns: Record<string, string[]> = {};
+  const columnBeamContributions: Record<string, Array<{ beamId: string; gk: number; qk: number }>> = {};
+  const columnOtherContributions: Record<string, Array<{ source: string; gk: number; qk: number }>> = {};
+  const columnTransferredContributions: Record<string, Array<{ sourceColumnId: string; gk: number; qk: number }>> = {};
   const tieBeamToFoundations: Record<string, string[]> = {};
   const wallToFoundations: Record<string, string[]> = {};
   const columnToFoundation: Record<string, string> = {};
@@ -250,11 +265,17 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
           }));
           allContributions.push(...stairContributions);
           for (const contribution of stairContributions) {
-            addLoad(supportsById.get(contribution.beamId)?.type === "Poutre" || supportsById.get(contribution.beamId)?.type === "Voile" ? localBeamLoads : localColumnLoads, contribution.beamId, {
+            const support = supportsById.get(contribution.beamId);
+            const loadTarget = support?.type === "Poutre" || support?.type === "Voile" ? localBeamLoads : localColumnLoads;
+            addLoad(loadTarget, contribution.beamId, {
               gk: contribution.gk,
               qk: contribution.qk,
               sources: [contribution.source],
             });
+            if (support?.type === "Poteau") {
+              columnOtherContributions[support.id] ??= [];
+              columnOtherContributions[support.id].push({ source: contribution.source, gk: contribution.gk, qk: contribution.qk });
+            }
           }
         } else {
           warnings.push(`Escalier ${floor.id} sans poteau ou poutre d’appui géométrique identifié sur ${levelId}.`);
@@ -328,7 +349,12 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
         warnings.push(`${beamElement?.type ?? "Poutre"} ${beam.id} sans poteaux réels à ses extrémités sur ${levelId}.`);
       }
       const beamLoad = localBeamLoads[beam.id] ?? emptyLoad();
-      for (const columnId of supports) addLoad(localColumnLoads, columnId, { gk: beamLoad.gk / supports.length, qk: beamLoad.qk / supports.length, sources: [`${beam.id} → ${columnId}`, ...beamLoad.sources] });
+      for (const columnId of supports) {
+        const share = { gk: beamLoad.gk / supports.length, qk: beamLoad.qk / supports.length };
+        columnBeamContributions[columnId] ??= [];
+        columnBeamContributions[columnId].push({ beamId: beam.id, ...share });
+        addLoad(localColumnLoads, columnId, { ...share, sources: [`${beam.id} → ${columnId}`, ...beamLoad.sources] });
+      }
     }
     for (const column of levelColumns) {
       const foundation = foundations.find(item => samePoint(column, item));
@@ -365,7 +391,12 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
         const lowerLevel = levelOrder[index - 1];
         const lowerColumns = columns.filter(c => levelKey(c) === lowerLevel);
         const lower = lowerColumns.find(c => samePoint(c, column));
-        if (lower) { incomingByLevel[lowerLevel] ??= {}; addLoad(incomingByLevel[lowerLevel], lower.id, total); }
+        if (lower) {
+          incomingByLevel[lowerLevel] ??= {};
+          addLoad(incomingByLevel[lowerLevel], lower.id, total);
+          columnTransferredContributions[lower.id] ??= [];
+          columnTransferredContributions[lower.id].push({ sourceColumnId: column.id, gk: total.gk, qk: total.qk });
+        }
         else warnings.push(`Poteau ${column.id} du niveau ${levelId} sans poteau aligné au niveau inférieur ${lowerLevel}.`);
       }
     }
@@ -417,7 +448,7 @@ export function buildBuildingLoadModel(elements: BuildingElementForLoads[], opti
       supports,
     };
   });
-  return { contributions: allContributions, beamToColumns, columnToFoundation, floors, surfaceAssignments, beams, warnings: allWarnings, propagation, rows, levelOrder, levelLoads: levelDirect };
+  return { contributions: allContributions, beamToColumns, columnBeamContributions, columnOtherContributions, columnTransferredContributions, columnSelfWeights: Object.fromEntries(Object.entries(columnSelfWeights).map(([id, load]) => [id, load.gk])), columnToFoundation, floors, surfaceAssignments, beams, warnings: allWarnings, propagation, rows, levelOrder, levelLoads: levelDirect };
 }
 
 export function summarizeBuildingLoads(model: BuildingLoadModel) {

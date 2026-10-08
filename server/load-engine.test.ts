@@ -74,6 +74,9 @@ describe("load descent engine", () => {
     expect(note).toContain("Qk :");
     expect(note).toContain("ψ0/ψ1/ψ2");
     expect(note).toContain("NF EN 1990/NA:2011");
+    expect(note).toContain("Par choix du projet, GcBtp utilise le référentiel français");
+    expect(note).toContain("retenu comme base de calcul du projet");
+    expect(note).toContain("retenu comme base de calcul du projet, y compris pour un site africain par choix du projet");
     expect(note).toContain("pré-étude non certifiée");
     expect(note).toContain("Surface tributaire :");
     expect(note).toContain("Épaisseur dalle :");

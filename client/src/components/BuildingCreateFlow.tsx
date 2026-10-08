@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   Building2,
   Calculator,
   ChevronLeft,
@@ -18,6 +20,7 @@ import {
   Grid3X3,
   History,
   MoreHorizontal,
+  PersonStanding,
   Plus,
   RefreshCw,
   Rotate3D,
@@ -161,6 +164,8 @@ type LoadApplicationReport = {
   combinationRows: Array<{ id: string; name: string; category: string; formula: string; status: string; lineLoadCount: number }>;
   lineLoadCount: number;
 };
+type ColumnVerificationLoad = { id: string; category: string; label: string; axialKn: string };
+type ColumnVerificationGeometry = { shape: "rectangular" | "circular"; widthM: string; depthM: string; diameterM: string; heightM: string; anchorageTopMm: string; anchorageBottomMm: string; levelId: string; selfWeight: boolean; dirty: boolean };
 type ClimateDraft = {
   schemaVersion: 1;
   sourceReference: string;
@@ -374,6 +379,17 @@ const remapPointFields = (
   );
 };
 
+type ColumnVerificationSnapshot = {
+  savedAt: string;
+  standard: string;
+  sectionName: string;
+  combinationId: string;
+  combinationName: string;
+  geometry: { shape: "rectangular" | "circular"; widthMm: number; depthMm: number; lengthMm: number; bucklingLengthMm: number };
+  loads: { axialKn: number; momentXKnM: number; momentYKnM: number };
+  reinforcement: Array<{ label: string; diameterMm: number; count: number; areaMm2: number; requiredAreaMm2: number }>;
+  checks: Array<{ id: string; label: string; status: string; demand: number | null; resistance: number | null; utilization: number | null; unit: string; formula: string }>;
+};
 type ElementItem = {
   id: string;
   type: string;
@@ -394,6 +410,7 @@ type ElementItem = {
   yMidM?: number;
   floorConfig?: FloorConfig;
   openings?: RectangularOpening[];
+  columnVerificationSnapshot?: ColumnVerificationSnapshot;
   foundationMode?: FootingLayoutMode;
   foundationDirection?: FootingDirectionSelection;
   stairGeometry?: StairGeometry;
@@ -729,6 +746,16 @@ export default function BuildingCreateFlow({
   const [selectedAnalysisRow, setSelectedAnalysisRow] = useState<
     ReturnType<typeof summarizeBuildingLoads>["rows"][number] | null
   >(null);
+  const [columnVerificationOpen, setColumnVerificationOpen] = useState(false);
+  const [columnVerificationGeometry, setColumnVerificationGeometry] = useState<ColumnVerificationGeometry | null>(null);
+  const [columnVerificationLoads, setColumnVerificationLoads] = useState<ColumnVerificationLoad[]>([]);
+  const [columnVerificationRequested, setColumnVerificationRequested] = useState(false);
+  const [columnVerificationFeedback, setColumnVerificationFeedback] = useState<string | null>(null);
+  const [columnVerificationSavedKey, setColumnVerificationSavedKey] = useState<string | null>(null);
+  const [showColumnBarCatalog, setShowColumnBarCatalog] = useState(false);
+  const [columnVerificationLoadsDirty, setColumnVerificationLoadsDirty] = useState(false);
+  const [columnVerificationSelectedBarDiameter, setColumnVerificationSelectedBarDiameter] = useState<number | null>(null);
+  const lastColumnVerificationNotice = useRef("");
   const [visualizationOptions, setVisualizationOptions] = useState({ efforts: false, moments: false, linearLoads: false, surfaceLoads: false });
   const [visualizationDraft, setVisualizationDraft] = useState({ efforts: false, moments: false, linearLoads: false, surfaceLoads: false });
   const [showStructureValuesMenu, setShowStructureValuesMenu] = useState(false);
@@ -781,6 +808,62 @@ export default function BuildingCreateFlow({
     const extracted = deriveRCMemberDemandsFromPlane({ model: analyticalModel, result: planeAnalysis.result, combinationId: planeAnalysis.combinationId, combinationName: planeAnalysis.combinationName, memberLoads: planeAnalysis.memberLoads });
     return { ...extracted, demands: extracted.demands.map(d => ({ ...d, levelLabel: selected?.levels.find(level => level.elements.some(element => element.id === d.id))?.label ?? "Niveau non renseigné" })) };
   }, [analyticalModel, spatial3DResult, solverCombinationId, loadProgram.combinations, planeAnalysis]);
+  const columnVerificationMemberDemands = useMemo(() => {
+    if (selectedAnalysisRow?.type !== "Poteau" || !columnVerificationGeometry) return rcMemberExtraction.demands;
+    const sourceDemand = rcMemberExtraction.demands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column");
+    if (!sourceDemand) return rcMemberExtraction.demands;
+    const numericInput = (value: string) => {
+      const parsed = Number(value.trim().replace(",", "."));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const combination = loadProgram.combinations.find(item => item.id === solverCombinationId);
+    const factors = combination?.caseFactors ?? {};
+    const factorG = factors["case:G"] ?? 1;
+    const factorQ = factors["case:Q"] ?? 1;
+    const permanentInput = columnVerificationLoads.filter(load => load.category === "G").reduce((sum, load) => sum + numericInput(load.axialKn), 0);
+    const variableInput = columnVerificationLoads.filter(load => load.category === "Q").reduce((sum, load) => sum + numericInput(load.axialKn), 0);
+    const otherInput = columnVerificationLoads.filter(load => !["G", "Q"].includes(load.category)).reduce((sum, load) => {
+      const caseIds = load.category === "W" ? ["case:windX", "case:windY", "case:wind"]
+        : load.category === "S" ? ["case:snow", "case:roof"]
+          : load.category === "E" ? ["case:seismicX", "case:seismicY", "case:seismic"] : [];
+      const actionFactor = load.category === "Autre" ? 1 : Math.max(0, ...caseIds.map(id => factors[id] ?? 0));
+      return sum + numericInput(load.axialKn) * actionFactor;
+    }, 0);
+    const oldSelfWeight = buildingLoadModel?.columnSelfWeights[selectedAnalysisRow.id] ?? 0;
+    const sectionAreaM2 = columnVerificationGeometry.shape === "circular"
+      ? Math.PI * Math.pow(numericInput(columnVerificationGeometry.diameterM), 2) / 4
+      : numericInput(columnVerificationGeometry.widthM) * numericInput(columnVerificationGeometry.depthM);
+    const updatedSelfWeight = columnVerificationGeometry.selfWeight
+      ? sectionAreaM2 * numericInput(columnVerificationGeometry.heightM) * 25
+      : 0;
+    const adjustedPermanent = permanentInput - oldSelfWeight + updatedSelfWeight;
+    const axialKn = Math.abs(adjustedPermanent * factorG + variableInput * factorQ + otherInput);
+    const widthMm = (columnVerificationGeometry.shape === "circular"
+      ? numericInput(columnVerificationGeometry.diameterM)
+      : numericInput(columnVerificationGeometry.widthM)) * 1000;
+    const depthMm = (columnVerificationGeometry.shape === "circular"
+      ? numericInput(columnVerificationGeometry.diameterM)
+      : numericInput(columnVerificationGeometry.depthM)) * 1000;
+    const lengthMm = numericInput(columnVerificationGeometry.heightM) * 1000;
+    const momentXKnM = sourceDemand.momentXKnM ?? sourceDemand.momentKnM;
+    const momentYKnM = sourceDemand.momentYKnM ?? 0;
+    return rcMemberExtraction.demands.map(demand => demand.id === selectedAnalysisRow.id && demand.type === "column" ? {
+      ...demand,
+      sectionWidthMm: widthMm,
+      sectionDepthMm: depthMm,
+      sectionShape: columnVerificationGeometry.shape,
+      lengthMm: lengthMm > 0 ? lengthMm : demand.lengthMm,
+      bucklingLengthMm: lengthMm,
+      anchorageAvailableTopMm: numericInput(columnVerificationGeometry.anchorageTopMm),
+      anchorageAvailableBottomMm: numericInput(columnVerificationGeometry.anchorageBottomMm),
+      axialKn,
+      momentXKnM,
+      momentYKnM,
+      momentKnM: Math.max(Math.abs(momentXKnM), Math.abs(momentYKnM)),
+      combinationId: combination?.id ?? demand.combinationId,
+      combinationName: combination?.name ?? demand.combinationName,
+    } : demand);
+  }, [rcMemberExtraction.demands, selectedAnalysisRow, columnVerificationGeometry, columnVerificationLoads, loadProgram.combinations, solverCombinationId, buildingLoadModel]);
   const rcSlabDemands = useMemo<RCSlabDemand[]>(() => {
     if (!surfaceAnalysis?.combinationId || !surfaceAnalysis.combinationName) return [];
     return surfaceAnalysis.rows.flatMap(row => {
@@ -2399,7 +2482,7 @@ export default function BuildingCreateFlow({
     }
     const levels = selected.levels.map(level => ({
       ...level,
-      elements: level.elements.map(element => element.id === elementId ? { ...element, type: modelType, section: sectionName, color: existing?.color ?? element.color ?? colorForModel(modelType, sectionName) } : element),
+      elements: level.elements.map(element => element.id === elementId ? { ...element, type: modelType, section: sectionName, color: existing?.color ?? element.color ?? colorForModel(modelType, sectionName), columnVerificationSnapshot: modelType === "Poteau" && element.section === sectionName ? element.columnVerificationSnapshot : undefined } : element),
     }));
     updateSelected({ levels, optimizationLockedElementIds: Array.from(new Set([...(selected.optimizationLockedElementIds ?? []), ...optimizationLockedElementIds, elementId])) });
     setOptimizationLockedElementIds(current => new Set([...current, elementId]));
@@ -3033,6 +3116,7 @@ export default function BuildingCreateFlow({
       ...editingElement,
       type: editType,
       section: editSection,
+      columnVerificationSnapshot: editType === "Poteau" && editSection === editingElement.section ? editingElement.columnVerificationSnapshot : undefined,
       color: normalizeModelColor(
         editColor,
         colorForModel(editType, editSection)
@@ -3091,23 +3175,253 @@ export default function BuildingCreateFlow({
       },
     ])
   );
-  const selectedPassport = selectedAnalysisRow ? createStructuralPassport({
-    elementId: selectedAnalysisRow.id,
-    label: selectedAnalysisRow.label,
-    elementType: loadFamilyLabel(selectedAnalysisRow.type),
-    levelLabel: selected?.levels.find(level => level.id === selectedAnalysisRow.levelId)?.label ?? selectedAnalysisRow.levelId,
-    section: selectedAnalysisRow.section ?? "Non renseigné",
-    gkKn: selectedAnalysisRow.gk,
-    qkKn: selectedAnalysisRow.qk,
-    nuKn: selectedAnalysisRow.nu,
-    nserKn: selectedAnalysisRow.nser,
-    momentKnM: analysisValues[`${selectedAnalysisRow.levelId}:${selectedAnalysisRow.id}`]?.moment ?? null,
-    supports: selectedAnalysisRow.supports,
-    sources: selectedAnalysisRow.sources,
-  }) : null;
-  const selectedSpatialElement = selectedAnalysisRow ? spatial3DResult?.elements.find(item => item.sourceElementId === selectedAnalysisRow.id) : null;
-  const selectedPlaneElement = selectedAnalysisRow ? planeAnalysis?.result?.elements.find(item => item.elementId === selectedAnalysisRow.id) : null;
-  const selectedSurfaceResult = selectedAnalysisRow ? surfaceAnalysis?.rows.find(item => item.elementId === selectedAnalysisRow.id) : null;
+  const selectedColumnBeamOrigins = selectedAnalysisRow?.type === "Poteau"
+    ? (buildingLoadModel?.columnBeamContributions[selectedAnalysisRow.id] ?? []).map(origin => ({
+        ...origin,
+        label: buildingLoadModel?.rows.find(row => row.id === origin.beamId)?.label.replace(/^(?:Poutre|Voile)\s+/, "") ?? origin.beamId,
+      }))
+    : [];
+  const selectedOwnWeight = selectedAnalysisRow?.type === "Poteau"
+    ? buildingLoadModel?.columnSelfWeights[selectedAnalysisRow.id] ?? 0
+    : 0;
+  const selectedBeamG = selectedColumnBeamOrigins.reduce((sum, origin) => sum + origin.gk, 0);
+  const selectedBeamQ = selectedColumnBeamOrigins.reduce((sum, origin) => sum + origin.qk, 0);
+  const selectedColumnOtherOrigins = selectedAnalysisRow?.type === "Poteau"
+    ? buildingLoadModel?.columnOtherContributions[selectedAnalysisRow.id] ?? []
+    : [];
+  const selectedColumnTransferredOrigins = selectedAnalysisRow?.type === "Poteau"
+    ? (buildingLoadModel?.columnTransferredContributions[selectedAnalysisRow.id] ?? []).map(origin => {
+        const sourceRow = buildingLoadModel?.rows.find(row => row.id === origin.sourceColumnId);
+        const sourceLevel = selected?.levels.find(level => level.id === sourceRow?.levelId)?.label;
+        return { ...origin, label: sourceRow?.label ?? `Poteau ${origin.sourceColumnId}`, levelLabel: sourceLevel };
+      })
+    : [];
+  const selectedOtherG = selectedColumnOtherOrigins.reduce((sum, origin) => sum + origin.gk, 0);
+  const selectedOtherQ = selectedColumnOtherOrigins.reduce((sum, origin) => sum + origin.qk, 0);
+  const selectedTransferredG = selectedColumnTransferredOrigins.reduce((sum, origin) => sum + origin.gk, 0);
+  const selectedTransferredQ = selectedColumnTransferredOrigins.reduce((sum, origin) => sum + origin.qk, 0);
+  const selectedUnexplainedG = selectedAnalysisRow ? selectedAnalysisRow.gk - selectedOwnWeight - selectedBeamG - selectedOtherG - selectedTransferredG : 0;
+  const selectedUnexplainedQ = selectedAnalysisRow ? selectedAnalysisRow.qk - selectedBeamQ - selectedOtherQ - selectedTransferredQ : 0;
+  const selectedColumnSolvedMoments = selectedAnalysisRow?.type === "Poteau"
+    ? rcMemberExtraction.demands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column")
+    : undefined;
+  const selectedColumnVerificationDesign = rcDesignResult?.elements.find(element => element.elementId === selectedAnalysisRow?.id && element.type === "column");
+  const baelColumnChecksActive = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-bael-detailing")?.label.includes("BAEL") ?? false;
+  const columnVerificationCheckIds = new Set([
+    "column-axial", "column-interaction", "column-steel-min", "column-steel-max", "column-bar-spacing", "column-bar-layout-count", "column-tie-spacing",
+    ...(baelColumnChecksActive ? ["column-second-order", "column-bael-detailing", "column-anchorage-length"] : []),
+  ]);
+  const columnVerificationCoreChecks = selectedColumnVerificationDesign?.checks.filter(item => [
+    ...columnVerificationCheckIds,
+  ].includes(item.id)) ?? [];
+  const unsupportedColumnBarCheck = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-longitudinal-diameter");
+  const baelSecondOrderDomainCheck = selectedColumnVerificationDesign?.checks.find(item => item.id === "column-second-order");
+  const requiredColumnVerificationChecks = baelColumnChecksActive ? 10 : 7;
+  const columnVerificationFailedChecks = [...columnVerificationCoreChecks.filter(item => item.status === "non satisfaisant"), ...(unsupportedColumnBarCheck ? [unsupportedColumnBarCheck] : [])];
+  const columnVerificationState: "idle" | "running" | "stale" | "blocked" | "failed" | "passed" = columnVerificationFeedback
+    ? "blocked"
+    : !columnVerificationRequested ? "idle"
+      : columnVerificationGeometry?.dirty ? "stale"
+        : !rcDesignResult ? "running"
+          : unsupportedColumnBarCheck ? "failed"
+          : !selectedColumnVerificationDesign || columnVerificationCoreChecks.length < requiredColumnVerificationChecks || columnVerificationCoreChecks.some(item => item.status !== "satisfaisant" && item.status !== "non satisfaisant") ? "blocked"
+            : columnVerificationFailedChecks.length ? "failed" : "passed";
+  const columnVerificationConfigurationKey = JSON.stringify([
+    selected?.id, selectedAnalysisRow?.levelId, selectedAnalysisRow?.id,
+    columnVerificationGeometry?.shape, columnVerificationGeometry?.widthM, columnVerificationGeometry?.depthM,
+    columnVerificationGeometry?.diameterM, columnVerificationGeometry?.heightM,
+    columnVerificationGeometry?.selfWeight, columnVerificationLoads, columnVerificationSelectedBarDiameter,
+  ]);
+  const columnVerificationAlreadySaved = columnVerificationSavedKey === columnVerificationConfigurationKey;
+  useEffect(() => {
+    if (!columnVerificationRequested || columnVerificationSelectedBarDiameter !== null) return;
+    const selectedBars = selectedColumnVerificationDesign?.reinforcement.find(item => item.id.endsWith(":longitudinal"));
+    if (selectedBars) setColumnVerificationSelectedBarDiameter(selectedBars.diameterMm);
+  }, [columnVerificationRequested, columnVerificationSelectedBarDiameter, selectedColumnVerificationDesign]);
+  useEffect(() => {
+    if (!columnVerificationRequested || (columnVerificationState !== "passed" && columnVerificationState !== "failed" && columnVerificationState !== "blocked")) return;
+    const noticeKey = `${selectedAnalysisRow?.id ?? "none"}:${columnVerificationState}:${unsupportedColumnBarCheck?.id ?? columnVerificationFailedChecks.map(item => item.id).join(",")}`;
+    if (lastColumnVerificationNotice.current === noticeKey) return;
+    lastColumnVerificationNotice.current = noticeKey;
+    if (columnVerificationState === "passed") toast.success(`Vérification numérique satisfaisante pour ${selectedAnalysisRow?.id ?? "le poteau"}.`);
+    else if (columnVerificationState === "failed") toast.error(unsupportedColumnBarCheck ? "Diamètre longitudinal non admis par le moteur pour un poteau." : columnVerificationFailedChecks.some(item => item.id === "column-anchorage-length") ? "Ancrage insuffisant : augmenter la longueur droite disponible en tête ou en pied, ou revoir le détail d’ancrage BAEL." : baelSecondOrderDomainCheck?.status === "non satisfaisant" ? "La stabilité calculée selon BAEL A.4.4 n’est pas satisfaite : augmenter la section, revoir f ou les appuis dans le modèle." : `Section ou armatures insuffisantes : ${columnVerificationFailedChecks.map(item => item.label).join(", ") || "contrôle non satisfait"}.`);
+    else toast.info(columnVerificationFeedback ?? selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? "Vérification bloquée : données ou contrôle normatif manquant.");
+  }, [columnVerificationRequested, columnVerificationState, selectedAnalysisRow?.id, unsupportedColumnBarCheck, baelSecondOrderDomainCheck, columnVerificationFailedChecks, columnVerificationFeedback, selectedColumnVerificationDesign]);
+  const runColumnVerification = () => {
+    setColumnVerificationRequested(true);
+    setColumnVerificationSavedKey(null);
+    setColumnVerificationFeedback(null);
+    setRcDesignResult(null);
+    lastColumnVerificationNotice.current = "";
+    if (!selectedAnalysisRow || selectedAnalysisRow.type !== "Poteau" || !columnVerificationGeometry) {
+      setColumnVerificationFeedback("Sélectionnez un poteau avec sa fiche géométrique renseignée.");
+      return;
+    }
+    if (columnVerificationLoadsDirty) {
+      setColumnVerificationFeedback("Les charges ou le poids propre ont changé depuis l’analyse. Relancez d’abord l’analyse structurelle pour actualiser ensemble N, Mx et My.");
+      return;
+    }
+    const solved = rcMemberExtraction.demands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column");
+    if (!solved || !Number.isFinite(solved.momentXKnM ?? solved.momentKnM) || !Number.isFinite(solved.momentYKnM ?? 0)) {
+      setColumnVerificationFeedback("Efforts Mx/My indisponibles pour ce poteau. Lancez une analyse structurale exploitable avant la vérification.");
+      return;
+    }
+    if (!analyticalPrecheck?.ok) {
+      setColumnVerificationFeedback("Le modèle analytique comporte des blocages. Corrigez-les avant de vérifier le poteau.");
+      return;
+    }
+    const numericDimension = (value: string) => Number(value.replace(",", "."));
+    const widthM = columnVerificationGeometry.shape === "circular" ? numericDimension(columnVerificationGeometry.diameterM) : numericDimension(columnVerificationGeometry.widthM);
+    const depthM = columnVerificationGeometry.shape === "circular" ? numericDimension(columnVerificationGeometry.diameterM) : numericDimension(columnVerificationGeometry.depthM);
+    const heightM = Number(columnVerificationGeometry.heightM.replace(",", "."));
+    if (![widthM, depthM, heightM].every(value => Number.isFinite(value) && value > 0)) {
+      setColumnVerificationFeedback(columnVerificationGeometry.shape === "circular" ? "Renseignez un diamètre et une longueur libre strictement positifs." : "Renseignez une largeur, une profondeur et une longueur libre strictement positives.");
+      return;
+    }
+    if (columnVerificationLoads.some(load => !load.axialKn.trim() || !Number.isFinite(Number(load.axialKn.replace(",", "."))))) {
+      setColumnVerificationFeedback("Chaque ligne de charge doit contenir un effort axial numérique.");
+      return;
+    }
+    setColumnVerificationGeometry(current => current ? { ...current, dirty: false } : current);
+    setReinforcementPlanRequestToken(token => token + 1);
+  };
+  const saveColumnVerificationResult = () => {
+    if (columnVerificationState !== "passed" || !selected || !selectedAnalysisRow || !columnVerificationGeometry) {
+      toast.error("Seule une vérification satisfaisante peut être enregistrée.");
+      return;
+    }
+    const numericDimension = (value: string) => Number(value.trim().replace(",", "."));
+    const circular = columnVerificationGeometry.shape === "circular";
+    const widthM = circular ? numericDimension(columnVerificationGeometry.diameterM) : numericDimension(columnVerificationGeometry.widthM);
+    const depthM = circular ? widthM : numericDimension(columnVerificationGeometry.depthM);
+    if (![widthM, depthM].every(value => Number.isFinite(value) && value > 0)) {
+      toast.error("Dimensions de section invalides : aucune modification n’a été enregistrée.");
+      return;
+    }
+    const levelId = selectedAnalysisRow.levelId;
+    const sourceLevel = selected.levels.find(level => level.id === levelId);
+    const sourceElement = sourceLevel?.elements.find(element => element.id === selectedAnalysisRow.id && element.type === "Poteau");
+    if (!sourceLevel || !sourceElement) {
+      toast.error("Le poteau sélectionné n’est plus présent à son niveau d’origine; aucune modification n’a été enregistrée.");
+      return;
+    }
+    const verifiedDesign = selectedColumnVerificationDesign;
+    const verifiedDemand = columnVerificationMemberDemands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column");
+    if (!verifiedDesign || !verifiedDemand) {
+      toast.error("Le résultat BAEL ou les efforts du poteau ne sont plus disponibles; aucune modification n’a été enregistrée.");
+      return;
+    }
+    const token = (valueM: number) => {
+      const centimeters = valueM * 100;
+      return Number.isInteger(centimeters) ? String(centimeters) : centimeters.toFixed(1).replace(".", "p");
+    };
+    const baseSectionName = circular ? `Pot_D${token(widthM)}` : `Pot_${token(widthM)}x${token(depthM)}`;
+    const formatMeters = (valueM: number) => Number(valueM.toFixed(3)).toString();
+    const dimensions = circular ? `${formatMeters(widthM)} m` : `${formatMeters(widthM)} × ${formatMeters(depthM)} m`;
+    const type = "Poteau";
+    const family: ModelSpec["family"] = circular ? "Poteau (Cir)" : "Poteau (Rect)";
+    const preservedColor = sourceElement.color ?? colorForModel(type, sourceElement.section);
+    const catalogDimensionsMatch = (model: ModelSpec) => {
+      const values = model.dimensions.match(/\d+(?:[.,]\d+)?/g)?.map(value => Number(value.replace(",", "."))) ?? [];
+      const factor = /mm/i.test(model.dimensions) ? 0.001 : /cm/i.test(model.dimensions) ? 0.01 : 1;
+      const expected = circular ? [widthM] : [widthM, depthM];
+      return values.length >= expected.length && expected.every((value, index) => Math.abs((values[index] ?? 0) * factor - value) < 0.0005);
+    };
+    let sectionName = baseSectionName;
+    const sameNameSpec = structuralCatalog.find(model => model.type === type && model.name === sectionName);
+    if (sameNameSpec && !catalogDimensionsMatch(sameNameSpec)) {
+      let suffix = 2;
+      while (structuralCatalog.some(model => model.type === type && model.name === `${baseSectionName}_v${suffix}`)) suffix += 1;
+      sectionName = `${baseSectionName}_v${suffix}`;
+    }
+    const catalogEntry = structuralCatalog.find(model => model.type === type && model.name === sectionName);
+    if (!catalogEntry) {
+      setCustomModels(current => current.some(model => model.type === type && model.name === sectionName)
+        ? current
+        : [...current, { family, type, name: sectionName, dimensions, color: preservedColor }]);
+    }
+    const snapshot: ColumnVerificationSnapshot = {
+      savedAt: new Date().toISOString(),
+      standard: selected.norm,
+      sectionName,
+      combinationId: verifiedDesign.combinationId,
+      combinationName: verifiedDesign.combinationName,
+      geometry: {
+        shape: columnVerificationGeometry.shape,
+        widthMm: widthM * 1000,
+        depthMm: depthM * 1000,
+        lengthMm: numericDimension(columnVerificationGeometry.heightM) * 1000,
+        bucklingLengthMm: numericDimension(columnVerificationGeometry.heightM) * 1000,
+      },
+      loads: {
+        axialKn: verifiedDemand.axialKn,
+        momentXKnM: verifiedDemand.momentXKnM ?? verifiedDemand.momentKnM,
+        momentYKnM: verifiedDemand.momentYKnM ?? 0,
+      },
+      reinforcement: verifiedDesign.reinforcement.map(item => ({ label: item.label, diameterMm: item.diameterMm, count: item.count, areaMm2: item.areaMm2, requiredAreaMm2: item.requiredAreaMm2 })),
+      checks: verifiedDesign.checks.map(item => ({ id: item.id, label: item.label, status: item.status, demand: item.demand, resistance: item.resistance, utilization: item.utilization, unit: item.unit, formula: item.formula })),
+    };
+    const levels = selected.levels.map(level => level.id !== levelId ? level : {
+      ...level,
+      elements: level.elements.map(element => element.id === sourceElement.id
+        ? { ...element, section: sectionName, color: preservedColor, columnVerificationSnapshot: snapshot }
+        : element),
+    });
+    updateSelected({ levels });
+    setColumnVerificationSavedKey(columnVerificationConfigurationKey);
+    toast.success(`${selectedAnalysisRow.id} : section ${dimensions} enregistrée dans le modèle; couleur conservée en 2D et 3D. L’analyse globale des efforts reste à relancer ultérieurement.`);
+  };
+  const updateColumnLoadCategory = (loadId: string, category: string) => {
+    const labels: Record<string, string> = { G: "Charges G", Q: "Exploitation Q", W: "Vent", S: "Neige", E: "Séisme", Autre: "Autre charge" };
+    setColumnVerificationLoads(current => current.map(item => item.id === loadId ? { ...item, category, label: labels[category] ?? "Autre charge" } : item));
+    setColumnVerificationLoadsDirty(true);
+    setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current);
+  };
+  const openColumnVerification = () => {
+    if (!selectedAnalysisRow || selectedAnalysisRow.type !== "Poteau") return;
+    setColumnVerificationRequested(false);
+    setColumnVerificationSavedKey(null);
+    setColumnVerificationFeedback(null);
+    setShowColumnBarCatalog(false);
+    setRcDesignResult(null);
+    setColumnVerificationLoadsDirty(false);
+    setColumnVerificationSelectedBarDiameter(null);
+    lastColumnVerificationNotice.current = "";
+    const selectedLevel = selected?.levels.find(level => level.id === selectedAnalysisRow.levelId);
+    const selectedElement = selectedLevel?.elements.find(element => element.id === selectedAnalysisRow.id);
+    const sectionName = selectedElement?.section ?? selectedAnalysisRow.section ?? "Pot_20x30";
+    const sectionSpec = modelSpec("Poteau", sectionName);
+    const dimensionText = sectionSpec?.dimensions ?? sectionName;
+    const rawDimensions = dimensionText.match(/\d+(?:[.,]\d+)?/g)?.map(value => Number(value.replace(",", "."))) ?? [];
+    const toMeters = (value: number) => /mm/i.test(dimensionText) ? value / 1000 : /cm/i.test(dimensionText) || value > 2 ? value / 100 : value;
+    const circular = sectionSpec?.family === "Poteau (Cir)" || /(?:\bD\d|circul|diam|ø)/i.test(sectionName);
+    const storyHeight = Number(String(selectedLevel?.height ?? "").replace(",", "."));
+    const selectedMemberLengthM = (rcMemberExtraction.demands.find(demand => demand.id === selectedAnalysisRow.id && demand.type === "column")?.lengthMm ?? 0) / 1000;
+    const columnHeightM = storyHeight > 0 ? storyHeight : selectedMemberLengthM > 0 ? selectedMemberLengthM : 0;
+    setColumnVerificationGeometry({
+      shape: circular ? "circular" : "rectangular",
+      widthM: circular ? "" : rawDimensions[0] === undefined ? "0.20" : String(toMeters(rawDimensions[0])),
+      depthM: circular ? "" : rawDimensions[1] === undefined ? "0.30" : String(toMeters(rawDimensions[1])),
+      diameterM: circular ? String(toMeters(rawDimensions[0] ?? 0.25)) : "",
+      heightM: columnHeightM > 0 ? columnHeightM.toFixed(2) : "",
+      anchorageTopMm: "",
+      anchorageBottomMm: "",
+      levelId: selectedLevel?.id ?? selectedAnalysisRow.levelId,
+      selfWeight: true,
+      dirty: false,
+    });
+    setColumnVerificationLoads([
+      { id: "case-g", category: "G", label: "Charges G", axialKn: selectedAnalysisRow.gk.toFixed(1) },
+      { id: "case-q", category: "Q", label: "Exploitation Q", axialKn: selectedAnalysisRow.qk.toFixed(1) },
+    ]);
+    setColumnVerificationOpen(true);
+  };
+  const closeColumnVerification = () => {
+    setColumnVerificationOpen(false);
+    setColumnVerificationRequested(false);
+    setColumnVerificationFeedback(null);
+    setColumnVerificationLoadsDirty(false);
+  };
   const analysisScaleColors = Object.fromEntries(
     analysisRows
       .filter(row => row.type === "Poteau")
@@ -3472,11 +3786,11 @@ export default function BuildingCreateFlow({
                         {PROJECT_STANDARD_CATALOG.map(item => <option key={item.id} value={item.norm}>{item.label}</option>)}
                       </select>
                       <div className="mt-2 rounded-lg border border-[#bfe4e2] bg-[#eaf8f7] p-3 text-[10px] leading-4 text-[#245e60]">
-                        <b>Profil de calcul GcBtp par défaut : {getCountryProjectStandard(projectSettingsDraft.country, projectSettingsDraft.city)}</b>
+                        <b>Défaut logiciel GcBtp (pas une validation nationale) : {getCountryProjectStandard(projectSettingsDraft.country, projectSettingsDraft.city)}</b>
                         <div className="mt-1">Référentiel pays : {projectSetupProfile.rule.label} · statut : {projectSetupProfile.rule.status === "national" ? "national" : projectSetupProfile.rule.status === "adopted" ? "adopté / proposé" : projectSetupProfile.rule.status === "adapted" ? "adapté / à confirmer" : "à confirmer"}.</div>
                         <div className="mt-1">{projectSetupProfile.rule.note}</div>
-                        <div className="mt-1">{getFrenchCalculationBasisLabel(projectSettingsDraft.norm)}. Pays, ville et emplacement restent utilisés pour les données locales de vent, séisme et géotechnique. Le référentiel français ne remplace pas les obligations locales.</div>
-                        <div className="mt-1 font-medium">Le BAEL 91 mod. 99 est conservé comme option française historique distincte; ne pas mélanger ses coefficients avec ceux des Eurocodes. Les exigences locales restent à vérifier.</div>
+                        <div className="mt-1">{getFrenchCalculationBasisLabel(projectSettingsDraft.norm)}. Les données de vent, séisme et sol doivent être confirmées selon les règles du pays sélectionné.</div>
+                        <div className="mt-1 font-medium">Base de calcul : référentiels français BAEL (défaut) ou Eurocode 2 (sélectionnable), y compris pour les sites africains par choix du projet. Le pays indique le lieu du chantier, pas un code national africain; confirmer l’édition contractuelle et les données locales avant usage réglementaire.</div>
                       </div>
                     </div>
                     <div>
@@ -4209,7 +4523,7 @@ export default function BuildingCreateFlow({
     toast.success("Gabarit A4 de ferraillage enregistré.");
   };
 
-  const calculationRecommendations: Array<{ elementId: string; title: string; actions: string[] }> = [];
+  const calculationRecommendations: Array<{ elementId: string; title: string; actions: string[]; category?: "foundation-design" }> = [];
   foundationEvaluation?.rows.forEach(row => {
     row.result?.checks.filter(check => check.status !== "satisfaisant").forEach(check => {
       const actions = check.id === "bearing"
@@ -4221,21 +4535,50 @@ export default function BuildingCreateFlow({
             : check.id === "settlement"
               ? ["Augmenter la surface de la semelle pour réduire la pression transmise.", "Vérifier le module de sol et le tassement admissible avec l’étude géotechnique."]
               : ["Vérifier les paramètres géotechniques et les efforts horizontaux.", "Ajouter une liaison de redressement ou une solution de fondation adaptée si nécessaire."];
-      calculationRecommendations.push({ elementId: row.footingId, title: `${check.label} · ${check.status}`, actions });
+      calculationRecommendations.push({ elementId: row.footingId, title: `${check.label} · ${check.status}`, actions, category: "foundation-design" });
     });
-    if (row.error) calculationRecommendations.push({ elementId: row.footingId, title: "Fondation non vérifiée", actions: ["Compléter les paramètres géotechniques et les dimensions de la semelle.", "Relancer le calcul après correction."] });
+    if (row.error) calculationRecommendations.push({ elementId: row.footingId, title: "Fondation non vérifiée", actions: ["Compléter les paramètres géotechniques et les dimensions de la semelle.", "Relancer le calcul après correction."], category: "foundation-design" });
   });
-  rcDesignResult?.elements.forEach(item => {
-    item.checks.filter(check => check.status !== "satisfaisant").forEach(check => calculationRecommendations.push({
-      elementId: item.elementId,
-      title: `${item.type} · ${check.label} · ${check.status}`,
-      actions: /poin|cisaillement/i.test(check.label)
-        ? ["Augmenter la section ou l’épaisseur de l’élément.", "Vérifier le ferraillage transversal et les paramètres de calcul."]
-        : /flèche|déformation|flexion/i.test(check.label)
-          ? ["Augmenter la hauteur de la section ou réduire la portée.", "Vérifier les charges et le ferraillage longitudinal."]
-          : ["Choisir une section plus résistante dans le catalogue du type concerné.", "Vérifier les charges, les appuis et les matériaux, puis relancer le calcul."],
-    }));
-  });
+    rcDesignResult?.elements.forEach(item => {
+      item.checks.filter(check => check.status !== "satisfaisant").forEach(check => {
+        const demandValue = check.demand ?? Number.NaN;
+        const resistanceValue = check.resistance ?? Number.NaN;
+        const finiteDemand = Number.isFinite(demandValue);
+        const finiteResistance = Number.isFinite(resistanceValue);
+        const metric = check.id === "column-slenderness" && finiteDemand && finiteResistance
+          ? `λ ${demandValue.toFixed(2)} / limite ${resistanceValue.toFixed(2)}`
+          : check.id === "column-second-order" && check.status === "à vérifier" && finiteDemand
+            ? `M₂ indicatif ${demandValue.toFixed(2)} kN·m`
+            : check.id === "column-second-order" && finiteDemand && finiteResistance
+              ? `amplification ${demandValue.toFixed(2)} / seuil ${resistanceValue.toFixed(2)}`
+              : check.id === "column-second-order" && !finiteDemand
+                ? "amplification indéfinie (M₀≈0)"
+                : check.id === "column-anchorage-length" && finiteDemand
+                  ? `≈ ${demandValue.toFixed(0)} ${check.unit} · indicatif`
+                  : finiteDemand && finiteResistance ? `${demandValue.toFixed(2)} / ${resistanceValue.toFixed(2)} ${check.unit}` : "";
+        const columnActions = check.id === "column-slenderness"
+          ? ["Le test compare λ=L₀/i à la limite configurée (valeur initiale du formulaire : 15). Vérifiez que L₀ est bien la longueur de flambement effective et que la limite correspond au référentiel choisi.", "Ce dépassement du seuil géométrique ne prouve pas à lui seul une insuffisance de résistance axiale; ne modifiez la section qu’après confirmation de ces données."]
+          : check.id === "column-second-order" && check.status === "à vérifier"
+            ? ["Le moment de premier ordre est nul ou quasi nul : le ratio MEd/M₀ est indéfini, même si le moment M₂ calculé reste fini.", "Ce point n’est pas un échec de section. Vérifiez les Mx/My de la combinaison et faites contrôler l’interaction complète du second ordre."]
+            : check.id === "column-second-order"
+              ? ["Le moteur compare l’amplification nominale MEd/M₀ à une limite de dépistage interne de 5; ce résultat n’est pas, à lui seul, un verdict normatif de résistance.", "Vérifiez L₀, les moments de la combinaison gouvernante et la méthode complète de second ordre applicable."]
+              : check.id === "column-anchorage-length"
+                ? ["La longueur affichée est issue d’une formule indicative d’adhérence; elle ne constitue pas un contrôle d’ancrage satisfaisant ou non satisfaisant.", "Confirmez adhérence, position des barres, enrobage, crochets, recouvrements et détail d’appui selon le référentiel choisi; ce point ne signifie pas que la section est trop petite."]
+                : check.id === "column-bael-detailing"
+                  ? ["Contrôle bloqué car les cadres, zones critiques, confinement et recouvrements ne sont pas encore calculés par le moteur.", "Ce blocage logiciel ne se corrige pas en augmentant la section; le détail doit être vérifié séparément selon le référentiel du projet."]
+                  : undefined;
+        const defaultActions = /poin|cisaillement/i.test(check.label)
+          ? ["Augmenter la section ou l’épaisseur seulement si la vérification de résistance le justifie.", "Vérifier le ferraillage transversal et les paramètres de calcul."]
+          : /flèche|déformation|flexion/i.test(check.label)
+            ? ["Examiner la hauteur de section et la portée à partir de la valeur calculée.", "Vérifier les charges et le ferraillage longitudinal."]
+            : ["Examiner la formule, la valeur et la limite affichées avant toute modification.", "Aucune augmentation de section n’est déduite automatiquement pour ce contrôle."];
+        calculationRecommendations.push({
+          elementId: item.elementId,
+          title: `${item.type} · ${check.label} · ${check.status}${metric ? ` · ${metric}` : ""}`,
+          actions: columnActions ?? defaultActions,
+        });
+      });
+    });
   surfaceAnalysis?.rows.forEach(row => {
     const mechanicalMessages = Array.from(new Set([...row.analysis.errors, ...row.supportErrors]));
     if (!mechanicalMessages.length) return;
@@ -4255,7 +4598,9 @@ export default function BuildingCreateFlow({
         : ["Corriger exactement l’affectation de charge indiquée dans ce message.", "Relancer l’application des charges et vérifier le résidu Gk/Qk."];
     calculationRecommendations.push({ elementId, title: "Descente des charges bloquée", actions: [message, ...actions] });
   });
-  const recommendationItems = calculationRecommendations.filter((item, index, items) => items.findIndex(candidate => candidate.elementId === item.elementId && candidate.title === item.title) === index);
+  // Le dimensionnement géotechnique des semelles sera traité dans son propre parcours.
+  // On masque ses suggestions ici, tout en gardant les erreurs réelles de maillage/transfert/charges.
+  const recommendationItems = calculationRecommendations.filter(item => item.category !== "foundation-design").filter((item, index, items) => items.findIndex(candidate => candidate.elementId === item.elementId && candidate.title === item.title) === index);
 
   return (
     <div className="pb-4">
@@ -5447,7 +5792,7 @@ export default function BuildingCreateFlow({
                       Profil automatique activé : {regulatoryProfile.country}
                     </b>
                     <br />
-                    Norme proposée : {getCountryProjectStandard(country, city)}
+                    Défaut logiciel proposé (à confirmer avec les règles nationales) : {getCountryProjectStandard(country, city)}
                     <br />
                     {regulatoryProfile.constructionContext}
                     <br />
@@ -5674,11 +6019,6 @@ export default function BuildingCreateFlow({
                     </div>
                   ) : (
                     <>
-                  {calculationExecuted && selectedAnalysisRow && <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#cbdde1] bg-white p-2">
-                    <Button type="button" className="h-9 bg-[#102f45] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => noteReportButtonRef.current?.click()}>Note de calcul PDF</Button>
-                    <Button type="button" className="h-9 bg-[#8a5b16] text-[10px] text-white disabled:opacity-40" disabled={!analyticalPrecheck?.ok} onClick={() => { setReinforcementPlanRequestToken(value => value + 1); requestAnimationFrame(() => document.getElementById("reinforcement-plan-section")?.scrollIntoView({ behavior: "smooth", block: "center" })); }}>Calculer le ferraillage / plans A4</Button>
-                    <div className="col-span-2 text-[9px] text-[#68767d]">Élément sélectionné : {selectedAnalysisRow.label}. La note et le ferraillage concernent cet élément uniquement.</div>
-                  </div>}
                   {!calculationExecuted && analyticalPrecheck && analyticalModel && (
                     <div className={`space-y-2 rounded-lg border p-3 text-[10px] ${analyticalPrecheck.ok ? "border-[#bfe4e2] bg-[#eaf8f7] text-[#245e60]" : "border-[#efc4b9] bg-[#fff1ed] text-[#914d3d]"}`}>
                       <div className="flex items-center justify-between gap-2">
@@ -5787,7 +6127,9 @@ export default function BuildingCreateFlow({
                       projectConcreteFckMpa={selectedProjectMaterials.concrete.fck}
                       projectRebarFykMpa={selectedProjectMaterials.rebar.fykMpa}
                       runRequestToken={reinforcementPlanRequestToken}
-                      members={rcMemberExtraction.demands}
+                      runRequestElementId={columnVerificationRequested && selectedAnalysisRow?.type === "Poteau" ? selectedAnalysisRow.id : null}
+                      runRequestBarDiameterMm={columnVerificationSelectedBarDiameter}
+                      members={columnVerificationMemberDemands}
                       slabs={rcSlabDemands}
                       foundations={rcFoundationDemands}
                       walls={rcWallDemands}
@@ -5813,8 +6155,8 @@ export default function BuildingCreateFlow({
                     </div>
                   )}
                   {calculationExecuted && buildingCalculation && recommendationItems.length > 0 && <div className="space-y-2 rounded-xl border border-[#efd49d] bg-[#fffaf0] p-3 text-[10px] text-[#765f36]">
-                    <b className="text-[12px] text-[#8a5a21]">Solutions proposées à la suite du calcul</b>
-                    <p>Corrigez les éléments indiqués puis relancez le maillage et les charges. Les propositions restent indicatives et doivent être validées par l’ingénieur du projet.</p>
+                    <b className="text-[12px] text-[#8a5a21]">Contrôles à examiner après le calcul</b>
+                    <p>« Non satisfaisant » indique un dépassement chiffré; « à vérifier » est indicatif; « bloqué » signifie que le contrôle n’est pas implémenté. Ces deux derniers statuts ne signifient pas que la section est insuffisante.</p>
                     {recommendationItems.slice(0, 20).map(item => <details key={`result-${item.elementId}:${item.title}`} className="rounded border border-[#f0dfb7] bg-white p-2">
                       <summary className="cursor-pointer font-semibold text-[#914d3d]">{item.elementId} · {item.title}</summary>
                       <ul className="mt-1 list-disc pl-4">{item.actions.map(action => <li key={action}>{action}</li>)}</ul>
@@ -5897,26 +6239,128 @@ export default function BuildingCreateFlow({
                           </div>
                         ))}
                       </div>
-                      {selectedPassport && (
-                        <div className="mt-2 rounded-xl border border-[#f0b08a] bg-[#fffaf6] p-3 text-[10px] text-[#4c5e61]">
-                          <div className="mb-2 flex items-start justify-between gap-2">
-                            <div>
-                              <div className="text-[11px] font-bold text-[#9a4318]">Structural Passport</div>
-                              <div className="font-semibold text-[#27358f]">{selectedPassport.label}</div>
-                              <div className="text-[9px] text-[#7f8d91]">{selectedPassport.elementType} · {selectedPassport.levelLabel}</div>
+                      <Dialog open={Boolean(selectedAnalysisRow) && !columnVerificationOpen} onOpenChange={open => { if (!open && !columnVerificationOpen) setSelectedAnalysisRow(null); }}>
+                        <DialogContent className="fixed inset-x-0 bottom-0 top-auto left-0 z-[90] flex max-h-[86dvh] w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-t-[24px] border-0 bg-[#faf7fb] p-0 shadow-2xl sm:left-1/2 sm:top-1/2 sm:bottom-auto sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:border">
+                          {selectedAnalysisRow && <>
+                            <div className="mx-auto mt-2.5 h-1 w-12 shrink-0 rounded-full bg-[#c9c5cb] sm:hidden" />
+                            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-4 sm:px-6">
+                              <DialogHeader className="mb-3 gap-1 text-left">
+                                <DialogTitle className="text-[16px] font-bold leading-5 tracking-tight text-[#28262b]">Origine des charges — {selectedAnalysisRow.label}</DialogTitle>
+                                <DialogDescription className="text-[12px] leading-4 text-[#747078]">Charges caractéristiques (non pondérées) · Norme : BAEL 91 mod. 99.</DialogDescription>
+                              </DialogHeader>
+                              <div className="rounded-xl border border-[#e8e5ea] bg-white px-4 py-2.5 text-[12px] text-[#2f2c31]">
+                                <div className="flex justify-between py-1 font-semibold"><span>G cumulé</span><span>{selectedAnalysisRow.gk.toFixed(1)} kN</span></div>
+                                <div className="flex justify-between py-1 font-semibold"><span>Q cumulé</span><span>{selectedAnalysisRow.qk.toFixed(1)} kN</span></div>
+                                <div className="my-1.5 border-t border-[#dedbe0]" />
+                                <div className="flex justify-between py-1 font-bold"><span>Nu (ELU)</span><span>{selectedAnalysisRow.nu.toFixed(1)} kN</span></div>
+                                <div className="flex justify-between py-1 font-bold"><span>Nser (ELS)</span><span>{selectedAnalysisRow.nser.toFixed(1)} kN</span></div>
+                              </div>
+                              <h3 className="mb-1 mt-4 text-[12px] font-bold text-[#79757d]">Contributions</h3>
+                              <div className="divide-y divide-[#e9e5eb]">
+                                {selectedAnalysisRow.type === "Poteau" ? <>
+                                  {selectedColumnBeamOrigins.map(origin => <div key={origin.beamId} className="flex gap-3 px-1 py-1.5 text-[11px]">
+                                    <span className="pt-0.5 text-base text-[#8c8790]" aria-hidden="true">↳</span><div className="min-w-0"><div className="font-semibold text-[#29262c]">Poutre portée — {origin.label}</div><div className="mt-0.5 text-[#66616b]">G {origin.gk.toFixed(1)} kN&nbsp;&nbsp; Q {origin.qk.toFixed(1)} kN</div></div>
+                                  </div>)}
+                                  <div className="flex gap-3 px-1 py-1.5 text-[11px]"><span className="pt-0.5 text-sm text-[#8c8790]" aria-hidden="true">↳</span><div><div className="font-semibold text-[#29262c]">Poids propre — {selectedAnalysisRow.id}</div><div className="mt-0.5 text-[#66616b]">G {selectedOwnWeight.toFixed(1)} kN&nbsp;&nbsp; Q 0.0 kN</div></div></div>
+                                  {selectedColumnOtherOrigins.map((origin, index) => <div key={`other-${index}-${origin.source}`} className="flex gap-3 px-1 py-2 text-[12px]"><span className="pt-0.5 text-base text-[#8c8790]" aria-hidden="true">↳</span><div><div className="font-semibold text-[#29262c]">{origin.source}</div><div className="mt-0.5 text-[#66616b]">G {origin.gk.toFixed(1)} kN&nbsp;&nbsp; Q {origin.qk.toFixed(1)} kN</div></div></div>)}
+                                  {selectedColumnTransferredOrigins.map((origin, index) => <div key={`transfer-${index}-${origin.sourceColumnId}`} className="flex gap-3 px-1 py-2 text-[12px]"><span className="pt-0.5 text-base text-[#8c8790]" aria-hidden="true">↳</span><div><div className="font-semibold text-[#29262c]">Charge transmise — {origin.label}{origin.levelLabel ? ` · ${origin.levelLabel}` : ""}</div><div className="mt-0.5 text-[#66616b]">G {origin.gk.toFixed(1)} kN&nbsp;&nbsp; Q {origin.qk.toFixed(1)} kN</div></div></div>)}
+                                  {(Math.abs(selectedUnexplainedG) > 0.05 || Math.abs(selectedUnexplainedQ) > 0.05) && <div className="flex gap-3 px-1 py-2 text-[11px] text-[#8a5a21]"><span className="pt-0.5 text-base" aria-hidden="true">↳</span><div><div className="font-semibold">Écart de ventilation à vérifier</div><div className="mt-0.5">G {selectedUnexplainedG.toFixed(1)} kN&nbsp;&nbsp; Q {selectedUnexplainedQ.toFixed(1)} kN</div></div></div>}
+                                  {selectedColumnBeamOrigins.length === 0 && <p className="rounded-lg bg-white p-3 text-[12px] text-[#77727a]">Aucune poutre connectée détectée pour ce poteau dans le modèle de calcul.</p>}
+                                </> : selectedAnalysisRow.sources.length ? selectedAnalysisRow.sources.map((source, index) => <div key={`${index}-${source}`} className="flex gap-3 px-1 py-2 text-[11px]"><span className="pt-0.5 text-base text-[#8c8790]" aria-hidden="true">↳</span><div className="font-medium text-[#343138]">{source}</div></div>) : <p className="rounded-lg bg-white p-3 text-[12px] text-[#77727a]">Aucune contribution détaillée disponible pour cet élément.</p>}
+                              </div>
+                              <p className="mt-3 text-[9px] leading-3.5 text-[#89848d]">Nu = 1,35 G + 1,50 Q · Nser = G + Q. Résultat indicatif à vérifier par un ingénieur.</p>
                             </div>
-                            <button type="button" onClick={() => setSelectedAnalysisRow(null)} className="grid h-7 w-7 place-items-center rounded-full bg-white text-[#7f8d91]" aria-label="Fermer la fiche">
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                          <div className="mt-2 grid gap-1 rounded-lg bg-white p-2">
-                            {renderStructuralPassport(selectedPassport).map((line, index) => <div key={index}>{line}</div>)}
-                          </div>
-                          {selectedSpatialElement && <div className="mt-2 space-y-1 rounded-lg border border-[#d9e4e5] bg-white p-2"><b>Efforts du solveur spatial 3D · extrémités i / j</b><div>N : {selectedSpatialElement.start.axialKn.toFixed(2)} / {selectedSpatialElement.end.axialKn.toFixed(2)} kN</div><div>Vy / Vz : {selectedSpatialElement.start.shearYKn.toFixed(2)} / {selectedSpatialElement.start.shearZKn.toFixed(2)} · {selectedSpatialElement.end.shearYKn.toFixed(2)} / {selectedSpatialElement.end.shearZKn.toFixed(2)} kN</div><div>My / Mz : {selectedSpatialElement.start.momentYKnM.toFixed(2)} / {selectedSpatialElement.start.momentZKnM.toFixed(2)} · {selectedSpatialElement.end.momentYKnM.toFixed(2)} / {selectedSpatialElement.end.momentZKnM.toFixed(2)} kN·m</div><div>T : {selectedSpatialElement.start.torsionKnM.toFixed(2)} / {selectedSpatialElement.end.torsionKnM.toFixed(2)} kN·m</div><div>Moments globaux au départ Mx/My/Mz : {selectedSpatialElement.startGlobal.mxKnM.toFixed(2)} / {selectedSpatialElement.startGlobal.myKnM.toFixed(2)} / {selectedSpatialElement.startGlobal.mzKnM.toFixed(2)} kN·m</div></div>}
-                          {selectedPlaneElement && <div className="mt-2 space-y-1 rounded-lg border border-[#d9e4e5] bg-white p-2"><b>Efforts du solveur plan · extrémités i / j</b><div>N : {selectedPlaneElement.localEndForces.axialIKn.toFixed(2)} / {selectedPlaneElement.localEndForces.axialJKn.toFixed(2)} kN · V : {selectedPlaneElement.localEndForces.shearIKn.toFixed(2)} / {selectedPlaneElement.localEndForces.shearJKn.toFixed(2)} kN · M : {selectedPlaneElement.localEndForces.momentIKnM.toFixed(2)} / {selectedPlaneElement.localEndForces.momentJKnM.toFixed(2)} kN·m</div></div>}
-                          {selectedSurfaceResult?.analysis.plate && <div className="mt-2 space-y-1 rounded-lg border border-[#d9e4e5] bg-white p-2"><b>Résultats de plaque / surface · {selectedSurfaceResult.analysis.plate.boundary}</b><div>Flèche max : {(selectedSurfaceResult.analysis.plate.maximumDeflectionM * 1000).toFixed(2)} mm · Mx : {selectedSurfaceResult.analysis.plate.maximumMxKnMPerM.toFixed(2)} kN·m/m · My : {selectedSurfaceResult.analysis.plate.maximumMyKnMPerM.toFixed(2)} kN·m/m</div>{selectedSurfaceResult.analysis.plate.edgeReactions.map(edge=><div key={edge.edge}>Réaction {edge.edge} : {edge.totalKn.toFixed(2)} kN · charge linéaire {edge.lineLoadKnM.toFixed(2)} kN/m</div>)}</div>}
-                        </div>
-                      )}
+                            {selectedAnalysisRow.type === "Poteau" && <div className="shrink-0 border-t border-[#e6e1e9] bg-[#faf7fb] px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-6">
+                              <button type="button" onClick={openColumnVerification} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-[#7650b5] px-4 text-[13px] font-semibold text-white" aria-label="Ouvrir la fiche de ferraillage du poteau">
+                                <PersonStanding className="h-5 w-5" />Ferraillage
+                              </button>
+                            </div>}
+                          </>}
+                        </DialogContent>
+                      </Dialog>
+                      <Dialog open={columnVerificationOpen && Boolean(selectedAnalysisRow)} onOpenChange={open => { if (!open) closeColumnVerification(); }}>
+                        <DialogContent showCloseButton={false} className="fixed inset-0 z-[100] flex h-[100dvh] max-h-[100dvh] w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-[#f6f6f6] p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-[92dvh] sm:max-h-[92dvh] sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:border sm:shadow-2xl">
+                          {selectedAnalysisRow && columnVerificationGeometry && <>
+                            <header className="flex h-14 shrink-0 items-center gap-4 border-b border-[#e4e4e4] bg-white px-4">
+                              <button type="button" onClick={closeColumnVerification} aria-label="Retour à l’origine des charges" className="grid h-10 w-10 place-items-center rounded-full text-[#173b73] hover:bg-[#f1f3f7]"><ArrowLeft className="h-6 w-6" /></button>
+                              <DialogHeader className="min-w-0 flex-1 gap-0 text-left"><DialogTitle className="text-[16px] font-bold text-[#173b73]">Poteau {selectedAnalysisRow.id} (BAEL)</DialogTitle><DialogDescription className="text-[10px]">Vérification du poteau sélectionné</DialogDescription></DialogHeader>
+                            </header>
+                            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+                              <section className="rounded-xl border border-[#e1e5eb] bg-white p-3">
+                                <h3 className="mb-2.5 border-b border-[#e5e7eb] pb-2 text-[13px] font-semibold text-[#174b86]">Géométrie du poteau</h3>
+                                <div className="mb-3 grid grid-cols-2 rounded-xl bg-[#eee] p-0.5 text-[12px] font-bold">
+                                  {(["rectangular", "circular"] as const).map(shape => <button key={shape} type="button" onClick={() => setColumnVerificationGeometry(current => current ? { ...current, shape, dirty: true } : current)} className={`min-h-10 rounded-lg ${columnVerificationGeometry.shape === shape ? "bg-[#174e9e] text-white shadow-sm" : "text-[#454545]"}`}>{shape === "rectangular" ? "RECTANGULAIRE" : "CIRCULAIRE"}</button>)}
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                  {columnVerificationGeometry.shape === "rectangular" ? <>
+                                    <label className="grid gap-1 text-[11px] text-[#666]">Largeur b (m)<Input aria-label="Largeur du poteau en mètres" type="number" min="0.01" step="0.01" value={columnVerificationGeometry.widthM} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, widthM: event.target.value, dirty: true } : current)} className="h-11 bg-white text-[14px] text-[#222]" /></label>
+                                    <label className="grid gap-1 text-[11px] text-[#666]">Profondeur h (m)<Input aria-label="Profondeur du poteau en mètres" type="number" min="0.01" step="0.01" value={columnVerificationGeometry.depthM} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, depthM: event.target.value, dirty: true } : current)} className="h-11 bg-white text-[14px] text-[#222]" /></label>
+                                  </> : <label className="col-span-2 grid gap-1 text-[11px] text-[#666]">Diamètre D (m)<Input aria-label="Diamètre du poteau en mètres" type="number" min="0.01" step="0.01" value={columnVerificationGeometry.diameterM} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, diameterM: event.target.value, dirty: true } : current)} className="h-11 bg-white text-[14px] text-[#222]" /></label>}
+                                  <label className="grid gap-1 text-[11px] text-[#666]">Longueur libre L (m)<Input aria-label="Longueur libre de la pièce en mètres" type="number" min="0.1" step="0.01" value={columnVerificationGeometry.heightM} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, heightM: event.target.value, dirty: true } : current)} className="h-11 bg-white text-[14px] text-[#222]" /></label>
+                                  <label className="grid gap-1 text-[11px] text-[#666]">Niveau détecté<select aria-label="Niveau détecté du poteau sélectionné" value={columnVerificationGeometry.levelId} disabled className="h-11 rounded-md border border-input bg-[#f4f5f7] px-3 text-[14px] text-[#555] disabled:cursor-not-allowed">{(selected?.levels ?? []).map(level => <option key={level.id} value={level.id}>{level.label}</option>)}</select></label>
+                                </div>
+                                <p className="mt-1 text-[9px] leading-4 text-[#777]">L est préremplie depuis la hauteur du niveau, sans les prolongements de raccordement du modèle analytique. Hypothèse utilisée ici : f = L; les liaisons réelles ne sont pas encore évaluées automatiquement.</p>
+                                <div className="mt-4 flex items-center justify-between gap-4">
+                                  <div><div className="text-[13px] font-semibold text-[#333]">Inclure le poids propre (Auto)</div><p className="mt-0.5 text-[11px] leading-4 text-[#777]">G = 25 kN/m³ × section</p></div>
+                                  <input type="checkbox" checked={columnVerificationGeometry.selfWeight} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, selfWeight: event.target.checked, dirty: true } : current)} aria-label="Inclure le poids propre du poteau" className="h-4 w-4 shrink-0 accent-[#174e9e]" />
+                                </div>
+                                <div className="mt-4 border-t border-[#edf0f4] pt-3">
+                                  <h4 className="text-[12px] font-semibold text-[#333]">Ancrage réel des barres longitudinales</h4>
+                                  <p className="mt-1 text-[10px] leading-4 text-[#777]">Saisir la longueur droite disponible depuis la face du support, sans compter les parties courbes. Les deux extrémités sont vérifiées selon BAEL A.6.1,221.</p>
+                                  <div className="mt-2 grid grid-cols-2 gap-3">
+                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible en tête (mm)<Input aria-label="Longueur d’ancrage disponible en tête, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageTopMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageTopMm: event.target.value, dirty: true } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
+                                    <label className="grid gap-1 text-[10px] text-[#666]">Disponible en pied (mm)<Input aria-label="Longueur d’ancrage disponible en pied, en millimètres" type="number" min="0" step="1" value={columnVerificationGeometry.anchorageBottomMm} onChange={event => setColumnVerificationGeometry(current => current ? { ...current, anchorageBottomMm: event.target.value, dirty: true } : current)} className="h-9 bg-white text-[12px] text-[#222]" /></label>
+                                  </div>
+                                </div>
+                              </section>
+                              <section className="rounded-xl border border-[#e1e5eb] bg-white p-3">
+                                <h3 className="mb-2.5 border-b border-[#e5e7eb] pb-2 text-[13px] font-semibold text-[#174b86]">Descente de charges &amp; moments</h3>
+                                <div className="space-y-3">
+                                  {columnVerificationLoads.map((load, index) => <div key={load.id} className="rounded-lg border border-[#e6e8ec] bg-white p-2.5">
+                                    <div className="grid grid-cols-[70px_1fr_34px] items-end gap-2 border-b border-[#ddd] pb-2">
+                                      <label className="grid gap-1 text-[10px] text-[#666]">Type<select aria-label={`Type de charge ${index + 1}`} value={load.category} onChange={event => updateColumnLoadCategory(load.id, event.target.value)} className="h-9 rounded-md border-0 border-b border-[#bbb] bg-white px-1 text-[13px] font-bold text-[#333]"><option value="G">G</option><option value="Q">Q</option><option value="W">W</option><option value="S">S</option><option value="E">E</option><option value="Autre">Autre</option></select></label>
+                                      <label className="grid gap-1 text-[10px] text-[#666]">Libellé<Input aria-label={`Libellé de charge ${index + 1}`} value={load.label} onChange={event => { setColumnVerificationLoads(current => current.map(item => item.id === load.id ? { ...item, label: event.target.value } : item)); setColumnVerificationLoadsDirty(true); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} className="h-9 border-0 border-b border-[#bbb] bg-white px-1 text-[13px]" /></label>
+                                      <button type="button" onClick={() => { setColumnVerificationLoads(current => current.filter(item => item.id !== load.id)); setColumnVerificationLoadsDirty(true); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} aria-label={`Supprimer la charge ${load.label}`} className="mb-1 grid h-8 w-8 place-items-center text-red-500"><Trash2 className="h-5 w-5" /></button>
+                                    </div>
+                                    <div className="mt-2 grid grid-cols-[1fr_2fr] items-end gap-2">
+                                      <label className="grid min-w-0 gap-1 text-[10px] text-[#666]">N (kN)<input aria-label={`N (kN) — ${load.label}`} type="number" step="any" value={load.axialKn} onChange={event => { setColumnVerificationLoads(current => current.map(item => item.id === load.id ? { ...item, axialKn: event.target.value } : item)); setColumnVerificationLoadsDirty(true); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} className="h-8 min-w-0 border-0 border-b border-[#999] bg-transparent px-0.5 text-[13px] text-[#222] outline-none focus:border-[#7250b3]" /></label>
+                                    </div>
+                                  </div>)}
+                                </div>
+                                <div className="mt-2 flex justify-end">
+                                  <button type="button" onClick={() => { setColumnVerificationLoads(current => [...current, { id: `load-${Date.now()}`, category: "Q", label: "Nouvelle charge Q", axialKn: "0" }]); setColumnVerificationLoadsDirty(true); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} className="flex items-center gap-2 px-2 py-2 text-[12px] font-semibold text-[#6550a1]"><Plus className="h-4 w-4" />AJOUTER UNE LIGNE</button>
+                                </div>
+                                <div className="mt-3 rounded-lg border border-[#e1e6ed] bg-[#f7f9fc] p-3">
+                                  <div className="mb-2 text-[11px] font-semibold text-[#455568]">Moments calculés · {selectedColumnSolvedMoments?.combinationName ?? "combinaison active"}</div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <label className="grid gap-1 text-[10px] text-[#666]">Mx (kN·m)<Input aria-label="Moment calculé Mx en kilonewton-mètres" readOnly value={selectedColumnSolvedMoments ? (selectedColumnSolvedMoments.momentXKnM ?? selectedColumnSolvedMoments.momentKnM).toFixed(2) : ""} placeholder="—" className="h-9 bg-white text-[12px] text-[#222]" /></label>
+                                    <label className="grid gap-1 text-[10px] text-[#666]">My (kN·m)<Input aria-label="Moment calculé My en kilonewton-mètres" readOnly value={selectedColumnSolvedMoments?.momentYKnM?.toFixed(2) ?? ""} placeholder="—" className="h-9 bg-white text-[12px] text-[#222]" /></label>
+                                  </div>
+                                  <p className="mt-1.5 text-[10px] leading-4 text-[#718093]">Une seule paire pour la combinaison G + Q calculée.</p>
+                                </div>
+                              </section>
+                              <section className="overflow-hidden rounded-xl border border-[#e1e5eb] bg-white">
+                                <button type="button" aria-expanded={showColumnBarCatalog} onClick={() => setShowColumnBarCatalog(value => !value)} className="flex min-h-10 w-full items-center justify-between px-3 text-left text-[11px] font-semibold text-[#6550a1]"><span className="flex items-center gap-2"><BookOpen className="h-4 w-4" />CATALOGUE D’ARMATURES HA</span><span>{showColumnBarCatalog ? "−" : "+"}</span></button>
+                                {showColumnBarCatalog && <div className="border-t border-[#edf0f4] px-3 py-2.5"><p className="mb-2 text-[10px] leading-4 text-[#667085]">Choisissez un diamètre : le moteur ne proposera que ce HA et cherchera le nombre de barres nécessaire pour la section, N, Mx/My et les espacements.</p><div className="flex flex-wrap gap-1.5">{(rcDesignResult?.materialBasis.availableBarDiametersMm ?? [8, 10, 12, 14, 16, 20, 25]).map((diameter, index) => <button key={`${diameter}-${index}`} type="button" aria-pressed={columnVerificationSelectedBarDiameter === diameter} onClick={() => { setColumnVerificationSelectedBarDiameter(diameter); setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current); }} className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${columnVerificationSelectedBarDiameter === diameter ? "border-[#6550a1] bg-[#6550a1] text-white" : "border-[#ded8ea] bg-[#f8f6fb] text-[#5f4691]"}`}>HA {diameter}</button>)}</div>{selectedColumnVerificationDesign?.reinforcement.find(item => item.id.endsWith(":longitudinal")) && <p className="mt-2 text-[10px] font-semibold text-[#344054]">Dernière disposition calculée : {selectedColumnVerificationDesign.reinforcement.find(item => item.id.endsWith(":longitudinal"))?.count} HA {selectedColumnVerificationDesign.reinforcement.find(item => item.id.endsWith(":longitudinal"))?.diameterMm}</p>}</div>}
+                              </section>
+                              <section aria-live="polite" className={`rounded-xl border p-3 ${columnVerificationState === "passed" ? "border-emerald-700 bg-[#27883d] text-white" : columnVerificationState === "failed" ? "border-red-700 bg-[#c73535] text-white" : "border-orange-400 bg-[#ed7900] text-white"}`}>
+                                <div className="flex items-start justify-between gap-3"><div><h3 className="text-[13px] font-bold">{columnVerificationState === "passed" ? "PRÉ-VÉRIFICATION SATISFAISANTE" : columnVerificationState === "failed" ? unsupportedColumnBarCheck ? "DIAMÈTRE HA NON ADMIS" : "SECTION INSUFFISANTE" : columnVerificationState === "running" ? "VÉRIFICATION EN COURS" : columnVerificationState === "stale" ? "SECTION MODIFIÉE · À REVÉRIFIER" : columnVerificationState === "blocked" ? "VÉRIFICATION BLOQUÉE" : "VÉRIFICATION À LANCER"}</h3><p className="mt-1 text-[10px] leading-4 text-white/90">{columnVerificationFeedback ?? (columnVerificationState === "passed" ? "Les contrôles numériques disponibles sont satisfaits pour cette section candidate et cette combinaison." : columnVerificationState === "failed" ? "Au moins un contrôle de résistance ou de disposition n’est pas satisfait. Consultez les contrôles et recommandations ci-dessous." : columnVerificationState === "running" ? "Le moteur recherche une disposition dans le catalogue HA sélectionné…" : columnVerificationState === "stale" ? "La géométrie ou le diamètre HA a changé. Relancez la vérification pour évaluer cette variante." : columnVerificationState === "blocked" ? (selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? rcDesignResult?.errors[0] ?? "Les efforts, le catalogue ou les paramètres nécessaires ne permettent pas de conclure.") : "Lancez le calcul pour comparer les charges et les moments à la section du poteau.")}</p></div><span className="rounded-full bg-white/20 px-2 py-1 text-[9px] font-bold">{columnVerificationState === "passed" ? "OK · PRÉ-ÉTUDE" : columnVerificationState === "failed" ? "NON SATISFAIT" : columnVerificationState === "running" ? "CALCUL" : "EN ATTENTE"}</span></div>
+                                {columnVerificationState === "blocked" && selectedColumnVerificationDesign && <div className="mt-2.5 space-y-1.5 border-t border-white/25 pt-2.5 text-[10px]">{columnVerificationCoreChecks.filter(item => item.status === "bloqué").map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>{item.label}</b><small className="mt-0.5 block">{item.formula}</small></div>)}</div>}
+                                {(columnVerificationState === "passed" || columnVerificationState === "failed") && selectedColumnVerificationDesign && <div className="mt-2.5 space-y-1.5 border-t border-white/25 pt-2.5 text-[11px]"><div className="flex justify-between gap-2"><span>Effort axial de calcul</span><b>{(columnVerificationMemberDemands.find(demand => demand.id === selectedAnalysisRow.id)?.axialKn ?? 0).toFixed(1)} kN</b></div><div className="flex justify-between gap-2"><span>Mx / My utilisés</span><b>{(selectedColumnSolvedMoments?.momentXKnM ?? selectedColumnSolvedMoments?.momentKnM ?? 0).toFixed(2)} / {(selectedColumnSolvedMoments?.momentYKnM ?? 0).toFixed(2)} kN·m</b></div>{selectedColumnVerificationDesign.reinforcement.filter(item => item.id.endsWith(":longitudinal") || item.id.endsWith(":ties") || item.id.endsWith(":anchorage")).map(item => <div key={item.id} className="flex justify-between gap-2"><span>{item.id.endsWith(":longitudinal") ? "Armatures longitudinales" : item.id.endsWith(":ties") ? "Cadres transversaux" : "Ancrages aux extrémités"}</span><b className="text-right">{item.id.endsWith(":longitudinal") ? `${item.count} HA ${item.diameterMm}` : item.id.endsWith(":ties") ? item.label.replace(/^Cadres[^·]*· /, "") : item.label}</b></div>)}{baelSecondOrderDomainCheck && baelColumnChecksActive && <p className="rounded-md bg-black/10 px-2 py-1 text-[9px] leading-4">{baelSecondOrderDomainCheck.formula}</p>}{selectedColumnVerificationDesign.checks.filter(item => item.id === "column-anchorage-length" || item.id === "column-bael-detailing").map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>{item.label} · {item.status}</b><small className="mt-0.5 block">{item.id === "column-anchorage-length" ? item.formula : item.status === "satisfaisant" ? "A.8.1 calculé : taux minimal/maximal, répartition périphérique et espacement des cadres." : item.status === "non satisfaisant" ? "Au moins une disposition BAEL calculée (acier, pas ou espacement) est dépassée." : "Aucune conclusion avec les données disponibles."}</small></div>)}{columnVerificationFailedChecks.map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>À corriger · {item.label}{item.utilization !== null ? ` (${(item.utilization * 100).toFixed(0)} %)` : ""}</b><small className="mt-0.5 block">{item.id === "column-axial" ? "Augmenter la section b/h, améliorer la classe du béton après validation, ou réduire l’effort transmis." : item.id === "column-interaction" ? "Augmenter b et/ou h, choisir un diamètre HA supérieur ou revoir l’agencement des barres." : item.id === "column-bar-spacing" ? "La disposition est trop serrée : augmenter la face de la section ou choisir moins de barres plus grosses." : item.id === "column-steel-max" ? "Le taux d’acier dépasse la limite déclarée : augmenter la section béton et recalculer." : item.id === "column-steel-min" ? "Augmenter les armatures longitudinales au minimum requis." : item.id === "column-second-order" ? (item.label.includes("A.4.4") ? `${item.formula} Augmenter la section ou revoir la longueur efficace f et les appuis.` : "Vérifier le domaine de validité BAEL A.4.3,5 et les hypothèses du poteau.") : item.id === "column-bael-detailing" ? "Revoir la section, le diamètre HA, la répartition des barres ou le diamètre/pas des cadres selon A.8.1." : item.id === "column-tie-spacing" ? "Réduire le pas des cadres conformément à la limite calculée BAEL." : item.id === "column-bar-layout-count" ? "Ajouter des barres et les répartir régulièrement sur les faces/contour." : "Choisir un diamètre longitudinal admis par le catalogue du référentiel sélectionné."}</small></div>)}</div>}
+                                <p className="mt-2 text-[9px] leading-3.5 text-white/80">Pré-étude numérique, pas une certification ni un visa d’exécution. Hypothèse de calcul : f = L; les liaisons réelles ne sont pas déduites automatiquement. Hors domaine A.4.3,5, A.4.4 est résolu pour le poteau isolé avec moments constants et mode sinusoïdal; la stabilité globale de l’ossature et ses redistributions ne sont pas recalculées. Dans le domaine A.4.3,5, l’interaction de section reste une enveloppe de pré-étude. A.6.1,221 compare la longueur requise aux mesures tête/pied saisies; vérifier aussi les aciers de couture et le support.</p>
+                              </section>
+                              <button type="button" disabled={columnVerificationState === "running"} onClick={runColumnVerification} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#174e9e] px-4 text-[13px] font-semibold text-white disabled:opacity-60"><Calculator className="h-4 w-4" />{columnVerificationState === "running" ? "Calcul en cours…" : "Lancer la vérification"}</button>
+                              {columnVerificationState === "passed" && <div className="space-y-1.5"><button type="button" disabled={columnVerificationAlreadySaved} onClick={saveColumnVerificationResult} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#27883d] px-4 text-[13px] font-semibold text-white hover:bg-[#217735] disabled:cursor-default disabled:bg-[#e7f4e9] disabled:text-[#27883d]">{columnVerificationAlreadySaved ? "Calculs enregistrés dans le modèle" : "Enregistrer les calculs"}</button><p className="text-center text-[9px] leading-4 text-[#667085]">La section vérifiée sera appliquée au poteau en 2D et 3D, avec sa couleur actuelle. La relance globale pour recalculer les efforts reste différée.</p></div>}
+                              <div className="grid grid-cols-2 gap-3">
+                                <button type="button" disabled className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#dedede] px-2 text-[12px] font-semibold text-[#999] disabled:cursor-not-allowed"><Download className="h-4 w-4" />Note de calcul</button>
+                                <button type="button" disabled className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#dedede] px-2 text-[12px] font-semibold text-[#999] disabled:cursor-not-allowed"><PersonStanding className="h-4 w-4" />Plan d’exécution</button>
+                              </div>
+                              <div className="flex items-center gap-3 text-[10px] font-semibold text-[#999]"><span className="h-px flex-1 bg-[#ccc]" />Exports BIM &amp; CAD<span className="h-px flex-1 bg-[#ccc]" /></div>
+                              <button type="button" disabled className="min-h-12 w-full rounded-2xl bg-[#dedede] px-4 text-[13px] font-semibold text-[#999] disabled:cursor-not-allowed">Format DXF (AutoCAD)<span className="block text-[10px] font-normal">Plans 2D &amp; modèle 3D</span></button>
+                            </div>
+                          </>}
+                        </DialogContent>
+                      </Dialog>
                       {buildingCalculation.warnings.length > 0 && (
                         <div className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">
                           {buildingCalculation.warnings
@@ -5928,230 +6372,7 @@ export default function BuildingCreateFlow({
                       )}
                     </div>
                   )}
-                  {calculationExecuted && selectedAnalysisRow && <>
-                  <Button
-                    ref={noteReportButtonRef}
-                    className="w-full bg-[#049b9b] text-white"
-                    onClick={() => {
-                      const analytical = buildCurrentAnalytical();
-                      if (!analytical) return;
-                      setAnalyticalModel(analytical.model);
-                      setAnalyticalPrecheck(analytical.precheck);
-                      if (!analytical.precheck.ok) {
-                        setBuildingCalculation(null);
-                        toast.error(`Rapport bloqué : ${analytical.precheck.errors.length} erreur(s) de connectivité ou de géométrie`);
-                        return;
-                      }
-                      const programErrors = validateLoadProgram(loadProgram).filter(item=>item.severity === "error");
-                      if (programErrors.length) {
-                        toast.error(`Rapport bloqué : ${programErrors.length} erreur(s) dans les cas ou combinaisons de charges`);
-                        return;
-                      }
-                      const floorLoads = summarizeFloorLoads(
-                        activeLevel?.elements ?? [],
-                        gridDistance,
-                        floorConfig,
-                        metricGridAxisPositions(xDistances, yDistances, xAxes.length, yAxes.length, gridDistance)
-                      );
-                      const loadElements = selected.levels.flatMap(level =>
-                        level.elements.map(element => ({
-                          ...element,
-                          levelId: level.id,
-                        }))
-                      );
-                      const buildingLoadModel = buildBuildingLoadModel(
-                        loadElements,
-                        {
-                          levelOrder: selected.levels.map(level => level.id),
-                          levelHeights: Object.fromEntries(
-                            selected.levels.map(level => [
-                              level.id,
-                              Number(
-                                level.height ??
-                                  (level.id === "foundation" ? 1 : 3.2)
-                              ),
-                            ])
-                          ),
-                          gridDistance:
-                            Number(gridDistance.replace(",", ".")) || 4,
-                          ...metricGridAxisPositions(xDistances, yDistances, xAxes.length, yAxes.length, gridDistance),
-                        }
-                      );
-                      const buildingSummary =
-                        summarizeBuildingLoads(buildingLoadModel);
-                      const reportGroups = buildLoadSynthesis(buildingSummary.rows);
-                      const reportLoadProgramEvaluation = evaluateLoadProgram(loadProgram, {
-                        ...Object.fromEntries(loadProgram.patterns.map(pattern=>[pattern.id,pattern.value])),
-                        G: buildingSummary.totalGk,
-                        Q: buildingSummary.totalQk,
-                      });
-                      const reportLoadProgramWarnings = validateLoadProgram(loadProgram).filter(item=>item.severity === "warning");
-                      const propagationNote = [
-                        "",
-                        "Propagation sur éléments réels",
-                        `Surfaces (dalles, balcons, escaliers) : ${buildingSummary.floorCount} · Balcons : ${selected.levels.flatMap(level => level.elements).filter(item => item.type === "Balcon").length} · Poutres : ${buildingSummary.beamCount} · Appuis poteaux : ${buildingSummary.columnCount} · Fondations chargées : ${buildingSummary.foundationCount}`,
-                        `Charges transmises aux fondations : Gk ${buildingSummary.totalGk.toFixed(2)} kN · Qk ${buildingSummary.totalQk.toFixed(2)} kN`,
-                        ...(buildingSummary.warnings.length
-                          ? ["Avertissements :", ...buildingSummary.warnings]
-                          : ["Aucun avertissement de liaison géométrique."]),
-                      ].join("\n");
-                      const report = [
-                        `NOTE DE CALCUL — DESCENTE DE CHARGES`,
-                        `Projet : ${selected.name}`,
-                        `Pays : ${selected.country} · Ville : ${selected.city || "non renseignée"} · Emplacement : ${selected.location || "non renseigné"}`,
-                        `Structure : ${selected.structure} · Référentiel : ${selected.norm}`,
-                        `Périmètre : tous les niveaux (${selected.levels.map(level => level.label).join(", ")})`,
-                        `Plancher : ${floorNoteSummary(floorConfig)}`,
-                        "",
-                        "CATALOGUE DES ACTIONS",
-                        ...loadCatalogForFloor(floorConfig).map(
-                          entry =>
-                            `${entry.label} : ${entry.defaultValue.toFixed(2)} ${entry.unit} — ${entry.source}`
-                        ),
-                        "",
-                        "CAS DE CHARGES, COMBINAISONS ET SOURCE DE MASSE — PRÉ-ÉTUDE",
-                        `Référentiel déclaré : ${selected.norm} · combinaisons automatiques issues de ${loadProgram.combinations.find(combination => combination.origin === "automatic")?.reference ?? "NF EN/NA français"}`,
-                        `Source de masse : ${reportLoadProgramEvaluation.massTonnes.toFixed(3)} t équivalentes · ${loadProgram.massSource.note}`,
-                        ...reportLoadProgramEvaluation.combinations.filter(item=>item.enabled).map(item=>`${item.name} : ${item.value.toFixed(2)} kN globaux · ${loadProgramStatusLabel(item.status)} · ${loadProgram.combinations.find(combination=>combination.id===item.id)?.note ?? ""}`),
-                        ...reportLoadProgramWarnings.map(item=>`Avertissement : ${item.message}`),
-                        "",
-                        "ANALYSE STRUCTURALE 2D — RÉSULTATS À L’ÉCHELLE D’UN PORTIQUE",
-                        ...(planeAnalysis?.result ? [
-                          `Plan ${planeAnalysis.result.plane} · ${planeAnalysis.result.elements.length} barre(s) · méthode linéaire Euler–Bernoulli`,
-                          `Réactions verticales : ${planeAnalysis.result.equilibrium.reactionFzKn.toFixed(2)} kN · charge tributaire globale attendue : ${planeAnalysis.comparison?.expectedReactionKn.toFixed(2) ?? "—"} kN · écart : ${planeAnalysis.comparison?.differencePercent.toFixed(2) ?? "—"} %`,
-                          ...planeAnalysis.result.elements.map(item=>`${item.elementId} · N(i/j) ${item.localEndForces.axialIKn.toFixed(2)}/${item.localEndForces.axialJKn.toFixed(2)} kN · V(i/j) ${item.localEndForces.shearIKn.toFixed(2)}/${item.localEndForces.shearJKn.toFixed(2)} kN · M(i/j) ${item.localEndForces.momentIKnM.toFixed(2)}/${item.localEndForces.momentJKnM.toFixed(2)} kN·m`),
-                          ...planeAnalysis.warnings.map(message=>`Avertissement solveur : ${message}`),
-                        ] : ["Analyse 2D non exécutée : lancer le solveur sur le portique coplanaire proposé dans le panneau ci-dessus. La descente tributaire reste disponible séparément."]),
-                        "",
-                        "ANALYSE GLOBALE 3D — RÉSULTATS ET TRAÇABILITÉ",
-                        ...(spatial3DResult ? [
-                          `Nœuds : ${spatial3DResult.nodeDisplacements.length} · réactions : ${spatial3DResult.reactions.length} · éléments : ${spatial3DResult.elementCount}`,
-                          `Équilibre appliqué/réactions : Fx ${spatial3DResult.equilibrium.appliedFxKn.toFixed(2)}/${spatial3DResult.equilibrium.reactionFxKn.toFixed(2)} kN · Fy ${spatial3DResult.equilibrium.appliedFyKn.toFixed(2)}/${spatial3DResult.equilibrium.reactionFyKn.toFixed(2)} kN · Fz ${spatial3DResult.equilibrium.appliedFzKn.toFixed(2)}/${spatial3DResult.equilibrium.reactionFzKn.toFixed(2)} kN`,
-                          `Équilibre moments : Mx ${(spatial3DResult.equilibrium.appliedMxKnM ?? 0).toFixed(2)}/${(spatial3DResult.equilibrium.reactionMxKnM ?? 0).toFixed(2)} · My ${(spatial3DResult.equilibrium.appliedMyKnM ?? 0).toFixed(2)}/${(spatial3DResult.equilibrium.reactionMyKnM ?? 0).toFixed(2)} · Mz ${(spatial3DResult.equilibrium.appliedMzKnM ?? 0).toFixed(2)}/${(spatial3DResult.equilibrium.reactionMzKnM ?? 0).toFixed(2)} kN·m`,
-                          ...spatial3DResult.elements.map(item => `${item.sourceElementId} · N(i/j) ${item.start.axialKn.toFixed(2)}/${item.end.axialKn.toFixed(2)} kN · Vy(i/j) ${item.start.shearYKn.toFixed(2)}/${item.end.shearYKn.toFixed(2)} kN · Vz(i/j) ${item.start.shearZKn.toFixed(2)}/${item.end.shearZKn.toFixed(2)} kN · My(i/j) ${item.start.momentYKnM.toFixed(2)}/${item.end.momentYKnM.toFixed(2)} · Mz(i/j) ${item.start.momentZKnM.toFixed(2)}/${item.end.momentZKnM.toFixed(2)} kN·m · T(i/j) ${item.start.torsionKnM.toFixed(2)}/${item.end.torsionKnM.toFixed(2)} kN·m`),
-                          ...(spatial3DResult.pDelta ? [`P-Δ itératif : indice ${spatial3DResult.pDelta.stabilityIndex.toFixed(3)} · itérations ${spatial3DResult.pDelta.iterations} · convergence ${spatial3DResult.pDelta.converged ? "OK" : "NON"}`] : ["P-Δ : résultat non disponible"]),
-                          ...spatial3DResult.nonlinearStates?.map(item => `${item.elementId} · déformation axiale ${item.axialStrain.toExponential(3)} · régime ${item.state.regime} · contrainte ${item.state.stressMpa.toFixed(2)} MPa · rupture ${item.state.failed ? "OUI" : "non"}`) ?? [],
-                          ...spatial3DResult.warnings.map(message => `Avertissement 3D : ${message}`),
-                        ] : ["Analyse globale 3D non exécutée : lancer le calcul spatial avant l’export." ]),
-                        "",
-                        "ACTIONS SISMIQUES ET CLIMATIQUES",
-                        ...(climateAnalysis ? [
-                          `Séisme : masse ${climateAnalysis.seismic.totalMassTonnes.toFixed(3)} t · cisaillement de base ${climateAnalysis.seismic.baseShearKn.toFixed(2)} kN`,
-                          ...climateAnalysis.seismic.stories.map(story => `Étage ${story.storyIndex + 1} · F ${story.lateralForceKn.toFixed(2)} kN · V ${story.storyShearKn.toFixed(2)} kN · dérive ${(story.driftRatio * 100).toFixed(3)} %`),
-                          ...climateAnalysis.errors.map(message => `Erreur action climatique : ${message}`),
-                          ...climateAnalysis.warnings.map(message => `Avertissement action climatique : ${message}`),
-                        ] : ["Analyse climatique/sismique non exécutée dans cette session."]),
-                        "",
-                        "DIMENSIONNEMENT NUMÉRIQUE BÉTON ARMÉ — NON CERTIFIÉ",
-                        ...(rcDesignResult ? [
-                          `Statut : ${rcDesignResult.status} · référentiel ${rcDesignResult.standard || "non renseigné"} · annexe ${rcDesignResult.nationalAnnex || "non renseignée"} · source ${rcDesignResult.sourceReference || "non renseignée"}`,
-                          `Couverture numérique : ${rcDesignResult.numericalSummary.memberCount} membre(s) · ${rcDesignResult.numericalSummary.slabCount} dalle(s) · ${rcDesignResult.numericalSummary.footingCount} semelle(s) · ${rcDesignResult.numericalSummary.stairCount} escalier(s) · ${rcDesignResult.numericalSummary.passedCheckCount}/${rcDesignResult.numericalSummary.checkCount} contrôles satisfaisants · ${rcDesignResult.numericalSummary.failedCheckCount} non satisfaisant(s) · ${rcDesignResult.numericalSummary.blockedCheckCount} bloquant(s) · ${rcDesignResult.numericalSummary.unverifiedCheckCount} à vérifier`,
-                          `Matériaux/détails saisis : fck ${rcDesignResult.materialBasis.fckMpa} MPa · fyk ${rcDesignResult.materialBasis.fykMpa} MPa · γc ${rcDesignResult.materialBasis.gammaC} · γs ${rcDesignResult.materialBasis.gammaS} · αcc ${rcDesignResult.materialBasis.alphaCC} · enrobage ${rcDesignResult.materialBasis.coverMm} mm · ρmin/max ${rcDesignResult.materialBasis.minReinforcementRatio}/${rcDesignResult.materialBasis.maxReinforcementRatio} · τRd,c ${rcDesignResult.materialBasis.concreteShearStressLimitMpa} MPa · τbd ${rcDesignResult.materialBasis.bondStressMpa} MPa · saisie confirmée ${rcDesignResult.materialBasis.basisConfirmed}`,
-                          ...rcDesignResult.elements.flatMap(item => [
-                            `${item.type} ${item.elementId} · combinaison gouvernante déclarée ${item.combinationName} (${item.combinationId})`,
-                            ...item.reinforcement.map(bar => `${bar.label} : ${bar.count} HA ${bar.diameterMm} · ${bar.areaMm2.toFixed(0)} mm² · longueur ${bar.totalLengthM.toFixed(2)} m · masse ${bar.massKg.toFixed(2)} kg`),
-                            ...item.checks.map(check => `${check.label} : ${check.status} · Ed ${check.demand?.toFixed(2) ?? "—"} ${check.unit} · Rd ${check.resistance?.toFixed(2) ?? "—"} ${check.unit} · ${check.formula}`),
-                            ...item.limitations.map(message => `Limite ${item.elementId} : ${message}`),
-                          ]),
-                          ...rcDesignResult.schedule.map(item => `Nomenclature HA ${item.diameterMm} : ${item.totalLengthM.toFixed(2)} m · ${item.massKg.toFixed(2)} kg`),
-                          ...rcDesignResult.errors.map(message => `Bloqué : ${message}`),
-                          ...rcDesignResult.blockers.map(message => `Limite réglementaire : ${message}`),
-                          ...rcDesignResult.warnings.map(message => `Avertissement : ${message}`),
-                        ] : ["Aucun calcul d’armatures n’a été lancé ; aucun ferraillage ne doit être déduit de cette note."]),
-                        "",
-                        "ANALYSE VISUELLE — ÉCHELLE PROGRESSIVE Nu",
-                        `Échelle poteaux/semelles : ${loadScale.minimum.toFixed(2)} kN (jaune pâle) → ${loadScale.maximum.toFixed(2)} kN (rouge vif)`,
-                        "Code couleur : charge faible = jaune pâle · charge intermédiaire = orange · charge maximale = rouge vif",
-                        `Poteau le plus chargé : ${criticalColumn?.label ?? "non disponible"} · Nu ${criticalColumn?.nu.toFixed(2) ?? "0.00"} kN · rouge vif`,
-                        `Semelle la plus chargée : ${criticalFoundation?.label ?? "non disponible"} · Nu ${criticalFoundation?.nu.toFixed(2) ?? "0.00"} kN · rouge vif`,
-                        "",
-                        "SYNTHÈSE PAR FAMILLE ET SOLLICITATION",
-                        "Élément | Niveau | G (kN) | Q (kN) | Nu (kN) | Nser (kN) | M (kN·m)",
-                        ...reportGroups.flatMap(group => [
-                          `${group.label} — groupe ${group.key.split("-").at(-1)} · Nu ${group.minimumNu.toFixed(2)} à ${group.maximumNu.toFixed(2)} kN`,
-                          ...group.rows.map(row => {
-                            const moment = analysisValues[`${row.levelId}:${row.id}`]?.moment;
-                            return `${row.label} | ${selected.levels.find(level => level.id === row.levelId)?.label ?? row.levelId} | ${row.gk.toFixed(2)} | ${row.qk.toFixed(2)} | ${row.nu.toFixed(2)} | ${row.nser.toFixed(2)} | ${moment?.toFixed(2) ?? "—"}`;
-                          }),
-                        ]),
-                        "",
-                        ...propagationNote.split("\n"),
-                        "",
-                        "AVERTISSEMENT : résultat indicatif à vérifier et valider par un ingénieur structure avant exécution.",
-                      ].join("\n");
-                      const reportPassports = reportGroups.flatMap(group => group.rows.map(row => {
-                        const moment = analysisValues[`${row.levelId}:${row.id}`]?.moment;
-                        return createStructuralPassport({
-                          elementId: row.id,
-                          label: row.label,
-                          elementType: loadFamilyLabel(row.type),
-                          levelLabel: selected.levels.find(level => level.id === row.levelId)?.label ?? row.levelId,
-                          section: row.section ?? "Non renseigné",
-                          gkKn: row.gk,
-                          qkKn: row.qk,
-                          nuKn: row.nu,
-                          nserKn: row.nser,
-                          momentKnM: typeof moment === "number" ? moment : null,
-                          supports: row.supports,
-                          sources: row.sources,
-                        });
-                      }));
-                      const foundationReportLines = [
-                        `Provenance : ${foundationEvaluation?.basis.source || "non renseignée"} · profil ${foundationEvaluation?.basis.soilName || projectSoilName}`,
-                        `qadm déclaré : ${foundationEvaluation?.basis.allowableBearingKPa?.toFixed(2) ?? "non renseigné"} kPa · facteurs additionnels de screening portance/glissement ${foundationEvaluation?.basis.bearingSafetyFactor ?? "—"}/${foundationEvaluation?.basis.slidingSafetyFactor ?? "—"}`,
-                        ...(foundationEvaluation?.rows.length ? foundationEvaluation.rows.flatMap(row => [
-                          `${row.footingId} · poteau ${row.columnId} · appui ${row.reaction.nodeId} · N ${row.reaction.verticalReactionKn.toFixed(2)} kN · H ${row.reaction.horizontalReactionKn.toFixed(2)} kN · M ${row.reaction.momentReactionKnM.toFixed(2)} kN·m · axe ${row.reaction.momentAxis.toUpperCase()}`,
-                          ...(row.result ? [
-                            `${row.result.status} · N effectif ${row.result.effectiveAxialKn.toFixed(2)} kN · e ${row.result.eccentricityM.toFixed(3)} m · qmin ${row.result.minimumPressureKPa.toFixed(2)} kPa · qmax ${Number.isFinite(row.result.maximumPressureKPa) ? row.result.maximumPressureKPa.toFixed(2) : "∞"} kPa`,
-                            ...row.result.checks.map(check => `${check.label} : ${check.status} · Ed ${check.demand === null ? "—" : Number.isFinite(check.demand) ? check.demand.toFixed(2) : "∞"} ${check.unit} · Rd ${check.resistance === null ? "—" : check.resistance.toFixed(2)} ${check.unit} · ${check.note}`),
-                            ...row.result.warnings,
-                          ] : [`Vérification non calculée : ${row.error ?? "paramètres manquants"}`]),
-                        ]) : ["Aucune réaction de fondation du solveur n’est disponible ; aucune vérification de fondation n’est produite."]),
-                        ...(foundationEvaluation?.warnings ?? []),
-                      ];
-                      const reportDocument = createStructuralReport({
-                        title: "NOTE DE CALCUL — DESCENTE DE CHARGES",
-                        generatedAt: new Date().toISOString(),
-                        project: { id: selected.id, name: selected.name, country: selected.country, city: selected.city, location: selected.location, structure: selected.structure, norm: selected.norm },
-                        body: report,
-                        passports: reportPassports,
-                        sections: [
-                          { title: "Fondations — vérifications à partir des réactions du solveur", lines: foundationReportLines },
-                          { title: "Avertissements et limites", lines: [...(foundationEvaluation?.warnings ?? []), ...(rcDesignResult?.blockers ?? []), "Les résultats restent indicatifs et ne valent pas visa, validation normative ou autorisation d’exécuter."] },
-                        ],
-                      });
-                      const unifiedReport = renderStructuralReport(reportDocument);
-                      setLastStructuralReport(unifiedReport);
-                      try { sessionStorage.setItem("gcbtp-last-structural-report", JSON.stringify(reportDocument)); } catch { /* Le rapport reste disponible pour l’aperçu et l’export courant. */ }
-                      sessionStorage.setItem(
-                        "gcbtp-last-floor-note",
-                        floorNoteSummary(floorConfig)
-                      );
-                      sessionStorage.setItem(
-                        "gcbtp-floor-load-data",
-                        JSON.stringify({
-                          floorLoads,
-                          buildingSummary,
-                          loadProgram,
-                          loadProgramEvaluation: reportLoadProgramEvaluation,
-                          planeAnalysis,
-                          rcDesignResult,
-                          foundationEvaluation,
-                          reportDocument,
-                          propagation: buildingLoadModel.propagation,
-                        })
-                      );
-                      onExport(unifiedReport);
-                    }}
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Exporter le PDF et afficher l’aperçu unifié
-                  </Button>
-                  {lastStructuralReport && <details open className="mt-2 rounded-xl border border-[#c7d9dd] bg-white p-2 text-[9px] text-[#455b61]">
-                    <summary className="cursor-pointer font-bold">Aperçu du rapport · même contenu que le PDF</summary>
-                    <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-[#f7fafb] p-2 font-sans">{lastStructuralReport}</pre>
-                  </details>}
-                  </>}
+
                   </>
                   )}
                 </CardContent>
@@ -6190,8 +6411,8 @@ export default function BuildingCreateFlow({
                 </div></>}
                   {loadApplicationReport && (loadApplicationReport.errors.length > 0 || loadApplicationReport.warnings.length > 0) && <div className="mt-2 space-y-1 rounded-lg border border-[#efc4b9] bg-[#fffaf6] p-2 text-[9px]"><div className="font-bold text-[#914d3d]">Contrôles à corriger avant de lancer le calcul</div>{loadApplicationReport.errors.map((message,index)=><details key={`visible-load-error-${index}`} className="rounded bg-[#fff1ed] p-2 text-[#914d3d]" onClick={() => focusCalculationDiagnostic(message)}><summary className="cursor-pointer font-semibold">Erreur · {message}</summary><p className="mt-1 pl-4">Cliquez pour ouvrir la zone de correction correspondante.</p></details>)}{loadApplicationReport.warnings.slice(0,12).map((message,index)=><details key={`visible-load-warning-${index}`} className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]" onClick={() => focusCalculationDiagnostic(message)}><summary className="cursor-pointer font-semibold">Avertissement · {message}</summary><p className="mt-1 pl-4">Cliquez pour ouvrir la zone de donnée ou l’élément à corriger.</p></details>)}{loadApplicationReport.warnings.length > 12 && <div className="text-[#8a5a21]">… {loadApplicationReport.warnings.length - 12} autre(s) avertissement(s)</div>}</div>}
                 {recommendationItems.length > 0 && <div className="mt-2 space-y-2 rounded-lg border border-[#efd49d] bg-[#fffaf0] p-2 text-[9px] text-[#765f36]">
-                  <div className="font-bold text-[11px] text-[#8a5a21]">Solutions proposées pour valider les contrôles</div>
-                  <p>Ces actions sont des pistes de pré-étude. Après modification d’une section, d’une épaisseur ou des appuis, relancez le maillage et l’application des charges.</p>
+                  <div className="font-bold text-[11px] text-[#8a5a21]">Contrôles à examiner</div>
+                  <p>Les valeurs « à vérifier » sont indicatives et les contrôles « bloqués » ne sont pas calculés; seuls les dépassements chiffrés justifient une correction de résistance. Après modification, relancez le maillage et l’application des charges.</p>
                   {recommendationItems.slice(0, 20).map(item => <div key={`${item.elementId}:${item.title}`} className="rounded border border-[#f0dfb7] bg-white p-2">
                     <div className="font-bold text-[#914d3d]">{item.elementId} · {item.title}</div>
                     <ul className="mt-1 list-disc pl-4">{item.actions.map(action => <li key={action}>{action}</li>)}</ul>
@@ -6294,7 +6515,7 @@ function LoadProgramEditor({
     <summary className="cursor-pointer font-bold text-[#27358f]">Cas de charges, combinaisons et source de masse — {program.cases.length} cas / {program.combinations.filter(item=>item.enabled).length} combinaisons actives</summary>
     <div className="mt-2 space-y-2">
       <div className="rounded bg-[#fff5e8] p-2 text-[#8a5a21]">
-        <b>{massSourceConfirmed ? "Source de masse validée par l’utilisateur." : "Statut pré-étude / non certifié."}</b> Référentiel déclaré : {projectNorm || program.selectedStandard}. Les combinaisons automatiques et leurs coefficients proviennent du catalogue français NF EN 1990/NA et NF EN 1991-1-1/NA, selon la catégorie {program.projectUsage ?? "habitation"}. Les actions climatiques et les données du site restent à déterminer; {massSourceConfirmed ? "la source de masse EC8 est marquée comme validée dans ce projet." : "la source de masse sismique requiert les facteurs EC8 par niveau."} G/Q proviennent de la descente tributaire; les autres valeurs globales ne sont pas encore distribuées spatialement et ne constituent pas des cas dimensionnants.
+        <b>{massSourceConfirmed ? "Source de masse validée par l’utilisateur." : "Source de masse sismique à confirmer."}</b> Référentiel déclaré : {projectNorm || program.selectedStandard}. Les combinaisons automatiques utilisent le catalogue français d’actions et de coefficients (γ/ψ); sous BAEL, cette base est validée pour le projet. La base française peut être retenue pour les sites africains par choix du projet; confirmer l’édition/annexe et les paramètres locaux. Les actions climatiques et les données du site restent à déterminer; {massSourceConfirmed ? "la source de masse EC8 est marquée comme validée dans ce projet." : "la source de masse sismique requiert les facteurs EC8 par niveau."} G/Q proviennent de la descente tributaire; les autres valeurs globales ne sont pas encore distribuées spatialement et ne constituent pas des cas dimensionnants.
       </div>
       <div className="space-y-1">
         <div className="font-semibold">Actions / patterns</div>

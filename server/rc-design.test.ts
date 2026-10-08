@@ -111,6 +111,10 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     const design = result.elements[0];
     expect(design.checks.map(item => item.id)).toContain("column-interaction");
     expect(design.checks.map(item => item.id)).toContain("column-slenderness");
+    expect(design.checks.find(item => item.id === "column-tie-spacing")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-bar-layout-count")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-anchorage-length")?.status).toBe("à vérifier");
+    expect(design.checks.find(item => item.id === "column-bael-detailing")?.status).toBe("bloqué");
     expect(design.reinforcement.map(item => item.id)).toContain("P1:ties");
     const longitudinal = design.reinforcement.find(item => item.id === "P1:longitudinal")!;
     const ties = design.reinforcement.find(item => item.id === "P1:ties")!;
@@ -119,6 +123,48 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(ties.diameterMm).toBe(8);
     expect(result.schedule.length).toBeGreaterThan(0);
     expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
+  });
+
+  it("reports the configured slenderness limit and does not mark zero first-order moment as a second-order failure", () => {
+    const result = designReinforcedConcrete({
+      basis: { ...basis(), maxColumnSlenderness: 15 },
+      members: [{ id: "P6", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, axialKn: 145.2, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
+      slabs: [],
+    });
+    const checks = result.elements[0].checks;
+    const slenderness = checks.find(item => item.id === "column-slenderness")!;
+    expect(slenderness.demand).toBeCloseTo(17.32, 1);
+    expect(slenderness.resistance).toBe(15);
+    expect(slenderness.status).toBe("non satisfaisant");
+    const secondOrder = checks.find(item => item.id === "column-second-order")!;
+    expect(secondOrder.status).toBe("à vérifier");
+    expect(secondOrder.blocking).toBe(false);
+    expect(secondOrder.demand).toBeGreaterThan(0);
+  });
+
+  it("selects a catalog bar arrangement that also satisfies the column moment interaction", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(),
+      members: [{ id: "P2", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 700, shearKn: 0, momentKnM: 30, momentXKnM: 30, momentYKnM: 0 }],
+      slabs: [],
+    });
+    const design = result.elements[0];
+    const longitudinal = design.reinforcement.find(item => item.id === "P2:longitudinal")!;
+    expect(longitudinal.count).toBeGreaterThan(4);
+    expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+  });
+
+  it("respects a selected HA diameter and sizes only the number of bars for that diameter", () => {
+    const selectedBasis = { ...basis(), availableBarDiametersMm: [12] };
+    const result = designReinforcedConcrete({
+      basis: selectedBasis,
+      members: [{ id: "P3", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 300, shearKn: 0, momentKnM: 20, momentXKnM: 20, momentYKnM: 0 }],
+      slabs: [],
+    });
+    const longitudinal = result.elements[0].reinforcement.find(item => item.id === "P3:longitudinal")!;
+    expect(longitudinal.diameterMm).toBe(12);
+    expect(longitudinal.count).toBeGreaterThanOrEqual(4);
+    expect(result.elements[0].checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
   });
 
   it("ignores and blocks a longitudinal HA8 override while proposing an admissible catalog diameter", () => {

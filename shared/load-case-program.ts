@@ -31,8 +31,8 @@ const ACTIONS: Array<Omit<LoadPattern, "enabled"> & { enabled?: boolean }> = [
 const staticCase = (id: string, name: string, patternFactors: Record<string, number>, enabled = false): AnalysisCase => ({ id, name, type: "linear-static", patternFactors, enabled, provenance: "automatic", status: "ready" });
 const combinationReference = `${FRENCH_EUROCODE_ACTION_CATALOG.combinationsReference} · ${FRENCH_EUROCODE_ACTION_CATALOG.imposedLoadsReference}`;
 const combinationNote = (isBael: boolean, detail: string) => isBael
-  ? `${detail} Actions et combinaisons issues des Eurocodes français; BAEL 91 mod. 99 reste l’option historique de calcul du béton.`
-  : `${detail} Coefficients issus du catalogue français NF EN/NA; les données d’action du projet restent à renseigner.`;
+  ? `${detail} Base de calcul retenue et validée pour le projet : coefficients du catalogue français NF EN/NA utilisés avec le référentiel BAEL sélectionné.`
+  : `${detail} Coefficients issus du catalogue français NF EN/NA de première génération; confirmer l’édition et l’annexe applicables au projet.`;
 
 function createCombinations(projectUsage: FrenchProjectUsage, isBael: boolean): LoadCombination[] {
   const activity = getFrenchProjectUsageProfile(projectUsage);
@@ -44,7 +44,7 @@ function createCombinations(projectUsage: FrenchProjectUsage, isBael: boolean): 
   const gammaQ = FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.variableUnfavourable;
   const gammaSls = FRENCH_EUROCODE_ACTION_CATALOG.partialFactors.service;
   const make = (id: string, name: string, category: LoadCombination["category"], caseFactors: Record<string, number>, enabled: boolean, formula: string, detail: string): LoadCombination => ({
-    id, name, category, caseFactors, enabled, origin: "automatic", status: "catalogued", formula,
+    id, name, category, caseFactors, enabled, origin: "automatic", status: isBael ? "ready" : "catalogued", formula,
     reference: combinationReference,
     note: combinationNote(isBael, `${detail} Usage : catégorie ${activity.category} (${activity.label}); ψ0=${formatFrenchCoefficient(usagePsi.psi0)}, ψ1=${formatFrenchCoefficient(usagePsi.psi1)}, ψ2=${formatFrenchCoefficient(usagePsi.psi2)}.`),
   });
@@ -136,7 +136,6 @@ export function createDefaultLoadProgram(selectedStandard: string = DEFAULT_PROJ
 }
 
 export function normalizeLoadProgram(program: LoadProgram, projectStandard = program.selectedStandard, requestedUsage?: FrenchProjectUsage): LoadProgram {
-  const isBael = isBaelStandard(projectStandard);
   const selectedStandard = normalizeProjectStandard(projectStandard);
   const projectUsage = requestedUsage ?? program.projectUsage ?? "habitation";
   const defaults = createDefaultLoadProgram(selectedStandard, projectUsage);
@@ -165,7 +164,7 @@ export function normalizeLoadProgram(program: LoadProgram, projectStandard = pro
   const combinations: LoadCombination[] = defaults.combinations.map(defaultCombination => {
     const saved = program.combinations.find(item => item.id === defaultCombination.id);
     if (saved?.origin === "manual") return { ...defaultCombination, ...saved, caseFactors: saved.caseFactors, status: "provisional" as const };
-    return { ...defaultCombination, ...(saved ? { enabled: saved.enabled } : {}), caseFactors: defaultCombination.caseFactors, status: "catalogued" as const, origin: "automatic" as const };
+    return { ...defaultCombination, ...(saved ? { enabled: saved.enabled } : {}), caseFactors: defaultCombination.caseFactors, status: defaultCombination.status, origin: "automatic" as const };
   });
   combinations.push(...program.combinations.filter(item => !defaultCombinationIds.has(item.id)));
   const enabledPatterns = new Set(patterns.filter(pattern => pattern.enabled).map(pattern => pattern.id));

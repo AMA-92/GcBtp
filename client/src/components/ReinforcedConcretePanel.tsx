@@ -59,15 +59,15 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   gammaS: "1.15",
   alphaCC: String(standardProfile.suggestedAlphaCC ?? 0.85),
   coverMm: String(concrete.cover),
-  minReinforcementPercent: "0.13",
-  maxReinforcementPercent: "4.00",
+  minReinforcementPercent: isBael ? "0.20" : "0.13",
+  maxReinforcementPercent: isBael ? "5.00" : "4.00",
   concreteShearStressLimitMpa: "0.55",
-  bondStressMpa: "2.25",
+  bondStressMpa: isBael ? String((0.6 * 1.5 ** 2 * (0.6 + 0.06 * concrete.fck)).toFixed(3)) : "2.25",
   minClearSpacingMm: "20",
-  maxLinkSpacingMm: "300",
+  maxLinkSpacingMm: isBael ? "400" : "300",
   maxDeflectionRatio: "250",
   maxColumnSlenderness: "15",
-  availableBarDiametersMm: "8, 10, 12, 16, 20, 25",
+  availableBarDiametersMm: "8, 10, 12, 14, 16, 20, 25",
   maxCrackWidthMm: "0.30",
   seismicDetailingEnabled: false,
   seismicDuctilityClass: "DCM",
@@ -92,17 +92,19 @@ type Props = {
   onApplySection?: (elementId: string, type: string, sectionName: string, dimensions: string) => void;
   optimizedElementIds?: Set<string>;
   runRequestToken?: number;
+  runRequestElementId?: string | null;
+  runRequestBarDiameterMm?: number | null;
 };
 
-export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set(), runRequestToken = 0 }: Props) {
+export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set(), runRequestToken = 0, runRequestElementId = null, runRequestBarDiameterMm = null }: Props) {
   const [draft, setDraft] = useState<Draft>(() => createDraft(projectNorm, projectConcreteFckMpa, projectRebarFykMpa));
   const [overrides, setOverrides] = useState<RCDesignOverrides>({});
   const [result, setResult] = useState<RCDesignResult | null>(null);
   const [optimizationProposals, setOptimizationProposals] = useState<RCOptimizationProposal[]>([]);
   const [templateCompany, setTemplateCompany] = useState("");
   const [dirty, setDirty] = useState(false);
-  const lastRunRequestToken = useRef(0);
-  const runRef = useRef<() => void>(() => undefined);
+  const lastRunRequestToken = useRef(runRequestToken);
+  const runRef = useRef<(elementId?: string) => void>(() => undefined);
   const sourceSignature = useMemo(() => JSON.stringify({ members, slabs, foundations, stairs, walls, sourceWarnings }), [members, slabs, foundations, stairs, walls, sourceWarnings]);
 
   useEffect(() => {
@@ -116,6 +118,13 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       const parsed = saved ? JSON.parse(saved) as { draft?: Partial<Draft>; overrides?: RCDesignOverrides } : {};
       const savedDraft = parsed.draft ?? {};
       const merged: Draft = { ...base, ...savedDraft, standard: base.standard };
+      if (resolveRCStandardProfile(base.standard).family === "bael-91-99" && savedDraft.basisConfirmed !== true) {
+        if (savedDraft.minReinforcementPercent === "0.13") merged.minReinforcementPercent = base.minReinforcementPercent;
+        if (savedDraft.maxReinforcementPercent === "4.00") merged.maxReinforcementPercent = base.maxReinforcementPercent;
+        if (savedDraft.bondStressMpa === "2.25") merged.bondStressMpa = base.bondStressMpa;
+        if (savedDraft.maxLinkSpacingMm === "300") merged.maxLinkSpacingMm = base.maxLinkSpacingMm;
+      }
+      if (savedDraft.availableBarDiametersMm === "8, 10, 12, 16, 20, 25") merged.availableBarDiametersMm = base.availableBarDiametersMm;
       if (savedDraft.standard && !sameRCStandardFamily(savedDraft.standard, base.standard)) {
         (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'bondStressMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness', 'maxCrackWidthMm', 'seismicDetailingEnabled', 'seismicDuctilityClass'] as const).forEach(key => { merged[key] = base[key] as never; });
       }
@@ -186,10 +195,18 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     setDirty(true);
     onResultChange(null);
   };
-  const run = () => {
-    const next = designReinforcedConcrete({ basis, members, slabs, foundations, stairs, overrides });
-    if (!validateRCDesignBasis(basis).length) {
-      const wallDesigns = walls.map(wall => designWall(wall, basis, overrides));
+  const runFocused = (elementId?: string) => {
+    const focused = elementId ? members.filter(member => member.id === elementId) : members;
+    const selectedBasis = elementId && runRequestBarDiameterMm !== null
+      ? { ...basis, availableBarDiametersMm: basis.availableBarDiametersMm.filter(diameter => diameter === runRequestBarDiameterMm) }
+      : basis;
+    const next = designReinforcedConcrete({ basis: selectedBasis, members: focused, slabs: elementId ? [] : slabs, foundations: elementId ? [] : foundations, stairs: elementId ? [] : stairs, overrides });
+    if (elementId && runRequestBarDiameterMm !== null) {
+      next.materialBasis = { ...basis } as Omit<RCDesignBasis, "schemaVersion">;
+      next.warnings.push(`Catalogue longitudinal restreint à HA ${runRequestBarDiameterMm} pour cette vérification.`);
+    }
+    if (!validateRCDesignBasis(selectedBasis).length) {
+      const wallDesigns = elementId ? [] : walls.map(wall => designWall(wall, selectedBasis, overrides));
       next.elements.push(...wallDesigns);
       for (const element of wallDesigns) for (const bar of element.reinforcement) {
         const current = next.schedule.find(item => item.diameterMm === bar.diameterMm);
@@ -203,13 +220,14 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     setDirty(false);
     onResultChange(next);
   };
-  runRef.current = run;
+  const run = () => runFocused();
+  runRef.current = runFocused;
   useEffect(() => {
     if (runRequestToken > 0 && runRequestToken !== lastRunRequestToken.current) {
       lastRunRequestToken.current = runRequestToken;
-      runRef.current();
+      runRef.current(runRequestElementId ?? undefined);
     }
-  }, [runRequestToken]);
+  }, [runRequestToken, runRequestElementId]);
   const runOptimization = () => {
     if (!resolveRCStandardProfile(projectNorm).supportedForPreDesign) {
       toast.error("Optimisation bloquée : le référentiel du projet n’est pas pris en charge par le moteur BA.");

@@ -81,6 +81,7 @@ export function calculateLoadDescent(input: LoadInput) {
   const column = beam * Math.max(1, input.levels);
   const foundation = column;
   const warnings = [
+    "Le moteur simplifié utilise le catalogue français d’actions et de coefficients de première génération (γ/ψ), retenu comme base de calcul du projet, y compris pour un site africain par choix du projet; les paramètres propres au site doivent être justifiés.",
     ...(input.soil?.allowableBearing === undefined ? ["qadm non renseigné : fournir une étude géotechnique avant validation."] : []),
     ...(input.selectedCases.partitions && input.actions?.partitionLoad === undefined ? ["Cloisons : 1,00 kN/m² repris du défaut de catalogue, à remplacer par le poids réel des parois."] : []),
     ...(input.selectedCases.roof && input.actions?.roofLoad === undefined ? ["Toiture : 0,80 kN/m² correspond au cas H à faible pente avec étanchéité; confirmer la configuration réelle."] : []),

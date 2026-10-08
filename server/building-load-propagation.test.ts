@@ -21,6 +21,41 @@ describe("building load propagation", () => {
     expect(summarizeBuildingLoads(model).rows.length).toBe(6);
   });
 
+  it("lists all four incident beams and the column self-weight as separate load origins", () => {
+    const model = buildBuildingLoadModel([
+      { id: "PT1", type: "Poutre", section: "20x40", x: 0, y: 0, x2: 1, y2: 0, levelId: "rdc" },
+      { id: "PT2", type: "Poutre", section: "20x40", x: 0, y: 0, x2: -1, y2: 0, levelId: "rdc" },
+      { id: "PT3", type: "Poutre", section: "20x40", x: 0, y: 0, x2: 0, y2: 1, levelId: "rdc" },
+      { id: "PT4", type: "Poutre", section: "20x40", x: 0.003, y: 0.003, x2: 0, y2: -1, levelId: "rdc" },
+      { id: "P6", type: "Poteau", section: "20x30", x: 0, y: 0, levelId: "rdc" },
+    ], { levelOrder: ["rdc"], levelHeights: { rdc: 3.2 }, gridDistance: 4 });
+
+    expect(model.columnBeamContributions.P6).toHaveLength(4);
+    expect(model.columnBeamContributions.P6.map(item => item.beamId).sort()).toEqual(["PT1", "PT2", "PT3", "PT4"]);
+    expect(model.columnSelfWeights.P6).toBeCloseTo(4.8, 8);
+    const beamTotal = model.columnBeamContributions.P6.reduce((sum, item) => sum + item.gk, 0);
+    expect(model.rows.find(row => row.id === "P6")?.gk).toBeCloseTo(beamTotal + model.columnSelfWeights.P6, 8);
+  });
+
+  it.each([2, 3])("shows %i connected beams plus the column self-weight", beamCount => {
+    const endpoints = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const beams = endpoints.slice(0, beamCount).map(([x2, y2], index) => ({
+      id: `PT${index + 1}`, type: "Poutre", section: "20x40",
+      x: 0, y: 0, x2, y2, levelId: "rdc",
+    }));
+    const model = buildBuildingLoadModel([
+      ...beams,
+      { id: "P6", type: "Poteau", section: "20x30", x: 0, y: 0, levelId: "rdc" },
+    ], { levelOrder: ["rdc"], levelHeights: { rdc: 3.2 }, gridDistance: 4 });
+
+    expect(model.columnBeamContributions.P6).toHaveLength(beamCount);
+    expect(model.columnSelfWeights.P6).toBeCloseTo(4.8, 8);
+    expect(model.rows.find(row => row.id === "P6")?.gk).toBeCloseTo(
+      model.columnBeamContributions.P6.reduce((sum, item) => sum + item.gk, 0) + model.columnSelfWeights.P6,
+      8,
+    );
+  });
+
   it("includes a balcony as a full-slab surface with its own imposed load", () => {
     const model = buildBuildingLoadModel([
       { id: "BAL1", type: "Balcon", x: 0, y: 0, x2: 1, y2: 1, levelId: "rdc" },
@@ -109,6 +144,8 @@ describe("building load propagation", () => {
     expect(upper).toBeGreaterThan(0);
     expect(lower).toBeGreaterThan(upper);
     expect(model.propagation.foundations.S1.gk).toBeCloseTo(lower);
+    expect(model.columnTransferredContributions.P1).toHaveLength(1);
+    expect(model.columnTransferredContributions.P1[0]).toMatchObject({ sourceColumnId: "P2", gk: upper });
     expect(model.levelLoads.r1.totalGk).toBeGreaterThan(0);
   });
 

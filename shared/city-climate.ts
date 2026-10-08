@@ -12,7 +12,7 @@ export type CityClimateProfile = {
 };
 
 const CCKP = "https://climateknowledgeportal.worldbank.org/";
-const city = (country: string, city: string, climateZone: string, windExposure: string, rainfallExposure: string, note: string): CityClimateProfile => ({ country, city, climateZone, windExposure, rainfallExposure, snow: { groundLoad: 0, status: "to-confirm" }, seismic: { zone: "À confirmer selon NF EN 1998/NA, carte d’aléa et étude de sol", status: "to-confirm" }, wind: { zone: "À confirmer selon NF EN 1991-1-4/NA et l’exposition du site", status: "to-confirm" }, source: CCKP, note });
+const city = (country: string, city: string, climateZone: string, windExposure: string, rainfallExposure: string, note: string): CityClimateProfile => ({ country, city, climateZone, windExposure, rainfallExposure, snow: { groundLoad: 0, status: "to-confirm" }, seismic: { zone: "À déterminer selon le référentiel français sélectionné et l’étude de sol du site", status: "to-confirm" }, wind: { zone: "Référentiel français sélectionné; pression/exposition à confirmer pour le site", status: "to-confirm" }, source: CCKP, note });
 
 export const CITY_CLIMATE_PROFILES: Record<string, CityClimateProfile[]> = {
   "Sénégal": [

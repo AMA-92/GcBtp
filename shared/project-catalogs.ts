@@ -6,20 +6,20 @@ import {
 } from "./model-catalog";
 import { DEFAULT_PROJECT_STANDARD, FRENCH_EUROCODE_DEFAULT_STANDARD, normalizeProjectStandard } from "./french-standard-profile";
 
-export const PROJECT_COUNTRIES = AFRICAN_COUNTRIES;
+export const PROJECT_COUNTRIES = ["France", ...AFRICAN_COUNTRIES] as const;
 
 export const PROJECT_STANDARD_CATALOG = [
   {
     id: "bael-91-99",
     norm: "BAEL 91 mod. 99",
-    label: "BAEL 91 mod. 99 · référentiel français par défaut",
+    label: "BAEL 91 mod. 99 · défaut legacy GcBtp, applicabilité à confirmer",
     shortLabel: "BAEL 91 mod. 99",
   },
   {
     id: "eurocode-2",
     norm: FRENCH_EUROCODE_DEFAULT_STANDARD,
-    label: "Eurocodes français · NF EN et annexes nationales françaises",
-    shortLabel: "Eurocodes français",
+    label: "Eurocode 2 — France · édition et annexe nationale à confirmer",
+    shortLabel: "Eurocode 2 — France",
   },
 ] as const;
 

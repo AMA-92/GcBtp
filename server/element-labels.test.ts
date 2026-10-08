@@ -21,6 +21,14 @@ describe("repères d’éléments DSRCAD", () => {
     expect(renumberBuildingElements(levels).map(level => level.elements.map(element => element.id))).toEqual([["S1", "P1", "B1"], ["S2", "P2", "PL1"]]);
   });
 
+  it("nomme chaque semelle d’après le poteau qu’elle porte", () => {
+    const columns = Array.from({ length: 8 }, (_, index) => ({ id: `ancien-P${index + 1}`, type: "Poteau", x: index, y: 0 }));
+    const levels = [{ elements: [...columns, { id: "ancienne-semelle", type: "Semelle", x: 7, y: 0 }] }];
+    const elements = renumberBuildingElements(levels)[0].elements;
+    expect(elements.find(element => element.type === "Poteau" && element.x === 7)?.id).toBe("P8");
+    expect(elements.find(element => element.type === "Semelle")?.id).toBe("S8");
+  });
+
   it("normalise les noms d’éléments provenant d’un import externe", () => {
     const levels = [{ elements: [{ id: "beam-1", type: "Poutre BA" }, { id: "floor-1", type: "Plancher corps creux" }, { id: "col-1", type: "Column" }] }];
     const normalized = renumberBuildingElements(levels)[0].elements;

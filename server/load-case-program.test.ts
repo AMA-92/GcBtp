@@ -10,14 +10,21 @@ describe("programme de charges — actions, cas, combinaisons et source de masse
     expect(validateLoadProgram(program).some(item => item.severity === "error")).toBe(false);
   });
 
-  it("utilise les références françaises et marque les combinaisons automatiques comme cataloguées, sans certifier la pré-étude", () => {
+  it("valide les combinaisons BAEL selon la base de coefficients du catalogue français retenue", () => {
     const program = createDefaultLoadProgram();
     expect(program.selectedStandard).toBe("BAEL 91 mod. 99");
-    expect(program.combinations.filter(item => item.enabled).every(item => item.status === "catalogued")).toBe(true);
+    expect(program.combinations.filter(item => item.enabled).every(item => item.status === "ready")).toBe(true);
     expect(program.combinations.find(item => item.id === "comb:uls-gravity")?.reference).toContain("NF EN 1990/NA:2011");
-    expect(program.combinations.find(item => item.id === "comb:uls-gravity")?.reference).toContain("NF P 06-111-2/A1:2009");
+    expect(program.combinations.find(item => item.id === "comb:uls-gravity")?.note).toContain("Base de calcul retenue et validée pour le projet");
     expect(program.patterns.find(item => item.id === "Q")?.status).toBe("calculated");
     expect(program.massSource.status).toBe("provisional");
+  });
+
+  it("garde les combinaisons Eurocode françaises distinguées et exige l’édition nationale applicable", () => {
+    const program = createDefaultLoadProgram("Eurocode 2 — France");
+    expect(program.combinations.filter(item => item.enabled).every(item => item.status === "catalogued")).toBe(true);
+    expect(program.combinations.find(item => item.id === "comb:uls-gravity")?.reference).toContain("NF EN 1990/NA:2011");
+    expect(program.combinations.find(item => item.id === "comb:uls-gravity")?.note).toContain("confirmer l’édition");
   });
 
   it("migre un ancien référentiel vers le profil français et recatalogue ses combinaisons automatiques", () => {
@@ -25,7 +32,7 @@ describe("programme de charges — actions, cas, combinaisons et source de masse
     legacy.combinations.filter(item => item.origin === "automatic").forEach(item => { item.status = "provisional"; });
     const normalized = normalizeLoadProgram(legacy, "SANS 10100");
     expect(normalized.selectedStandard).toBe("BAEL 91 mod. 99");
-    expect(normalized.combinations.filter(item => item.enabled).every(item => item.status === "catalogued")).toBe(true);
+    expect(normalized.combinations.filter(item => item.enabled).every(item => item.status === "ready")).toBe(true);
   });
 
   it("lie les ψ et les intensités d’exploitation à la catégorie d’usage du projet", () => {
@@ -60,7 +67,7 @@ describe("programme de charges — actions, cas, combinaisons et source de masse
     expect(result.combinations.find(item => item.id === "comb:sls-char")?.value).toBeCloseTo(140);
     expect(result.combinations.find(item => item.id === "comb:sls-frequent")?.value).toBeCloseTo(120);
     expect(result.combinations.find(item => item.id === "comb:sls-quasi")?.value).toBeCloseTo(112);
-    expect(result.combinations.find(item => item.id === "comb:uls-gravity")?.status).toBe("catalogued");
+    expect(result.combinations.find(item => item.id === "comb:uls-gravity")?.status).toBe("ready");
   });
 
   it("calcule la masse provisoire avec ψ2 issu de la catégorie d’usage", () => {

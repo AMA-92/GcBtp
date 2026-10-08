@@ -8,21 +8,27 @@ describe("GcBtp regulatory catalogue", () => {
     expect(new Set(AFRICAN_COUNTRIES).size).toBe(54);
   });
 
-  it("applies the French calculation reference to every African-country profile", () => {
+  it("uses French calculation references for African projects without claiming they are national African codes", () => {
+    const france = getRegulatoryRule("France");
+    expect(france.code).toContain("NF EN 1990/NA:2011");
+    expect(france.status).toBe("to-confirm");
     for (const country of AFRICAN_COUNTRIES) {
       const rule = getRegulatoryRule(country);
       expect(rule.code).toContain("NF EN 1990/NA:2011");
-      expect(rule.status).toBe("adapted");
+      expect(rule.note).toContain("Par choix du projet");
+      expect(rule.note).toContain("ne signifie pas que ces textes sont les normes nationales");
+      expect(rule.status).toBe("to-confirm");
     }
     expect(getRegulatoryRule("Afrique du Sud").code).not.toContain("SANS");
     expect(getRegulatoryRule("Gambie").code).not.toContain("BS 8110");
     expect(FRENCH_EUROCODE_DEFAULT_STANDARD).toBe("Eurocode 2 — France");
   });
 
-  it("keeps the French calculation default for unknown countries while warning about local obligations", () => {
+  it("does not guess a structural code for unknown countries", () => {
     const rule = getRegulatoryRule("Pays non répertorié");
-    expect(rule.code).toContain("NF EN 1990/NA:2011");
-    expect(rule.note).toContain("obligations administratives locales");
+    expect(rule.code).toContain("Référentiel national");
+    expect(rule.status).toBe("to-confirm");
+    expect(rule.note).toContain("pas une présomption de conformité locale");
   });
 });
 
