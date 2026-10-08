@@ -618,12 +618,14 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const axialKn = Math.abs(demand.axialKn);
   const momentX = Math.abs(demand.momentXKnM ?? demand.momentKnM);
   const momentY = Math.abs(demand.momentYKnM ?? 0);
+  const pureAxialBAEL = isBael && momentX <= 1e-9 && momentY <= 1e-9;
   const baelSecondX = isBael && axialKn > 0 ? calculateBAELSecondOrderAxis({ axis: "Mx", axialKn, firstOrderMomentKnM: momentX, memberLengthMm: length, bucklingLengthMm, sectionDepthMm: height, alpha: 1, creepRatio: 2 }) : null;
   const baelSecondY = isBael && axialKn > 0 ? calculateBAELSecondOrderAxis({ axis: "My", axialKn, firstOrderMomentKnM: momentY, memberLengthMm: length, bucklingLengthMm, sectionDepthMm: width, alpha: 1, creepRatio: 2 }) : null;
-  const designMomentX = baelSecondX?.totalMomentKnM ?? momentX;
-  const designMomentY = baelSecondY?.totalMomentKnM ?? momentY;
+  const designMomentX = pureAxialBAEL ? 0 : baelSecondX?.totalMomentKnM ?? momentX;
+  const designMomentY = pureAxialBAEL ? 0 : baelSecondY?.totalMomentKnM ?? momentY;
   const baelDomainRatio = baelSecondX && baelSecondY ? Math.max(baelSecondX.slendernessRatio / baelSecondX.allowableSlendernessRatio, baelSecondY.slendernessRatio / baelSecondY.allowableSlendernessRatio) : 0;
   const a43WithinDomain = !isBael || baelDomainRatio < 1;
+  const baelCenteredCompressionFormula = pureAxialBAEL && axialKn > 0 && a43WithinDomain;
   const initialImperfectionMm = Math.max(20, length / 250);
   const preselectionMomentX = a43WithinDomain ? designMomentX : momentX + axialKn * initialImperfectionMm / 1000;
   const preselectionMomentY = a43WithinDomain ? designMomentY : momentY + axialKn * initialImperfectionMm / 1000;
@@ -691,7 +693,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     }
     const concreteAreaMm2 = Math.max(0, areaGross - areaMm2);
     const axialResistanceKn = baelCompression
-      ? baelCompression.alpha * (baelCompression.reducedConcreteResistanceKn * 1000 + areaMm2 * basis.fykMpa / basis.gammaS) / 1000
+      ? (baelCenteredCompressionFormula ? baelCompression.alpha : 1) * (baelCompression.reducedConcreteResistanceKn * 1000 + areaMm2 * basis.fykMpa / basis.gammaS) / 1000
       : (0.8 * concreteAreaMm2 * fcd + areaMm2 * fyd) / 1000;
     const mxResistanceKnM = fyd * bars.reduce((sum, bar) => sum + bar.areaMm2 * Math.abs(bar.yMm), 0) * 0.5 / 1e6;
     const myResistanceKnM = fyd * bars.reduce((sum, bar) => sum + bar.areaMm2 * Math.abs(bar.xMm), 0) * 0.5 / 1e6;
@@ -767,6 +769,9 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     (targetBarCount === undefined || candidate.count === targetBarCount)
     && (!effectiveOverride || candidate.groups.every(group => group.diameterMm === effectiveOverride.diameterMm)));
   const passingCandidates = constrainedCandidates.filter(isAcceptableCandidate);
+  const fallbackCandidates = constrainedCandidates.filter(candidate =>
+    candidate.groups.length > 0 && candidate.areaMm2 > 0 && candidate.areaMm2 <= maxSteel
+    && candidate.layoutValid && candidate.count >= candidate.minimumCount);
   const scoreCandidate = (candidate: typeof catalogCandidates[number]) => Math.max(
     axialKn / Math.max(candidate.axialResistanceKn, 1e-9),
     candidate.interactionRatio,
@@ -778,7 +783,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   );
   let selectedBars = effectiveOverride && overrideCount
     ? candidateFor(effectiveOverride.diameterMm, effectiveOverride.diameterMm, targetBarCount ?? overrideCount)
-    : passingCandidates[0] ?? [...constrainedCandidates].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || compareCandidates(a, b))[0] ?? candidateFor(longitudinalDiameters[0], longitudinalDiameters[0], targetBarCount ?? minimumCount);
+    : passingCandidates[0] ?? [...(fallbackCandidates.length ? fallbackCandidates : constrainedCandidates.filter(candidate => candidate.areaMm2 > 0 && candidate.areaMm2 <= maxSteel))].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || compareCandidates(a, b))[0] ?? candidateFor(longitudinalDiameters[0], longitudinalDiameters[0], targetBarCount ?? minimumCount);
   const rejectionReason = (candidate: typeof catalogCandidates[number]) => candidate.areaMm2 < minSteel
     ? `As=${(candidate.areaMm2 / 100).toFixed(2)} cm² < As,min=${(minSteel / 100).toFixed(2)} cm²`
     : candidate.areaMm2 > maxSteel ? `As>${(maxSteel / 100).toFixed(2)} cm² maximal`
@@ -791,7 +796,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     .slice(0, 5)
     .map(candidate => `${candidate.groups.map(group => `${group.count}HA${group.diameterMm}`).join("+")} (${(candidate.areaMm2 / 100).toFixed(2)} cm²) écarté : ${rejectionReason(candidate)}`);
   let baelIsolatedEquilibrium: ReturnType<typeof solveBAELIsolatedColumnEquilibrium> | null = null;
-  if (isBael && !a43WithinDomain && baelSecondX && baelSecondY && basis.fckMpa <= 60) {
+  if (isBael && !a43WithinDomain && axialKn > 0 && basis.fckMpa <= 60) {
     const solveCandidate = (candidate: typeof selectedBars) => solveBAELIsolatedColumnEquilibrium({
       shape, widthMm: width, depthMm: height, memberLengthMm: length,
       bucklingLengthMm: demand.bucklingLengthMm ?? length,
@@ -831,9 +836,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const interaction = baelEquilibriumUtilization ?? (axialKn / Math.max(axialResistance, 1e-9)
     + interactionMomentX / Math.max(mxResistance, 1e-9)
     + interactionMomentY / Math.max(myResistance, 1e-9));
-  const requiredAsX = interactionMomentX * asProvided / Math.max(mxResistance, 1e-9);
-  const requiredAsY = interactionMomentY * asProvided / Math.max(myResistance, 1e-9);
-  const longitudinalRequiredAreaMm2 = Math.max(minSteel, asTheoreticalMm2, requiredAsX, requiredAsY);
+  const longitudinalRequiredAreaMm2 = Math.max(minSteel, asTheoreticalMm2);
   const tieDiameter = selectedBars.tieDiameterMm;
   const tieSpacingLimitMm = isBael ? baelMaximumColumnTieSpacingMm(width, height, diameter) : basis.maxLinkSpacingMm;
   const tieCount = Math.ceil(length / Math.max(tieSpacingLimitMm, 1)) + 1;
@@ -842,12 +845,12 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     ? Math.PI * Math.max(0, width - 2 * (basis.coverMm + tieDiameter / 2)) / 1000
     : 2 * (Math.max(0, width - 2 * basis.coverMm - tieDiameter) + Math.max(0, height - 2 * basis.coverMm - tieDiameter)) / 1000;
   const interactionCheckLabel = isBael
-    ? baelEquilibriumUtilization !== null ? "Résistance de section BAEL · compatibilité A.4.4" : "Interaction N–Mx–My · enveloppe de pré-étude"
+    ? baelEquilibriumUtilization !== null ? "Résistance de section BAEL · compatibilité A.4.4" : baelCenteredCompressionFormula ? "Compression centrée BAEL · résistance avec α" : "Interaction N–Mx–My · enveloppe de pré-étude"
     : "Interaction N–Mx–My simplifiée";
   const interactionCheckFormula = isBael
     ? baelEquilibriumUtilization !== null
       ? `Équilibre plan de déformations par fibres BAEL; Uε=${interaction.toFixed(3)}≤1; moments après second ordre Mx=${interactionMomentX.toFixed(2)}, My=${interactionMomentY.toFixed(2)} kN·m.`
-      : `Enveloppe linéaire de pré-étude; moments après imperfections: Mx,Ed=${interactionMomentX.toFixed(2)} kN·m, My,Ed=${interactionMomentY.toFixed(2)} kN·m.`
+      : baelCenteredCompressionFormula ? `Compression centrée: NEd/NRd=${interaction.toFixed(3)}≤1; stabilité prise en compte par α=${baelCompression?.alpha.toFixed(3)}; aucun moment de flexion transmis.` : `Enveloppe linéaire de pré-étude; moments après imperfections: Mx,Ed=${interactionMomentX.toFixed(2)} kN·m, My,Ed=${interactionMomentY.toFixed(2)} kN·m.`
     : "NEd/NRd + |Mx|/MRdx + |My|/MRdy ≤ 1 ; enveloppe linéaire non normative";
   const reinforcement: RebarProposal[] = [
     ...selectedBars.groups.map((group, index) => ({
@@ -874,7 +877,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   }
   const checks: RCCheck[] = [
     check("column-axial", "Compression axiale", axialKn, axialResistance, "kN", isBael
-      ? "Nu ≤ α·[Br·fc28/(0,9·γb) + As·fe/γs] — BAEL 91 mod. 99"
+      ? baelCenteredCompressionFormula ? "Nu ≤ α·[Br·fc28/(0,9·γb) + As·fe/γs] — compression centrée BAEL 91 mod. 99" : "Part axiale de la résistance; les moments et la stabilité sont contrôlés séparément dans N–Mx–My."
       : "NRd≈0,8·(Ac−As)·fcd+As·fyd", combinationId, combinationName),
     check("column-interaction", interactionCheckLabel, interaction, 1, "—", interactionCheckFormula, combinationId, combinationName),
     check("column-steel-axial", "Armatures théoriques · compression", asTheoreticalMm2, asProvided, "mm²", isBael
@@ -888,7 +891,9 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   ];
   if (isBael) {
     if (baelCompression && !baelCompression.withinAlphaRange) checks.push(check("column-bael-alpha-range", "Domaine d’élancement BAEL pour α", baelCompression.slenderness, 70, "—", "α(λ) BAEL tabulé jusqu’à λ=70; vérifier la stabilité globale et réduire l’élancement.", combinationId, combinationName));
-    if (baelSecondX && baelSecondY) {
+    if (baelCenteredCompressionFormula && baelCompression) {
+      checks.push(check("column-second-order", "Stabilité BAEL · compression centrée", baelCompression.slenderness, 70, "—", `Compression centrée: le flambement est pris en compte par α=${baelCompression.alpha.toFixed(3)} (λ=${baelCompression.slenderness.toFixed(2)}); aucun moment artificiel A.4.3,5 n’est ajouté lorsque Mx=My=0.`, combinationId, combinationName));
+    } else if (baelSecondX && baelSecondY) {
       const secondOrderFormula = `Domaine A.4.3,5 : f/h < max(15,20·e1/h) dans les deux axes; α=1, φ=2; ea=${baelSecondX.additionalEccentricityMm.toFixed(1)} mm; e2x=${baelSecondX.secondOrderEccentricityMm.toFixed(1)} mm, e2y=${baelSecondY.secondOrderEccentricityMm.toFixed(1)} mm; M1x=${momentX.toFixed(2)} kN·m, M1y=${momentY.toFixed(2)} kN·m.`;
       if (baelDomainRatio < 1) {
         checks.push(check("column-second-order", "Second ordre BAEL · A.4.3,5", baelDomainRatio, 1, "—", `${secondOrderFormula} Mx,Ed=${designMomentX.toFixed(2)} kN·m, My,Ed=${designMomentY.toFixed(2)} kN·m.`, combinationId, combinationName));

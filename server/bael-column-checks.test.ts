@@ -104,8 +104,8 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     const design = result.elements[0];
     const secondOrder = design.checks.find(item => item.id === "column-second-order");
     expect(secondOrder?.status).toBe("satisfaisant");
-    expect(secondOrder?.formula).toContain("Mx,Ed=");
-    expect(secondOrder?.formula).toContain("My,Ed=");
+    expect(secondOrder?.label).toContain("compression centrée");
+    expect(secondOrder?.formula).toContain("α=");
     expect(design.checks.find(item => item.id === "column-bael-detailing")?.status).toBe("satisfaisant");
     expect(design.checks.some(item => item.id === "column-anchorage-length")).toBe(false);
     expect(design.checks.some(item => item.status === "à vérifier")).toBe(false);
@@ -118,34 +118,64 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(ties?.lengthPerBarM).toBeGreaterThan(0);
   });
 
-  it("retient les aires du tableau HA et rejette 4HA10 sous As,min avant de retenir 4HA12", () => {
+  it("dimensionne le cas BAEL 20×30 centré: As,req=max(As,th; As,min), puis retient 4HA12", () => {
     const result = designReinforcedConcrete({
       basis: baelBasis(),
-      members: [{ id: "P-EX", type: "column", combinationId: "ELU", combinationName: "ELU catalogue", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 1000, axialKn: 50, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
+      members: [{ id: "P-EX", type: "column", combinationId: "ELU", combinationName: "ELU catalogue", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 700, axialKn: 776, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
       slabs: [],
     });
     const design = result.elements[0];
     const bars = design.reinforcement.filter(item => item.id === "P-EX:longitudinal" || item.id.startsWith("P-EX:longitudinal:"));
     expect(design.columnReport?.AsMinimumMm2).toBe(400);
     expect(design.columnReport?.baelCompression?.reducedConcreteAreaMm2).toBe(50_400);
+    expect(design.columnReport?.baelCompression?.alpha).toBeCloseTo(0.8301, 3);
+    expect(design.columnReport?.AsTheoreticalMm2).toBeLessThan(400);
+    expect(design.columnReport?.AsRequiredMm2).toBe(400);
     expect(bars.map(item => `${item.count}HA${item.diameterMm}`)).toEqual(["4HA12"]);
     expect(bars.reduce((sum, item) => sum + item.areaMm2, 0)).toBeCloseTo(452, 8);
-    expect(design.columnReport?.optimizationTrace.some(item => item.includes("4HA10") && item.includes("As,min"))).toBe(true);
+    expect(design.checks.find(item => item.id === "column-axial")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
   });
 
-  it("retient une disposition symétrique mixte BAEL avec épingles lorsque les efforts l’exigent", () => {
+  it("ne conclut pas en compression centrée BAEL sans effort normal positif", () => {
     const result = designReinforcedConcrete({
       basis: baelBasis(),
-      members: [{ id: "P-BAEL-MIX", type: "column", combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 1000, axialKn: 200, shearKn: 0, momentKnM: 15, momentXKnM: 15, momentYKnM: 0 }],
+      members: [{ id: "P-N0", type: "column", combinationId: "ELU", combinationName: "ELU nul", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 700, axialKn: 0, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
+      slabs: [],
+    });
+    const secondOrder = result.elements[0].checks.find(item => item.id === "column-second-order");
+    expect(secondOrder?.status).not.toBe("satisfaisant");
+    expect(secondOrder?.formula).toContain("effort normal de compression positif");
+  });
+
+  it("accepte 4HA12+2HA8 si la somme des aires HA tabulées couvre As requise", () => {
+    const result = designReinforcedConcrete({
+      basis: { ...baelBasis(), availableBarDiametersMm: [8, 12] },
+      members: [{ id: "P-MIX-6", type: "column", combinationId: "ELU", combinationName: "ELU mixte", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 700, axialKn: 776, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
+      slabs: [],
+      columnBarCountOverrides: { "P-MIX-6": 6 },
+    });
+    const design = result.elements[0];
+    const bars = design.reinforcement.filter(item => item.id === "P-MIX-6:longitudinal" || item.id.startsWith("P-MIX-6:longitudinal:"));
+    expect(bars.map(item => `${item.count}HA${item.diameterMm}`)).toEqual(["4HA12", "2HA8"]);
+    expect(bars.reduce((sum, item) => sum + item.areaMm2, 0)).toBeCloseTo(552, 8);
+    expect(bars.reduce((sum, item) => sum + item.requiredAreaMm2, 0)).toBe(400);
+    expect(bars.every(item => item.barPositionsMm?.length === item.count)).toBe(true);
+    expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-steel-max")?.status).toBe("satisfaisant");
+    expect(design.reinforcement.some(item => item.id === "P-MIX-6:cross-ties" && !!item.tieSegmentsMm?.length)).toBe(true);
+  });
+
+  it("ne présente pas comme retenue une armature automatique au-delà de 5 % d’acier BAEL", () => {
+    const result = designReinforcedConcrete({
+      basis: baelBasis(),
+      members: [{ id: "P-LIMIT", type: "column", combinationId: "ELU", combinationName: "ELU BAEL", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, bucklingLengthMm: 700, axialKn: 4000, shearKn: 0, momentKnM: 0, momentXKnM: 0, momentYKnM: 0 }],
       slabs: [],
     });
     const design = result.elements[0];
-    const bars = design.reinforcement.filter(item => item.id === "P-BAEL-MIX:longitudinal" || item.id.startsWith("P-BAEL-MIX:longitudinal:"));
-    expect(bars.length).toBeGreaterThan(1);
-    expect(new Set(bars.map(item => item.diameterMm)).size).toBeGreaterThan(1);
-    expect(bars.every(item => item.barPositionsMm?.length === item.count)).toBe(true);
-    expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
-    expect(design.reinforcement.some(item => item.id === "P-BAEL-MIX:cross-ties" && !!item.tieSegmentsMm?.length)).toBe(true);
+    expect(design.columnReport?.AsProvidedMm2).toBeLessThanOrEqual(3000);
+    expect(design.checks.find(item => item.id === "column-steel-max")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-axial")?.status).toBe("non satisfaisant");
   });
 
   it("propose une augmentation B/H qui satisfait l’interaction biaxiale avec les armatures retenues", () => {

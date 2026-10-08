@@ -119,7 +119,7 @@ import { runProfessionalAnalysis } from "@shared/professional-analysis";
 import { analyzeCantileverRectangularPlate, analyzeOneWayOrthotropicRectangularPlate, analyzeSimplySupportedRectangularPlate, checkRectangularSurfaceEdgeSupports, meshRectangularSurface, SURFACE_ANALYSIS_SCHEMA_VERSION, type RectangularOpening, type RectangularSurfaceEdge, type SurfaceAnalysis } from "@shared/surface-analysis";
 import { resolveFloorPlateStiffness } from "@shared/plate-stiffness";
 import { deriveStoryMassesFromCumulativeLoads, generateClimateActions, parseClimateSpectrum, type ClimateActionInput, type ClimateActionsResult, type ClimateFieldSource } from "@shared/climate-actions";
-import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, proposeColumnSectionIncreases, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RCStairDemand } from "@shared/rc-design";
+import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RCStairDemand } from "@shared/rc-design";
 import { formatHACatalogArea } from "@shared/ha-bar-areas";
 import { calculateStairPermanentLoad } from "@shared/stair-load";
 import { mapFoundationReactions } from "@shared/foundation-reaction";
@@ -3259,28 +3259,6 @@ export default function BuildingCreateFlow({
     setColumnVerificationSelectedBarCount(count ?? null);
     setColumnVerificationGeometry(current => current ? { ...current, dirty: true } : current);
   };
-  const columnSectionIncreaseProposals = useMemo(() => {
-    if (columnVerificationState !== "failed" || unsupportedColumnBarCheck || !rcDesignResult || !selectedColumnVerificationDesign || !selectedAnalysisRow || !columnVerificationGeometry) return [];
-    const member = columnVerificationMemberDemands.find(item => item.id === selectedAnalysisRow.id && item.type === "column");
-    if (!member) return [];
-    const basis = {
-      schemaVersion: 1 as const,
-      ...rcDesignResult.materialBasis,
-      availableBarDiametersMm: columnVerificationSelectedBarDiameters.length
-        ? rcDesignResult.materialBasis.availableBarDiametersMm.filter(diameter => columnVerificationSelectedBarDiameters.includes(diameter))
-        : rcDesignResult.materialBasis.availableBarDiametersMm,
-    };
-    const factors = loadProgram.combinations.find(item => item.id === solverCombinationId)?.caseFactors ?? {};
-    return proposeColumnSectionIncreases({
-      basis,
-      member,
-      overrides: {},
-      columnBarCountOverride: columnVerificationSelectedBarCount ?? undefined,
-      selfWeightIncluded: columnVerificationGeometry.selfWeight,
-      permanentLoadFactor: factors["case:G"] ?? 1,
-      maxIncreaseMm: 500,
-    });
-  }, [columnVerificationState, unsupportedColumnBarCheck, rcDesignResult, selectedColumnVerificationDesign, selectedAnalysisRow, columnVerificationGeometry, columnVerificationMemberDemands, columnVerificationSelectedBarDiameters, columnVerificationSelectedBarCount, loadProgram.combinations, solverCombinationId]);
   const columnVerificationConfigurationKey = JSON.stringify([
     selected?.id, selectedAnalysisRow?.levelId, selectedAnalysisRow?.id,
     columnVerificationGeometry?.shape, columnVerificationGeometry?.widthM, columnVerificationGeometry?.depthM,
@@ -3294,7 +3272,7 @@ export default function BuildingCreateFlow({
     if (lastColumnVerificationNotice.current === noticeKey) return;
     lastColumnVerificationNotice.current = noticeKey;
     if (columnVerificationState === "passed") toast.success(`Section dimensionnée pour ${selectedAnalysisRow?.id ?? "le poteau"}.`);
-    else if (columnVerificationState === "failed") toast.error(unsupportedColumnBarCheck ? "Diamètre longitudinal non admis par le moteur pour un poteau." : baelSecondOrderDomainCheck?.status === "non satisfaisant" ? "La stabilité BAEL A.4.4 n’est pas satisfaite : essayez les propositions A/B, puis revoyez f ou les appuis si nécessaire." : `Section ou armatures insuffisantes : ${columnVerificationFailedChecks.map(item => item.label).join(", ") || "contrôle non satisfait"}.`);
+    else if (columnVerificationState === "failed") toast.error(unsupportedColumnBarCheck ? "Diamètre longitudinal non admis par le moteur pour un poteau." : baelSecondOrderDomainCheck?.status === "non satisfaisant" ? "La stabilité BAEL A.4.4 n’est pas satisfaite : augmentez A/B manuellement ou revoyez f et les appuis." : `Section ou armatures insuffisantes : ${columnVerificationFailedChecks.map(item => item.label).join(", ") || "contrôle non satisfait"}.`);
     else toast.info(columnVerificationFeedback ?? selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? "Vérification bloquée : données ou contrôle normatif manquant.");
   }, [columnVerificationRequested, columnVerificationState, selectedAnalysisRow?.id, unsupportedColumnBarCheck, baelSecondOrderDomainCheck, columnVerificationFailedChecks, columnVerificationFeedback, selectedColumnVerificationDesign]);
   const runColumnVerification = () => {
@@ -3334,17 +3312,6 @@ export default function BuildingCreateFlow({
     }
     setColumnVerificationGeometry(current => current ? { ...current, dirty: false } : current);
     setReinforcementPlanRequestToken(token => token + 1);
-  };
-  const applyColumnSectionProposal = (dimensions: number[]) => {
-    if (!columnVerificationGeometry || dimensions.length < 2) return;
-    setColumnVerificationGeometry(current => current ? {
-      ...current,
-      ...(current.shape === "circular"
-        ? { diameterM: (dimensions[0] / 1000).toFixed(3) }
-        : { widthM: (dimensions[0] / 1000).toFixed(3), depthM: (dimensions[1] / 1000).toFixed(3) }),
-      dirty: true,
-    } : current);
-    runColumnVerification();
   };
   const saveColumnVerificationResult = () => {
     if (columnVerificationState !== "passed" || !selected || !selectedAnalysisRow || !columnVerificationGeometry) {
@@ -6420,23 +6387,9 @@ export default function BuildingCreateFlow({
                                 </div>}
                               </section>
                               <section aria-live="polite" className={`rounded-xl border p-3 ${columnVerificationState === "passed" ? "border-emerald-700 bg-[#27883d] text-white" : columnVerificationState === "failed" ? "border-red-700 bg-[#c73535] text-white" : "border-orange-400 bg-[#ed7900] text-white"}`}>
-                                <div className="flex items-start justify-between gap-3"><div><h3 className="text-[13px] font-bold">{columnVerificationState === "passed" ? "DIMENSIONNEMENT DE SECTION SATISFAISANT" : columnVerificationState === "failed" ? unsupportedColumnBarCheck ? "DIAMÈTRE HA NON ADMIS" : "SECTION INSUFFISANTE" : columnVerificationState === "running" ? "VÉRIFICATION EN COURS" : columnVerificationState === "stale" ? "SECTION MODIFIÉE · À REVÉRIFIER" : columnVerificationState === "blocked" ? "VÉRIFICATION BLOQUÉE" : "VÉRIFICATION À LANCER"}</h3><p className="mt-1 text-[10px] leading-4 text-white/90">{columnVerificationFeedback ?? (columnVerificationState === "passed" ? "La section et les armatures sont dimensionnées." : columnVerificationState === "failed" ? "Au moins un contrôle de résistance ou de disposition n’est pas satisfait. Consultez les contrôles et recommandations ci-dessous." : columnVerificationState === "running" ? "Le moteur recherche une disposition dans le catalogue HA sélectionné…" : columnVerificationState === "stale" ? "La géométrie, les diamètres HA ou leur nombre ont changé. Relancez la vérification pour évaluer cette variante." : columnVerificationState === "blocked" ? (selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? rcDesignResult?.errors[0] ?? "Les efforts, le catalogue ou les paramètres nécessaires ne permettent pas de conclure.") : "Lancez le calcul pour comparer les charges et les moments à la section du poteau.")}</p></div><span className="rounded-full bg-white/20 px-2 py-1 text-[9px] font-bold">{columnVerificationState === "passed" ? "OK · PRÉ-ÉTUDE" : columnVerificationState === "failed" ? "NON SATISFAIT" : columnVerificationState === "running" ? "CALCUL" : "EN ATTENTE"}</span></div>
+                                <div className="flex items-start justify-between gap-3"><div><h3 className="text-[13px] font-bold">{columnVerificationState === "passed" ? "DIMENSIONNEMENT DE SECTION SATISFAISANT" : columnVerificationState === "failed" ? unsupportedColumnBarCheck ? "DIAMÈTRE HA NON ADMIS" : "SECTION INSUFFISANTE" : columnVerificationState === "running" ? "VÉRIFICATION EN COURS" : columnVerificationState === "stale" ? "SECTION MODIFIÉE · À REVÉRIFIER" : columnVerificationState === "blocked" ? "VÉRIFICATION BLOQUÉE" : "VÉRIFICATION À LANCER"}</h3><p className="mt-1 text-[10px] leading-4 text-white/90">{columnVerificationFeedback ?? (columnVerificationState === "passed" ? "La section et les armatures sont dimensionnées." : columnVerificationState === "failed" ? "Au moins un contrôle de résistance ou de disposition n’est pas satisfait. Consultez les contrôles ci-dessous." : columnVerificationState === "running" ? "Le moteur recherche une disposition dans le catalogue HA sélectionné…" : columnVerificationState === "stale" ? "La géométrie, les diamètres HA ou leur nombre ont changé. Relancez la vérification pour évaluer cette variante." : columnVerificationState === "blocked" ? (selectedColumnVerificationDesign?.checks.find(item => item.status === "bloqué")?.formula ?? rcDesignResult?.errors[0] ?? "Les efforts, le catalogue ou les paramètres nécessaires ne permettent pas de conclure.") : "Lancez le calcul pour comparer les charges et les moments à la section du poteau.")}</p></div><span className="rounded-full bg-white/20 px-2 py-1 text-[9px] font-bold">{columnVerificationState === "passed" ? "OK · PRÉ-ÉTUDE" : columnVerificationState === "failed" ? "NON SATISFAIT" : columnVerificationState === "running" ? "CALCUL" : "EN ATTENTE"}</span></div>
                                 {columnVerificationState === "blocked" && selectedColumnVerificationDesign && <div className="mt-2.5 space-y-1.5 border-t border-white/25 pt-2.5 text-[10px]">{columnVerificationCoreChecks.filter(item => item.status === "bloqué").map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>{item.label}</b><small className="mt-0.5 block">{item.formula}</small></div>)}</div>}
                               {(columnVerificationState === "passed" || columnVerificationState === "failed") && selectedColumnVerificationDesign && <div className="mt-2.5 space-y-1.5 border-t border-white/25 pt-2.5 text-[11px]"><div className="flex justify-between gap-2"><span>Effort axial de calcul</span><b>{(columnVerificationMemberDemands.find(demand => demand.id === selectedAnalysisRow.id)?.axialKn ?? 0).toFixed(1)} kN</b></div><div className="flex justify-between gap-2"><span>Mx / My utilisés</span><b>{(selectedColumnSolvedMoments?.momentXKnM ?? selectedColumnSolvedMoments?.momentKnM ?? 0).toFixed(2)} / {(selectedColumnSolvedMoments?.momentYKnM ?? 0).toFixed(2)} kN·m</b></div>{selectedColumnVerificationDesign.reinforcement.filter(item => item.id.startsWith(`${selectedAnalysisRow?.id}:longitudinal`) || item.id.endsWith(":ties") || item.id.endsWith(":cross-ties")).map(item => { const isLongitudinal = item.id.startsWith(`${selectedAnalysisRow?.id}:longitudinal`); return <div key={item.id} className="flex justify-between gap-2"><span>{isLongitudinal ? "Armatures longitudinales" : item.id.endsWith(":cross-ties") ? "Épingles de maintien" : "Cadres transversaux"}</span><b className="text-right">{isLongitudinal ? `${item.count} HA ${item.diameterMm} · ${formatHACatalogArea(item.count, item.diameterMm)} cm²` : item.label.replace(/^Cadres[^·]*· /, "")}</b></div>; })}{selectedColumnVerificationDesign.columnReport?.baelCompression && <p className="rounded-md bg-black/10 px-2 py-1 text-[9px] leading-4">BAEL : Imin={selectedColumnVerificationDesign.columnReport.baelCompression.minimumInertiaMm4.toExponential(2)} mm⁴ · i={selectedColumnVerificationDesign.columnReport.baelCompression.radiusGyrationMm.toFixed(1)} mm · Lf={selectedColumnVerificationDesign.columnReport.bucklingLengthMm.toFixed(0)} mm · λ={selectedColumnVerificationDesign.columnReport.baelCompression.slenderness.toFixed(1)} · α={selectedColumnVerificationDesign.columnReport.baelCompression.alpha.toFixed(3)} · Br={selectedColumnVerificationDesign.columnReport.baelCompression.reducedConcreteAreaMm2.toFixed(0)} mm² · As th/min/req={selectedColumnVerificationDesign.columnReport.AsTheoreticalMm2.toFixed(0)}/{selectedColumnVerificationDesign.columnReport.AsMinimumMm2.toFixed(0)}/{selectedColumnVerificationDesign.columnReport.AsRequiredMm2.toFixed(0)} mm²</p>}{selectedColumnVerificationDesign.columnReport?.optimizationTrace.map((reason, index) => <p key={`candidate-${index}`} className="rounded-md bg-black/10 px-2 py-1 text-[9px] leading-4">{reason}</p>)}{baelSecondOrderDomainCheck && baelColumnChecksActive && <p className="rounded-md bg-black/10 px-2 py-1 text-[9px] leading-4">{baelSecondOrderDomainCheck.formula}</p>}{selectedColumnVerificationDesign.checks.filter(item => item.id === "column-bael-detailing").map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>{item.label} · {item.status}</b><small className="mt-0.5 block">{item.status === "satisfaisant" ? "A.8.1 calculé : taux minimal/maximal, répartition périphérique et espacement des cadres." : item.status === "non satisfaisant" ? "Au moins une disposition BAEL calculée (acier, pas ou espacement) est dépassée." : "Aucune conclusion avec les données disponibles."}</small></div>)}{columnVerificationFailedChecks.map(item => <div key={item.id} className="rounded-md bg-black/10 px-2 py-1"><b>À corriger · {item.label}{item.utilization !== null ? ` (${(item.utilization * 100).toFixed(0)} %)` : ""}</b><small className="mt-0.5 block">{item.id === "column-axial" ? "Augmenter les dimensions A/B, améliorer la classe du béton après validation, ou réduire l’effort transmis." : item.id === "column-interaction" ? "Augmenter A et/ou B, choisir un diamètre HA supérieur ou revoir l’agencement des barres." : item.id === "column-bar-spacing" ? "La disposition est trop serrée : augmenter la face de la section ou choisir moins de barres plus grosses." : item.id === "column-steel-max" ? "Le taux d’acier dépasse la limite déclarée : augmenter la section béton et recalculer." : item.id === "column-steel-min" ? "Augmenter les armatures longitudinales au minimum requis." : item.id === "column-second-order" ? (item.label.includes("A.4.4") ? `${item.formula} Augmenter A/B ou revoir la longueur efficace f et les appuis.` : "Vérifier le domaine de validité BAEL A.4.3,5 et les hypothèses du poteau.") : item.id === "column-bael-detailing" ? "Revoir la section, le diamètre HA, la répartition des barres ou le diamètre/pas des cadres selon A.8.1." : item.id === "column-tie-spacing" ? "Réduire le pas des cadres conformément à la limite calculée BAEL." : item.id === "column-bar-layout-count" ? "Ajouter des barres et les répartir régulièrement sur les faces/contour." : "Choisir un diamètre longitudinal admis par le catalogue du référentiel sélectionné."}</small></div>)}</div>}
-                              {columnVerificationState === "failed" && !unsupportedColumnBarCheck && <section className="rounded-xl border border-[#b8c9df] bg-[#f5f9ff] p-3 text-[#263b55]">
-                                <h3 className="text-[12px] font-bold">Propositions directes de section</h3>
-                                <p className="mt-1 text-[10px] leading-4">Calculées avec les efforts actuels (poutres incluses) et le ferraillage retenu; poids propre recalculé s’il est activé. Appliquer une option relance la vérification locale sans modifier le modèle. Après changement de section, relancez l’analyse globale avant validation finale.</p>
-                                {columnSectionIncreaseProposals.length ? <div className="mt-2 space-y-2">{columnSectionIncreaseProposals.map(proposal => {
-                                  const dimensions = proposal.proposedSection.dimensions;
-                                  const sectionLabel = columnVerificationGeometry.shape === "circular"
-                                    ? `D = ${(dimensions[0] / 1000).toFixed(2).replace(".", ",")} m`
-                                    : `A = ${(dimensions[0] / 1000).toFixed(2).replace(".", ",")} m · B = ${(dimensions[1] / 1000).toFixed(2).replace(".", ",")} m`;
-                                  return <div key={`${proposal.elementId}-${dimensions.join("x")}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#dce6f2] bg-white p-2">
-                                    <div><b className="text-[11px]">{sectionLabel}</b><p className="text-[9px] text-[#667085]">Interaction estimée : {(proposal.utilization * 100).toFixed(0)} %</p></div>
-                                    <button type="button" onClick={() => applyColumnSectionProposal(dimensions)} className="rounded-md bg-[#174e9e] px-3 py-2 text-[10px] font-semibold text-white">Appliquer et recalculer</button>
-                                  </div>;
-                                })}</div> : <p className="mt-2 rounded-lg bg-white p-2 text-[10px] leading-4">Aucune section conforme trouvée dans la plage testée (jusqu’à +0,50 m par dimension). Vérifiez les charges, le catalogue HA et la longueur efficace, ou augmentez davantage la section.</p>}
-                              </section>}
                               </section>
                               {selectedColumnVerificationDesign && <>
                                 <section aria-live="polite" className="rounded-xl border border-[#e1e5eb] bg-white p-3">
