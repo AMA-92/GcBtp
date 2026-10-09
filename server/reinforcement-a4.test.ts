@@ -33,7 +33,7 @@ const result = (element: RCElementDesign): RCDesignResult => ({
   materialBasis: {
     standard: "EN 1992-1-1", nationalAnnex: "", sourceReference: "", fckMpa: 25, fykMpa: 500,
     gammaC: 1.5, gammaS: 1.15, alphaCC: 0.85, coverMm: 30, minReinforcementRatio: 0.0015,
-    maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.6, bondStressMpa: 2.5,
+    maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.6,
     minClearSpacingMm: 20, maxLinkSpacingMm: 200, maxDeflectionRatio: 250, maxColumnSlenderness: 25,
     availableBarDiametersMm: [8,10,12,14,16,20,25,32], basisConfirmed: true,
   },

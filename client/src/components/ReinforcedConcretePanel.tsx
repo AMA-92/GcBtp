@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { formatAreaValuesMm2AndCm2 } from "@shared/area-units";
 import { designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis, type RCDesignOverrides, type RCElementDesign, type RCDesignResult, type RCMemberDemand, type RCSlabDemand, type RCFootingDemand, type RCStairDemand, type RebarOverride, type RCOptimizationProposal } from "@shared/rc-design";
 import { designWall, type WallDemand } from "@shared/wall-design";
 import { downloadReinforcementA4Pdf, downloadReinforcementGroupA4Pdf } from "@shared/local-pdf";
@@ -22,7 +23,6 @@ type Draft = {
   minReinforcementPercent: string;
   maxReinforcementPercent: string;
   concreteShearStressLimitMpa: string;
-  bondStressMpa: string;
   minClearSpacingMm: string;
   maxLinkSpacingMm: string;
   maxDeflectionRatio: string;
@@ -62,12 +62,11 @@ const createDraft = (standard: string, projectConcreteFckMpa?: number, projectRe
   minReinforcementPercent: isBael ? "0.20" : "0.13",
   maxReinforcementPercent: isBael ? "5.00" : "4.00",
   concreteShearStressLimitMpa: "0.55",
-  bondStressMpa: isBael ? String((0.6 * 1.5 ** 2 * (0.6 + 0.06 * concrete.fck)).toFixed(3)) : "2.25",
   minClearSpacingMm: "20",
   maxLinkSpacingMm: isBael ? "400" : "300",
   maxDeflectionRatio: "250",
   maxColumnSlenderness: "15",
-  availableBarDiametersMm: "8, 10, 12, 14, 16, 20, 25",
+  availableBarDiametersMm: "8, 10, 12, 14, 16, 20, 25, 32, 40",
   maxCrackWidthMm: "0.30",
   seismicDetailingEnabled: false,
   seismicDuctilityClass: "DCM",
@@ -93,10 +92,11 @@ type Props = {
   optimizedElementIds?: Set<string>;
   runRequestToken?: number;
   runRequestElementId?: string | null;
-  runRequestBarDiameterMm?: number | null;
+  runRequestBarDiametersMm?: number[] | null;
+  runRequestBarCount?: number | null;
 };
 
-export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set(), runRequestToken = 0, runRequestElementId = null, runRequestBarDiameterMm = null }: Props) {
+export default function ReinforcedConcretePanel({ projectId, projectNorm, projectConcreteFckMpa, projectRebarFykMpa, members, slabs, foundations = [], stairs = [], walls = [], sourceWarnings, onResultChange, onApplySection, optimizedElementIds = new Set(), runRequestToken = 0, runRequestElementId = null, runRequestBarDiametersMm = null, runRequestBarCount = null }: Props) {
   const [draft, setDraft] = useState<Draft>(() => createDraft(projectNorm, projectConcreteFckMpa, projectRebarFykMpa));
   const [overrides, setOverrides] = useState<RCDesignOverrides>({});
   const [result, setResult] = useState<RCDesignResult | null>(null);
@@ -116,17 +116,19 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     try {
       const saved = sessionStorage.getItem(`gcbtp-rc-design:${projectId}`);
       const parsed = saved ? JSON.parse(saved) as { draft?: Partial<Draft>; overrides?: RCDesignOverrides } : {};
-      const savedDraft = parsed.draft ?? {};
+      const savedDraft = { ...(parsed.draft ?? {}) } as Partial<Draft> & Record<string, unknown>;
+      delete savedDraft.anchorageBondCondition;
+      delete savedDraft.anchorageAlphaProduct;
+      delete savedDraft.bondStressMpa;
       const merged: Draft = { ...base, ...savedDraft, standard: base.standard };
       if (resolveRCStandardProfile(base.standard).family === "bael-91-99" && savedDraft.basisConfirmed !== true) {
         if (savedDraft.minReinforcementPercent === "0.13") merged.minReinforcementPercent = base.minReinforcementPercent;
         if (savedDraft.maxReinforcementPercent === "4.00") merged.maxReinforcementPercent = base.maxReinforcementPercent;
-        if (savedDraft.bondStressMpa === "2.25") merged.bondStressMpa = base.bondStressMpa;
         if (savedDraft.maxLinkSpacingMm === "300") merged.maxLinkSpacingMm = base.maxLinkSpacingMm;
       }
-      if (savedDraft.availableBarDiametersMm === "8, 10, 12, 16, 20, 25") merged.availableBarDiametersMm = base.availableBarDiametersMm;
+      if (["8, 10, 12, 16, 20, 25", "8, 10, 12, 14, 16, 20, 25"].includes(savedDraft.availableBarDiametersMm ?? "")) merged.availableBarDiametersMm = base.availableBarDiametersMm;
       if (savedDraft.standard && !sameRCStandardFamily(savedDraft.standard, base.standard)) {
-        (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'bondStressMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness', 'maxCrackWidthMm', 'seismicDetailingEnabled', 'seismicDuctilityClass'] as const).forEach(key => { merged[key] = base[key] as never; });
+        (['nationalAnnex', 'sourceReference', 'basisConfirmed', 'gammaC', 'gammaS', 'alphaCC', 'coverMm', 'minReinforcementPercent', 'maxReinforcementPercent', 'concreteShearStressLimitMpa', 'minClearSpacingMm', 'maxLinkSpacingMm', 'maxDeflectionRatio', 'maxColumnSlenderness', 'maxCrackWidthMm', 'seismicDetailingEnabled', 'seismicDuctilityClass'] as const).forEach(key => { merged[key] = base[key] as never; });
       }
       // Les anciennes sessions contenaient des champs vides : reprendre le catalogue
       // plutôt que conserver silencieusement une base de calcul incomplète.
@@ -174,7 +176,6 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     minReinforcementRatio: numeric(draft.minReinforcementPercent) / 100,
     maxReinforcementRatio: numeric(draft.maxReinforcementPercent) / 100,
     concreteShearStressLimitMpa: numeric(draft.concreteShearStressLimitMpa),
-    bondStressMpa: numeric(draft.bondStressMpa),
     minClearSpacingMm: numeric(draft.minClearSpacingMm),
     maxLinkSpacingMm: numeric(draft.maxLinkSpacingMm),
     maxDeflectionRatio: numeric(draft.maxDeflectionRatio),
@@ -197,14 +198,15 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
   };
   const runFocused = (elementId?: string) => {
     const focused = elementId ? members.filter(member => member.id === elementId) : members;
-    const selectedBasis = elementId && runRequestBarDiameterMm !== null
-      ? { ...basis, availableBarDiametersMm: basis.availableBarDiametersMm.filter(diameter => diameter === runRequestBarDiameterMm) }
+    const selectedBasis = elementId && runRequestBarDiametersMm?.length
+      ? { ...basis, availableBarDiametersMm: basis.availableBarDiametersMm.filter(diameter => runRequestBarDiametersMm.includes(diameter)) }
       : basis;
-    const next = designReinforcedConcrete({ basis: selectedBasis, members: focused, slabs: elementId ? [] : slabs, foundations: elementId ? [] : foundations, stairs: elementId ? [] : stairs, overrides });
-    if (elementId && runRequestBarDiameterMm !== null) {
+    const next = designReinforcedConcrete({ basis: selectedBasis, members: focused, slabs: elementId ? [] : slabs, foundations: elementId ? [] : foundations, stairs: elementId ? [] : stairs, overrides, columnBarCountOverrides: elementId && runRequestBarCount !== null ? { [elementId]: runRequestBarCount } : undefined });
+    if (elementId && runRequestBarDiametersMm?.length) {
       next.materialBasis = { ...basis } as Omit<RCDesignBasis, "schemaVersion">;
-      next.warnings.push(`Catalogue longitudinal restreint à HA ${runRequestBarDiameterMm} pour cette vérification.`);
+      next.warnings.push(`Diamètres HA retenus pour cette vérification : ${runRequestBarDiametersMm.join(", ")}.`);
     }
+    if (elementId && runRequestBarCount !== null) next.warnings.push(`Nombre longitudinal imposé pour cette vérification : ${runRequestBarCount} barres.`);
     if (!validateRCDesignBasis(selectedBasis).length) {
       const wallDesigns = elementId ? [] : walls.map(wall => designWall(wall, selectedBasis, overrides));
       next.elements.push(...wallDesigns);
@@ -301,7 +303,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
     ["fckMpa", "fck béton", "MPa"], ["fykMpa", "fyk acier", "MPa"],
     ["gammaC", "γc", "—"], ["gammaS", "γs", "—"], ["alphaCC", resolveRCStandardProfile(projectNorm).family === "bael-91-99" ? "Facteur béton d’étude" : "αcc", "—"],
     ["coverMm", "Enrobage nominal", "mm"], ["minReinforcementPercent", "ρ armatures min.", "%"], ["maxReinforcementPercent", "ρ armatures max.", "%"],
-    ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"], ["bondStressMpa", "Adhérence τbd déclarée", "MPa"],
+    ["concreteShearStressLimitMpa", "τRd,c déclaré", "MPa"],
     ["minClearSpacingMm", "Espacement libre min.", "mm"], ["maxLinkSpacingMm", "Espacement cadres max.", "mm"],
     ["maxDeflectionRatio", "Limite de flèche L/", "—"], ["maxColumnSlenderness", "Limite d’élancement λ", "—"], ["maxCrackWidthMm", "wk,max", "mm"],
   ];
@@ -312,7 +314,7 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
       <div><b className="text-[12px]">Béton armé · dimensionnement et ferraillage</b><p className="mt-1 text-[9px] text-[#765f36]">Dalles, poutres, poteaux, longrines, voiles, semelles et volées d’escalier sont traités après résolution des efforts ou de leur pré-étude dédiée. Les sorties ne sont pas une note réglementaire ni une autorisation d’exécution.</p></div>
       <span className="shrink-0 rounded bg-[#f9e7c4] px-2 py-1 font-semibold">Non réglementaire</span>
     </div>
-    <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">fck et fyk sont proposés depuis les catalogues matériaux du projet ; vérifiez les certificats et la norme contractuelle. Coefficients code, annexes, enrobage, adhérence et détails restent à renseigner/valider ; les valeurs nominales catalogue ne constituent pas une vérification normative.</div>
+    <div className="rounded border border-[#edd7b0] bg-white p-2 text-[9px]">fck et fyk sont proposés depuis les catalogues matériaux du projet ; vérifiez les certificats et la norme contractuelle. Coefficients code, annexes, enrobage et détails restent à renseigner/valider ; les valeurs nominales catalogue ne constituent pas une vérification normative.</div>
     {sourceWarnings.map((warning, index) => <div key={`source-${index}`} className="rounded bg-amber-50 p-2 text-amber-900">Source / périmètre · {warning}</div>)}
     <div className="grid grid-cols-2 gap-2">
       <div className="rounded border bg-[#f8fafb] p-2"><b>Norme sélectionnée dans les paramètres du projet :</b> {projectNorm || "non renseignée"}<div className="mt-1 text-[8px]">Pour changer de norme, modifiez les paramètres du projet. {selectedStandardProfile.note}</div></div>
@@ -367,6 +369,21 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
           <div className="font-bold">{element.type === "beam" ? "Poutre" : element.type === "tie-beam" ? "Longrine de redressement" : element.type === "column" ? "Poteau" : element.type === "footing" ? "Semelle" : element.type === "wall" ? "Voile" : "Dalle"} {element.elementId} · combinaison gouvernante déclarée : {element.combinationName} ({element.combinationId})</div>
           <button type="button" onClick={() => downloadReinforcementPdf(element)} disabled={dirty} className="shrink-0 rounded bg-[#e9f1f3] px-2 py-1 text-[8px] font-bold text-[#173b4c] disabled:opacity-40">A4 / PDF</button>
         </div>
+        {element.columnReport && <div className="rounded border border-[#b9d7e1] bg-[#f6fbfd] p-2 text-[9px]">
+          <b>Fiche poteau · {element.columnReport.finalStatus}</b>
+          <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5">
+            <span>Niveau / type : {element.columnReport.levelLabel ?? "non renseigné"} · {element.columnReport.classification}</span><span>Position : {element.columnReport.position}</span>
+            <span>Dimensions A × B : {element.columnReport.sectionWidthMm} × {element.columnReport.sectionDepthMm} mm</span><span>Coordonnées : {element.columnReport.xM?.toFixed(2) ?? "—"} / {element.columnReport.yM?.toFixed(2) ?? "—"} m</span>
+            <span>NEd : {element.columnReport.NEdKn.toFixed(2)} kN · Mx/My : {element.columnReport.MEdXKnM.toFixed(2)} / {element.columnReport.MEdYKnM.toFixed(2)} kN·m</span><span>VEd / TEd : {element.columnReport.VEdKn.toFixed(2)} kN / {element.columnReport.TEdKnM.toFixed(2)} kN·m</span>
+            <span>Flambement L0 : {element.columnReport.bucklingLengthMm.toFixed(0)} mm · λx/λy : {element.columnReport.slendernessX.toFixed(1)} / {element.columnReport.slendernessY.toFixed(1)}</span><span>Second ordre requis : {element.columnReport.secondOrderRequired ? "oui" : "non détecté"} · appui pied : {element.columnReport.baseSupportKind ?? "non renseigné"}</span>
+            <span>As théorique / minimale / requise / fournie : {formatAreaValuesMm2AndCm2([element.columnReport.AsTheoreticalMm2, element.columnReport.AsMinimumMm2, element.columnReport.AsRequiredMm2, element.columnReport.AsProvidedMm2])}</span><span>Longitudinal : {element.reinforcement.filter(bar => bar.id === `${element.elementId}:longitudinal` || bar.id.startsWith(`${element.elementId}:longitudinal:`)).map(bar => `${bar.count} HA${bar.diameterMm}`).join(" + ") || `${element.columnReport.longitudinalBarCount} HA${element.columnReport.longitudinalDiameterMm}`} · cadres HA{element.columnReport.tieDiameterMm}/{element.columnReport.tieSpacingMm.toFixed(0)} mm</span>
+          </div>
+          {element.columnReport.baelCompression && <div className="mt-1">BAEL compression : Imin {element.columnReport.baelCompression.minimumInertiaMm4.toExponential(2)} mm⁴ · i {element.columnReport.baelCompression.radiusGyrationMm.toFixed(1)} mm · Lf {element.columnReport.bucklingLengthMm.toFixed(0)} mm · λ {element.columnReport.baelCompression.slenderness.toFixed(1)} · α {element.columnReport.baelCompression.alpha.toFixed(3)} · Br {formatAreaValuesMm2AndCm2([element.columnReport.baelCompression.reducedConcreteAreaMm2])}</div>}
+          {!!element.columnReport.optimizationTrace.length && <div className="mt-1">Options écartées : {element.columnReport.optimizationTrace.join(" · ")}</div>}
+          <div className="mt-1">Éléments au pied : {element.columnReport.connectedAtBase.map(item => `${item.type} ${item.elementId}`).join(", ") || "aucun détecté"}</div>
+          <div>Éléments en tête : {element.columnReport.connectedAtTop.map(item => `${item.type} ${item.elementId}`).join(", ") || "aucun détecté"}</div>
+          <div className="mt-1 text-amber-800">Statut des contrôles disponibles uniquement; résultat non certifié.</div>
+        </div>}
         <ReinforcementSketch element={element} />
         {element.reinforcement.map(bar => {
           const override = overrides[bar.id] ?? { diameterMm: bar.diameterMm, count: bar.count };
@@ -396,7 +413,14 @@ export default function ReinforcedConcretePanel({ projectId, projectNorm, projec
 function ReinforcementSketch({ element }: { element: RCElementDesign }) {
   const find = (suffix: string) => element.reinforcement.find(item => item.id.endsWith(suffix));
   if (element.type === "slab") return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · nappes orthogonales non cotées</span><svg viewBox="0 0 140 58" className="h-14 w-full"><rect x="12" y="5" width="116" height="48" fill="#fff" stroke="#59656a" strokeWidth="2" />{Array.from({ length: 7 }, (_, index) => <line key={`x-${index}`} x1={20 + index * 16} y1="8" x2={20 + index * 16} y2="50" stroke="#2b7880" strokeWidth="1.5" />)}{Array.from({ length: 4 }, (_, index) => <line key={`y-${index}`} x1="15" y1={14 + index * 12} x2="125" y2={14 + index * 12} stroke="#8b5c15" strokeWidth="1.5" />)}</svg></div>;
-  const top = find(":top"), bottom = find(":bottom"), longitudinal = find(":longitudinal");
+  const top = find(":top"), bottom = find(":bottom");
   const drawRows = (count: number, y: number, key: string) => Array.from({ length: Math.min(count, 10) }, (_, index) => <circle key={`${key}-${index}`} cx={32 + (index * 56) / Math.max(1, Math.min(count, 10) - 1)} cy={y} r="3" fill="#b74736" />);
-  return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · détails, enrobage et ancrages à vérifier</span><svg viewBox="0 0 120 66" className="h-16 w-full"><rect x="24" y="6" width="72" height="54" fill="#fff" stroke="#59656a" strokeWidth="2" /><rect x="31" y="13" width="58" height="40" fill="none" stroke="#2b7880" strokeWidth="1.5" />{element.type === "column" ? drawRows(longitudinal?.count ?? 4, 19, "column") : <>{drawRows(top?.count ?? 0, 19, "top")}{drawRows(bottom?.count ?? 0, 47, "bottom")}</>}</svg></div>;
+  const columnGroups = element.type === "column" ? element.reinforcement.filter(item => item.id === `${element.elementId}:longitudinal` || item.id.startsWith(`${element.elementId}:longitudinal:`)) : [];
+  const columnBars = columnGroups.flatMap((group, groupIndex) => group.barPositionsMm?.length
+    ? group.barPositionsMm.map((position, index) => ({ ...position, diameterMm: group.diameterMm, key: `${groupIndex}-${index}` }))
+    : Array.from({ length: group.count }, (_, index) => ({ xMm: -28 + 56 * index / Math.max(group.count - 1, 1), yMm: 20, diameterMm: group.diameterMm, key: `${groupIndex}-${index}` })));
+  const crossTieGroups = element.type === "column" ? element.reinforcement.filter(item => item.id.endsWith(":cross-ties")) : [];
+  const xFor = (xMm: number) => 60 + xMm / Math.max(element.columnReport?.sectionWidthMm ?? 200, 1) * 58;
+  const yFor = (yMm: number) => 33 - yMm / Math.max(element.columnReport?.sectionDepthMm ?? 300, 1) * 40;
+  return <div className="rounded bg-[#fafafa] p-1"><span>Schéma d’intention · détails et enrobage à vérifier</span><svg viewBox="0 0 120 66" className="h-16 w-full"><rect x="24" y="6" width="72" height="54" fill="#fff" stroke="#59656a" strokeWidth="2" /><rect x="31" y="13" width="58" height="40" fill="none" stroke="#2b7880" strokeWidth="1.5" />{element.type === "column" ? <>{crossTieGroups.flatMap(group => (group.tieSegmentsMm ?? []).map((segment, index) => <line key={`${group.id}-${index}`} x1={xFor(segment.x1Mm)} y1={yFor(segment.y1Mm)} x2={xFor(segment.x2Mm)} y2={yFor(segment.y2Mm)} stroke="#2b7880" strokeWidth="1.3" />))}{columnBars.map(bar => <circle key={bar.key} cx={xFor(bar.xMm)} cy={yFor(bar.yMm)} r={Math.max(2, Math.min(4, bar.diameterMm / 4))} fill="#b74736" />)}</> : <>{drawRows(top?.count ?? 0, 19, "top")}{drawRows(bottom?.count ?? 0, 47, "bottom")}</>}</svg></div>;
 }

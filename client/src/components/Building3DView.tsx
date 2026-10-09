@@ -567,31 +567,44 @@ export default function Building3DView({
       const center = metricPoint(item.x, item.y);
       const baseZ = columnBaseElevation(levels, levelIndex), topZ = postTopElevation(level, levelIndex);
       const [width, depth] = sectionPair(dimensions, [0.2, 0.3]);
-      const longitudinal = find(":longitudinal"), ties = find(":ties");
-      if (longitudinal) {
+      const longitudinalGroups = proposals.filter(proposal => proposal.id === `${item.id}:longitudinal` || proposal.id.startsWith(`${item.id}:longitudinal:`));
+      const ties = find(":ties"), crossTies = find(":cross-ties");
+      const isCircular = /^\s*Pot[_ -]?D|diam(?:ètre|etre)/i.test(item.section ?? "") || /^\s*0?[.,]\d+\s*m\s*$/i.test(dimensions);
+      for (const longitudinal of longitudinalGroups) {
         const tieDia = (ties?.diameterMm ?? 0) / 1000;
         const offset = cover + tieDia + longitudinal.diameterMm / 2000;
-        const isCircular = /^\\s*Pot[_ -]?D|diam(?:ètre|etre)/i.test(item.section ?? "") || /^\\s*0?[.,]\\d+\\s*m\\s*$/i.test(dimensions);
-        if (isCircular) {
+        if (longitudinal.barPositionsMm?.length) {
+          longitudinal.barPositionsMm.forEach((position, index) => lines.push(rebarLine(`${longitudinal.id}:${index}`, [center.x + position.xMm / 1000, center.y + position.yMm / 1000, baseZ + offset], [center.x + position.xMm / 1000, center.y + position.yMm / 1000, topZ - offset], item, design, longitudinal)));
+        } else if (isCircular) {
           const dia = Math.max(0.1, sectionValueMeters(dimensions.replace(/[^0-9.,]/g, ""), dimensions));
           const radius = Math.max(0.015, dia / 2 - offset);
           for (let i = 0; i < Math.min(longitudinal.count, 64); i++) {
             const angle = 2 * Math.PI * i / longitudinal.count;
-            lines.push(rebarLine(`${item.id}:long:${i}`, [center.x + radius * Math.cos(angle), center.y + radius * Math.sin(angle), baseZ + offset], [center.x + radius * Math.cos(angle), center.y + radius * Math.sin(angle), topZ - offset], item, design, longitudinal));
+            lines.push(rebarLine(`${longitudinal.id}:${i}`, [center.x + radius * Math.cos(angle), center.y + radius * Math.sin(angle), baseZ + offset], [center.x + radius * Math.cos(angle), center.y + radius * Math.sin(angle), topZ - offset], item, design, longitudinal));
           }
         } else {
-          for (const [index, [px, py]] of perimeterPoints(width, depth, offset, longitudinal.count).entries()) lines.push(rebarLine(`${item.id}:long:${index}`, [center.x + px, center.y + py, baseZ + offset], [center.x + px, center.y + py, topZ - offset], item, design, longitudinal));
+          for (const [index, [px, py]] of perimeterPoints(width, depth, offset, longitudinal.count).entries()) lines.push(rebarLine(`${longitudinal.id}:${index}`, [center.x + px, center.y + py, baseZ + offset], [center.x + px, center.y + py, topZ - offset], item, design, longitudinal));
         }
       }
       if (ties) {
-        const [widthM, depthM] = sectionPair(dimensions, [0.2, 0.3]);
-        const inset = cover + ties.diameterMm / 2000;
-        const halfW = Math.max(0.01, widthM / 2 - inset), halfD = Math.max(0.01, depthM / 2 - inset);
+        const inset = cover + ties.diameterMm / 2000, halfW = Math.max(0.01, width / 2 - inset), halfD = Math.max(0.01, depth / 2 - inset);
         const count = Math.min(ties.count, 40);
         const tieOffset = cover + ties.diameterMm / 2000;
         for (let i = 0; i < count; i++) {
           const zTie = baseZ + tieOffset + (topZ - baseZ - 2 * tieOffset) * (count === 1 ? 0.5 : i / (count - 1));
           lines.push(rebarPolyline(`${item.id}:tie:${i}`, [[center.x-halfW,center.y-halfD,zTie],[center.x+halfW,center.y-halfD,zTie],[center.x+halfW,center.y+halfD,zTie],[center.x-halfW,center.y+halfD,zTie],[center.x-halfW,center.y-halfD,zTie]], item, design, ties));
+        }
+      }
+      if (crossTies?.tieSegmentsMm?.length) {
+        const inset = cover + (ties?.diameterMm ?? crossTies.diameterMm) / 2000;
+        const count = Math.min(40, Math.max(1, Math.round(crossTies.count / crossTies.tieSegmentsMm.length)));
+        for (let segmentIndex = 0; segmentIndex < crossTies.tieSegmentsMm.length; segmentIndex++) {
+          const segment = crossTies.tieSegmentsMm[segmentIndex];
+          for (let index = 0; index < count; index++) {
+            const t = count === 1 ? 0.5 : index / (count - 1);
+            const zTie = baseZ + inset + (topZ - baseZ - 2 * inset) * t;
+            lines.push(rebarLine(`${crossTies.id}:${segmentIndex}:${index}`, [center.x + segment.x1Mm / 1000, center.y + segment.y1Mm / 1000, zTie], [center.x + segment.x2Mm / 1000, center.y + segment.y2Mm / 1000, zTie], item, design, crossTies));
+          }
         }
       }
     } else if ((item.type === "Poutre" || item.type === "Longrine de redressement") && (design.type === "beam" || design.type === "tie-beam")) {

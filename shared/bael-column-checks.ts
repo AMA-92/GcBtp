@@ -1,5 +1,49 @@
 export type BAELColumnSectionShape = "rectangular" | "circular";
 
+export type BAELColumnCompressionInput = {
+  shape: BAELColumnSectionShape;
+  widthMm: number;
+  depthMm: number;
+  bucklingLengthMm: number;
+  axialKn: number;
+  fckMpa: number;
+  fykMpa: number;
+  gammaC: number;
+  gammaS: number;
+};
+
+/** BAEL 91 mod. 99: pré-dimensionnement en compression centrée, avant contrôle N-M. */
+export function calculateBAELColumnCompression(input: BAELColumnCompressionInput) {
+  const areaGrossMm2 = input.shape === "circular"
+    ? Math.PI * input.widthMm ** 2 / 4
+    : input.widthMm * input.depthMm;
+  const minimumInertiaMm4 = input.shape === "circular"
+    ? Math.PI * input.widthMm ** 4 / 64
+    : Math.min(input.widthMm ** 3 * input.depthMm, input.depthMm ** 3 * input.widthMm) / 12;
+  const radiusGyrationMm = Math.sqrt(minimumInertiaMm4 / areaGrossMm2);
+  const slenderness = input.bucklingLengthMm / radiusGyrationMm;
+  const alpha = slenderness <= 50
+    ? 0.85 / (1 + 0.2 * (slenderness / 35) ** 2)
+    : 0.6 * (50 / slenderness) ** 2;
+  const reducedConcreteAreaMm2 = input.shape === "circular"
+    ? Math.PI * Math.max(0, input.widthMm - 20) ** 2 / 4
+    : Math.max(0, input.widthMm - 20) * Math.max(0, input.depthMm - 20);
+  const reducedConcreteResistanceKn = reducedConcreteAreaMm2 * input.fckMpa / (0.9 * input.gammaC) / 1000;
+  const axialSteelDemandKn = Math.max(0, Math.abs(input.axialKn) / alpha - reducedConcreteResistanceKn);
+  const theoreticalSteelAreaMm2 = axialSteelDemandKn * 1000 * input.gammaS / input.fykMpa;
+  return {
+    areaGrossMm2,
+    minimumInertiaMm4,
+    radiusGyrationMm,
+    slenderness,
+    alpha,
+    reducedConcreteAreaMm2,
+    reducedConcreteResistanceKn,
+    theoreticalSteelAreaMm2,
+    withinAlphaRange: slenderness <= 70,
+  };
+}
+
 export type BAELSecondOrderAxisInput = {
   axis: "Mx" | "My";
   axialKn: number;
@@ -64,16 +108,6 @@ export function minimumBAELColumnSteelAreaMm2(shape: BAELColumnSectionShape, wid
   return Math.max(0.002 * areaMm2, 0.4 * perimeterMm);
 }
 
-/** BAEL A.6.1,221; psi_s=1.5 for HA bars; BAEL A.2.1,12 ft28=0.6+0.06fc28 up to 60 MPa. */
-export function calculateBAELStraightAnchorageMm(barDiameterMm: number, fykMpa: number, fckMpa: number, psiS = 1.5) {
-  if (![barDiameterMm, fykMpa, fckMpa, psiS].every(Number.isFinite) || barDiameterMm <= 0 || fykMpa <= 0 || fckMpa <= 0 || fckMpa > 60 || psiS <= 0) {
-    throw new Error("Le calcul BAEL du scellement droit exige 0 < fc28 ≤ 60 MPa et des paramètres positifs.");
-  }
-  const ft28Mpa = 0.6 + 0.06 * fckMpa;
-  const tauSuMpa = 0.6 * psiS ** 2 * ft28Mpa;
-  return { lengthMm: barDiameterMm * fykMpa / (4 * tauSuMpa), ratioDiameters: fykMpa / (4 * tauSuMpa), ft28Mpa, tauSuMpa };
-}
-
 export function baelMaximumColumnBarPitchMm(widthMm: number, depthMm: number) {
   return Math.min(Math.min(widthMm, depthMm) + 100, 400);
 }
@@ -113,9 +147,10 @@ export function baelColumnLayoutForCount(shape: BAELColumnSectionShape, widthMm:
     return { valid: count >= minimumCount && maxPitch <= maxPitchMm && clearSpacingMm >= 0, minimumCount, maxPitchMm: maxPitch, clearSpacingMm };
   }
   let best: { nWidth: number; nDepth: number; maxPitchMm: number; clearSpacingMm: number } | null = null;
+  const perimeterBarCount = count % 2 === 1 ? count - 1 : count;
   for (let nWidth = 2; nWidth <= count + 2; nWidth++) {
     for (let nDepth = 2; nDepth <= count + 2; nDepth++) {
-      if (2 * nWidth + 2 * nDepth - 4 !== count) continue;
+      if (2 * nWidth + 2 * nDepth - 4 !== perimeterBarCount) continue;
       const pitchWidth = Math.max(0, widthMm - 2 * edgeInsetMm) / (nWidth - 1);
       const pitchDepth = Math.max(0, depthMm - 2 * edgeInsetMm) / (nDepth - 1);
       const maxPitch = Math.max(pitchWidth, pitchDepth);
@@ -126,6 +161,40 @@ export function baelColumnLayoutForCount(shape: BAELColumnSectionShape, widthMm:
   if (!best) return { valid: false, minimumCount: baelMinimumColumnBarCount(shape, widthMm, depthMm, edgeInsetMm, maxPitchMm), maxPitchMm: Number.POSITIVE_INFINITY, clearSpacingMm: Number.NEGATIVE_INFINITY };
   const minimumCount = baelMinimumColumnBarCount(shape, widthMm, depthMm, edgeInsetMm, maxPitchMm);
   return { valid: count >= minimumCount && best.maxPitchMm <= maxPitchMm && best.clearSpacingMm >= 0, minimumCount, maxPitchMm: best.maxPitchMm, clearSpacingMm: best.clearSpacingMm };
+}
+
+export function baelColumnBarPositions(shape: BAELColumnSectionShape, widthMm: number, depthMm: number, count: number, diameterMm: number, tieDiameterMm: number, coverMm: number, maxPitchMm: number) {
+  const layout = baelColumnLayoutForCount(shape, widthMm, depthMm, count, diameterMm, tieDiameterMm, coverMm, maxPitchMm);
+  if (!layout.valid) return { ...layout, positions: [] as Array<{ xMm: number; yMm: number }> };
+  const inset = coverMm + tieDiameterMm + diameterMm / 2;
+  if (shape === "circular") {
+    const radius = Math.max(0, widthMm / 2 - inset);
+    return { ...layout, positions: Array.from({ length: count }, (_, index) => {
+      const angle = 2 * Math.PI * index / count;
+      return { xMm: radius * Math.cos(angle), yMm: radius * Math.sin(angle) };
+    }) };
+  }
+  const x0 = -widthMm / 2 + inset, x1 = widthMm / 2 - inset;
+  const y0 = -depthMm / 2 + inset, y1 = depthMm / 2 - inset;
+  const perimeterBarCount = count % 2 === 1 ? count - 1 : count;
+  let best: { nWidth: number; nDepth: number; maxPitchMm: number } | null = null;
+  for (let nWidth = 2; nWidth <= count + 2; nWidth++) for (let nDepth = 2; nDepth <= count + 2; nDepth++) {
+    if (2 * nWidth + 2 * nDepth - 4 !== perimeterBarCount) continue;
+    const pitch = Math.max((x1 - x0) / (nWidth - 1), (y1 - y0) / (nDepth - 1));
+    if (!best || pitch < best.maxPitchMm) best = { nWidth, nDepth, maxPitchMm: pitch };
+  }
+  if (!best || x1 <= x0 || y1 <= y0) return { ...layout, valid: false, positions: [] as Array<{ xMm: number; yMm: number }> };
+  const positions: Array<{ xMm: number; yMm: number }> = [];
+  for (let index = 0; index < best.nWidth; index++) positions.push({ xMm: x0 + (x1 - x0) * index / (best.nWidth - 1), yMm: y0 });
+  for (let index = 1; index < best.nDepth; index++) positions.push({ xMm: x1, yMm: y0 + (y1 - y0) * index / (best.nDepth - 1) });
+  for (let index = best.nWidth - 2; index >= 0; index--) positions.push({ xMm: x0 + (x1 - x0) * index / (best.nWidth - 1), yMm: y1 });
+  for (let index = best.nDepth - 2; index > 0; index--) positions.push({ xMm: x0, yMm: y0 + (y1 - y0) * index / (best.nDepth - 1) });
+  if (count % 2 === 1) positions.push({ xMm: 0, yMm: 0 });
+  let clearSpacingMm = layout.clearSpacingMm;
+  for (let index = 0; index < positions.length; index++) for (let other = index + 1; other < positions.length; other++) {
+    clearSpacingMm = Math.min(clearSpacingMm, Math.hypot(positions[index].xMm - positions[other].xMm, positions[index].yMm - positions[other].yMm) - diameterMm);
+  }
+  return { ...layout, valid: layout.valid && clearSpacingMm >= 0, maxPitchMm: best.maxPitchMm, clearSpacingMm, positions };
 }
 
 
@@ -143,8 +212,9 @@ export type BAELIsolatedColumnEquilibriumInput = {
   gammaC: number;
   gammaS: number;
   coverMm: number;
-  barDiameterMm: number;
-  barCount: number;
+  barDiameterMm?: number;
+  barCount?: number;
+  bars?: Array<{ xMm: number; yMm: number; diameterMm: number; areaMm2?: number }>;
   alpha?: number;
   creepRatio?: number;
   loadSteps?: number;
@@ -175,8 +245,10 @@ export type BAELIsolatedColumnEquilibriumResult = {
  */
 export function solveBAELIsolatedColumnEquilibrium(input: BAELIsolatedColumnEquilibriumInput): BAELIsolatedColumnEquilibriumResult {
   const invalid = (): BAELIsolatedColumnEquilibriumResult => ({ converged: false, stableEquilibrium: false, withinMaterialLimits: false, maxConcreteCompressionStrain: 0, concreteLimitStrain: 0, maxSteelStrain: 0, deflectionXmm: 0, deflectionYmm: 0, totalMomentXKnM: 0, totalMomentYKnM: 0, iterations: 0, residual: Number.POSITIVE_INFINITY, reason: "Données de calcul non positives ou non finies." });
-  const positiveValues = [input.widthMm, input.depthMm, input.memberLengthMm, input.bucklingLengthMm, input.axialKn, input.fckMpa, input.fykMpa, input.gammaC, input.gammaS, input.barDiameterMm, input.barCount];
-  if (!positiveValues.every(value => Number.isFinite(value) && value > 0) || ![input.firstOrderMomentXKnM, input.firstOrderMomentYKnM, input.coverMm].every(Number.isFinite) || input.fckMpa > 60 || !Number.isInteger(input.barCount)) return invalid();
+  const positiveValues = [input.widthMm, input.depthMm, input.memberLengthMm, input.bucklingLengthMm, input.axialKn, input.fckMpa, input.fykMpa, input.gammaC, input.gammaS];
+  const suppliedBarsValid = !!input.bars?.length && input.bars.every(bar => [bar.xMm, bar.yMm, bar.diameterMm].every(Number.isFinite) && bar.diameterMm > 0 && (bar.areaMm2 === undefined || (Number.isFinite(bar.areaMm2) && bar.areaMm2 > 0)));
+  const uniformBarsValid = Number.isFinite(input.barDiameterMm) && (input.barDiameterMm ?? 0) > 0 && Number.isInteger(input.barCount) && (input.barCount ?? 0) > 0;
+  if (!positiveValues.every(value => Number.isFinite(value) && value > 0) || ![input.firstOrderMomentXKnM, input.firstOrderMomentYKnM, input.coverMm].every(Number.isFinite) || input.fckMpa > 60 || (!suppliedBarsValid && !uniformBarsValid)) return invalid();
 
   const width = input.widthMm, depth = input.depthMm;
   const sectionArea = input.shape === "circular" ? Math.PI * width ** 2 / 4 : width * depth;
@@ -206,39 +278,43 @@ export function solveBAELIsolatedColumnEquilibrium(input: BAELIsolatedColumnEqui
     for (const point of candidates) fibers.push({ ...point, area: sectionArea / candidates.length });
   }
 
-  const barArea = Math.PI * input.barDiameterMm ** 2 / 4;
-  const tieDia = baelColumnTieDiameterMm(input.barDiameterMm) ?? 6;
-  const inset = input.coverMm + tieDia + input.barDiameterMm / 2;
-  const bars: Array<{ x: number; y: number }> = [];
-  if (input.shape === "circular") {
+  const barDiameter = input.bars?.length ? Math.max(...input.bars.map(bar => bar.diameterMm)) : input.barDiameterMm!;
+  const uniformCount = input.barCount ?? input.bars?.length ?? 0;
+  const tieDia = baelColumnTieDiameterMm(barDiameter) ?? 6;
+  const inset = input.coverMm + tieDia + barDiameter / 2;
+  const bars: Array<{ x: number; y: number; area: number; diameterMm: number }> = input.bars?.length
+    ? input.bars.map(bar => ({ x: bar.xMm, y: bar.yMm, diameterMm: bar.diameterMm, area: bar.areaMm2 ?? Math.PI * bar.diameterMm ** 2 / 4 }))
+    : [];
+  if (!input.bars?.length && input.shape === "circular") {
     const radius = Math.max(0, width / 2 - inset);
-    for (let index = 0; index < input.barCount; index++) {
-      const angle = 2 * Math.PI * index / input.barCount;
-      bars.push({ x: radius * Math.cos(angle), y: radius * Math.sin(angle) });
+    for (let index = 0; index < uniformCount; index++) {
+      const angle = 2 * Math.PI * index / uniformCount;
+      bars.push({ x: radius * Math.cos(angle), y: radius * Math.sin(angle), diameterMm: barDiameter, area: Math.PI * barDiameter ** 2 / 4 });
     }
-  } else {
+  } else if (!input.bars?.length) {
     const x0 = -width / 2 + inset, x1 = width / 2 - inset;
     const y0 = -depth / 2 + inset, y1 = depth / 2 - inset;
     let layout: { nWidth: number; nDepth: number; maxPitch: number } | null = null;
-    for (let nWidth = 2; nWidth <= input.barCount + 2; nWidth++) for (let nDepth = 2; nDepth <= input.barCount + 2; nDepth++) {
-      if (2 * nWidth + 2 * nDepth - 4 !== input.barCount) continue;
+    for (let nWidth = 2; nWidth <= uniformCount + 2; nWidth++) for (let nDepth = 2; nDepth <= uniformCount + 2; nDepth++) {
+      if (2 * nWidth + 2 * nDepth - 4 !== uniformCount) continue;
       const pitch = Math.max((x1 - x0) / (nWidth - 1), (y1 - y0) / (nDepth - 1));
       if (!layout || pitch < layout.maxPitch) layout = { nWidth, nDepth, maxPitch: pitch };
     }
     if (!layout || x1 <= x0 || y1 <= y0) return invalid();
     for (let index = 0; index < layout.nWidth; index++) {
       const x = x0 + (x1 - x0) * index / (layout.nWidth - 1);
-      bars.push({ x, y: y0 }, { x, y: y1 });
+      bars.push({ x, y: y0, diameterMm: barDiameter, area: Math.PI * barDiameter ** 2 / 4 }, { x, y: y1, diameterMm: barDiameter, area: Math.PI * barDiameter ** 2 / 4 });
     }
     for (let index = 1; index < layout.nDepth - 1; index++) {
       const y = y0 + (y1 - y0) * index / (layout.nDepth - 1);
-      bars.push({ x: x0, y }, { x: x1, y });
+      bars.push({ x: x0, y, diameterMm: barDiameter, area: Math.PI * barDiameter ** 2 / 4 }, { x: x1, y, diameterMm: barDiameter, area: Math.PI * barDiameter ** 2 / 4 });
     }
   }
+  if (!bars.length || bars.some(bar => Math.abs(bar.x) + bar.diameterMm / 2 > width / 2 - input.coverMm - tieDia || Math.abs(bar.y) + bar.diameterMm / 2 > depth / 2 - input.coverMm - tieDia)) return invalid();
   // Replace concrete in the four nearest integration cells by each steel bar area.
   for (const bar of bars) {
     const nearest = fibers.map((fiber, index) => ({ index, d2: (fiber.x - bar.x) ** 2 + (fiber.y - bar.y) ** 2 })).sort((a, b) => a.d2 - b.d2).slice(0, 4);
-    for (const item of nearest) fibers[item.index].area = Math.max(0, fibers[item.index].area - barArea / nearest.length);
+    for (const item of nearest) fibers[item.index].area = Math.max(0, fibers[item.index].area - bar.area / nearest.length);
   }
 
   const concreteStress = (strain: number) => {
@@ -255,7 +331,7 @@ export function solveBAELIsolatedColumnEquilibrium(input: BAELIsolatedColumnEqui
   const firstMy = Math.abs(input.firstOrderMomentYKnM);
   const loadSteps = Math.max(8, Math.min(32, Math.floor(input.loadSteps ?? 16)));
   const initialConcreteModulus = 11_000 * input.fckMpa ** (1 / 3);
-  const steelArea = input.barCount * barArea;
+  const steelArea = bars.reduce((sum, bar) => sum + bar.area, 0);
   const initialAxialStiffness = Math.max((sectionArea - steelArea) * initialConcreteModulus / creepAffinity + steelArea * steelModulus, 1);
   const state = [Math.max(1e-8, axialDemand * 1000 / initialAxialStiffness), 0, 0]; // ε0, κx·Lscale, κy·Lscale
   let iterationTotal = 0;
@@ -278,9 +354,9 @@ export function solveBAELIsolatedColumnEquilibrium(input: BAELIsolatedColumnEqui
     for (const bar of bars) {
       const strain = -q[0] - kx * bar.y - ky * bar.x;
       const stress = steelStress(strain);
-      compressionKn -= stress * barArea / 1000;
-      mxKnM -= stress * bar.y * barArea / 1e6;
-      myKnM -= stress * bar.x * barArea / 1e6;
+      compressionKn -= stress * bar.area / 1000;
+      mxKnM -= stress * bar.y * bar.area / 1e6;
+      myKnM -= stress * bar.x * bar.area / 1e6;
       maxSteel = Math.max(maxSteel, Math.abs(strain));
     }
     const dx = kx * input.bucklingLengthMm ** 2 / Math.PI ** 2;

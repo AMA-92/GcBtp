@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, designReinforcedConcrete, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
+import { deriveRCMemberDemandsFromPlane, deriveRCMemberDemandsFromSpatial, designReinforcedConcrete, proposeColumnSectionIncreases, proposeOptimizedRCSections, validateRCDesignBasis, type RCDesignBasis } from "@shared/rc-design";
 import { solvePlaneFrame } from "@shared/frame-solver-2d";
 import { designStairV2 } from "@shared/stair-design-v2";
 import type { AnalyticalModel } from "@shared/analytical-model";
@@ -19,7 +19,6 @@ const basis = (): RCDesignBasis => ({
   minReinforcementRatio: 0.0013,
   maxReinforcementRatio: 0.04,
   concreteShearStressLimitMpa: 0.4,
-  bondStressMpa: 2.25,
   minClearSpacingMm: 20,
   maxLinkSpacingMm: 300,
   maxDeflectionRatio: 250,
@@ -113,7 +112,8 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(design.checks.map(item => item.id)).toContain("column-slenderness");
     expect(design.checks.find(item => item.id === "column-tie-spacing")?.status).toBe("satisfaisant");
     expect(design.checks.find(item => item.id === "column-bar-layout-count")?.status).toBe("satisfaisant");
-    expect(design.checks.find(item => item.id === "column-anchorage-length")?.status).toBe("à vérifier");
+    expect(design.checks.some(item => item.id === "column-anchorage-length")).toBe(false);
+    expect(design.reinforcement.some(item => item.id.endsWith(":anchorage"))).toBe(false);
     expect(design.checks.find(item => item.id === "column-bael-detailing")?.status).toBe("bloqué");
     expect(design.reinforcement.map(item => item.id)).toContain("P1:ties");
     const longitudinal = design.reinforcement.find(item => item.id === "P1:longitudinal")!;
@@ -123,6 +123,61 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(ties.diameterMm).toBe(8);
     expect(result.schedule.length).toBeGreaterThan(0);
     expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
+  });
+
+  it("does not propose EC2 column dimensions as compliant while detailing remains blocked", () => {
+    const eurocodeBasis = { ...basis(), availableBarDiametersMm: [14] };
+    const member = { id: "P-EC2", type: "column" as const, combinationId: "ELU", combinationName: "ELU EC2", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, axialKn: 776, shearKn: 0, momentKnM: 0.48, momentXKnM: 0.39, momentYKnM: 0.48 };
+    const proposals = proposeColumnSectionIncreases({
+      basis: eurocodeBasis,
+      member,
+      overrides: { "P-EC2:longitudinal": { diameterMm: 14, count: 18 } },
+      selfWeightIncluded: true,
+      permanentLoadFactor: 1.35,
+    });
+    expect(proposals).toHaveLength(0);
+  });
+
+  it("classifies a modeled corner column, records connected members, and exposes its calculation sheet", () => {
+    const frames = [
+      { id: "F:P1", sourceElementId: "P1", sourceType: "Poteau", startNodeId: "A0", endNodeId: "A1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:P1U", sourceElementId: "P1U", sourceType: "Poteau", startNodeId: "A1", endNodeId: "A2", sectionId: "S1", levelId: "r1" },
+      { id: "F:P2", sourceElementId: "P2", sourceType: "Poteau", startNodeId: "B0", endNodeId: "B1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:P3", sourceElementId: "P3", sourceType: "Poteau", startNodeId: "C0", endNodeId: "C1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:P4", sourceElementId: "P4", sourceType: "Poteau", startNodeId: "D0", endNodeId: "D1", sectionId: "S1", levelId: "rdc" },
+      { id: "F:B1", sourceElementId: "B1", sourceType: "Poutre", startNodeId: "A1", endNodeId: "BE", sectionId: "S1", levelId: "rdc" },
+    ];
+    const model = {
+      frames,
+      sections: [{ id: "S1", dimensionsM: [0.3, 0.3] }],
+      nodes: [
+        { id: "A0", x: 0, y: 0, z: 0 }, { id: "A1", x: 0, y: 0, z: 3 }, { id: "A2", x: 0, y: 0, z: 6 },
+        { id: "B0", x: 4, y: 0, z: 0 }, { id: "B1", x: 4, y: 0, z: 3 },
+        { id: "C0", x: 0, y: 3, z: 0 }, { id: "C1", x: 0, y: 3, z: 3 },
+        { id: "D0", x: 4, y: 3, z: 0 }, { id: "D1", x: 4, y: 3, z: 3 }, { id: "BE", x: 4, y: 0, z: 3 },
+      ],
+      surfaces: [],
+      supports: [{ id: "SUP:P1", sourceElementId: "S1", nodeId: "A0", kind: "fixed-base", role: "foundation-contact", restrainedDofs: ["ux", "uy", "uz"], selectionReason: "Appui sur semelle", status: "declared" }],
+      nodeMergeToleranceM: 0.01,
+    } as unknown as AnalyticalModel;
+    const extracted = deriveRCMemberDemandsFromSpatial({
+      model,
+      result: { elements: [{ elementId: "F:P1", sourceElementId: "P1", lengthM: 3, start: { axialKn: 500 }, end: { axialKn: 480 }, momentYEnvelope: { minKnM: -8, maxKnM: 20 }, momentZEnvelope: { minKnM: -3, maxKnM: 5 }, maxAbsShearKn: 12, maxAbsTorsionKnM: 1 }] } as any,
+      combinationId: "comb:uls", combinationName: "ELU enveloppe",
+    });
+    const context = extracted.demands[0].columnContext!;
+    expect(context.position).toBe("angle");
+    expect(context.classification).toBe("RDC");
+    expect(context.connectedAtBase.some(item => item.role === "support" && item.elementId === "S1")).toBe(true);
+    expect(context.connectedAtTop.map(item => item.elementId)).toEqual(expect.arrayContaining(["B1", "P1U"]));
+    const design = designReinforcedConcrete({ basis: basis(), members: extracted.demands, slabs: [] }).elements[0];
+    expect(design.columnReport?.position).toBe("angle");
+    expect(design.columnReport?.combinationName).toBe("ELU enveloppe");
+    expect(design.columnReport?.NEdKn).toBe(500);
+    expect(design.columnReport?.TEdKnM).toBe(1);
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsMinimumMm2 ?? Infinity);
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsRequiredMm2 ?? Infinity);
+    expect(design.checks.find(item => item.id === "column-steel-axial")?.status).toBe("satisfaisant");
   });
 
   it("reports the configured slenderness limit and does not mark zero first-order moment as a second-order failure", () => {
@@ -149,9 +204,34 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
       slabs: [],
     });
     const design = result.elements[0];
-    const longitudinal = design.reinforcement.find(item => item.id === "P2:longitudinal")!;
-    expect(longitudinal.count).toBeGreaterThan(4);
+    const longitudinal = design.reinforcement.filter(item => item.id === "P2:longitudinal" || item.id.startsWith("P2:longitudinal:"));
+    expect(longitudinal.reduce((sum, item) => sum + item.count, 0)).toBeGreaterThan(4);
+    expect(longitudinal.every(item => (item.barPositionsMm?.length ?? 0) === item.count)).toBe(true);
     expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-second-order")?.label).toContain("amplification biaxiale");
+    expect(design.checks.find(item => item.id === "column-second-order")?.formula).toContain("L0=3200 mm");
+    expect(design.columnReport?.MEdXKnM).toBeGreaterThan(30);
+    expect(design.checks.find(item => item.id === "column-steel-axial")?.status).toBe("satisfaisant");
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsRequiredMm2 ?? Infinity);
+  });
+
+  it("chooses symmetric mixed HA groups when they satisfy a biaxial column check", () => {
+    const result = designReinforcedConcrete({
+      basis: { ...basis(), availableBarDiametersMm: [10, 12, 16, 20] },
+      members: [{ id: "P-MIX", type: "column", combinationId: "comb:uls", combinationName: "ELU poteau", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 300, shearKn: 0, momentKnM: 20, momentXKnM: 20, momentYKnM: 0 }],
+      slabs: [],
+      columnBarCountOverrides: { "P-MIX": 8 },
+    });
+    const design = result.elements[0];
+    const longitudinal = design.reinforcement.filter(item => item.id === "P-MIX:longitudinal" || item.id.startsWith("P-MIX:longitudinal:"));
+    expect(longitudinal.length).toBeGreaterThan(1);
+    expect(longitudinal.reduce((sum, item) => sum + item.count, 0)).toBe(8);
+    expect(new Set(longitudinal.map(item => item.diameterMm)).size).toBeGreaterThan(1);
+    expect(longitudinal.every(item => item.barPositionsMm?.length === item.count)).toBe(true);
+    expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-steel-axial")?.status).toBe("satisfaisant");
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsRequiredMm2 ?? Infinity);
+    expect(design.reinforcement.some(item => item.id === "P-MIX:cross-ties" && !!item.tieSegmentsMm?.length)).toBe(true);
   });
 
   it("respects a selected HA diameter and sizes only the number of bars for that diameter", () => {
@@ -301,7 +381,7 @@ it("dimensionne les armatures de la semelle par les efforts sans qadm et laisse 
 
 describe("RC section optimization", () => {
   it("finds a smaller footing when the available checks pass", () => {
-    const basis = { schemaVersion: 1 as const, standard: "Eurocode 2 — test", nationalAnnex: "test", sourceReference: "test", basisConfirmed: true, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, alphaCC: 0.85, coverMm: 50, minReinforcementRatio: 0.0015, maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.8, bondStressMpa: 2.0, minClearSpacingMm: 20, maxLinkSpacingMm: 250, maxDeflectionRatio: 250, maxColumnSlenderness: 30, availableBarDiametersMm: [8,10,12,16,20,25] };
+    const basis = { schemaVersion: 1 as const, standard: "Eurocode 2 — test", nationalAnnex: "test", sourceReference: "test", basisConfirmed: true, fckMpa: 25, fykMpa: 500, gammaC: 1.5, gammaS: 1.15, alphaCC: 0.85, coverMm: 50, minReinforcementRatio: 0.0015, maxReinforcementRatio: 0.04, concreteShearStressLimitMpa: 0.8, minClearSpacingMm: 20, maxLinkSpacingMm: 250, maxDeflectionRatio: 250, maxColumnSlenderness: 30, availableBarDiametersMm: [8,10,12,16,20,25] };
     const proposals = proposeOptimizedRCSections({ basis, members: [], slabs: [], foundations: [{ id: "S1", levelLabel: "Fondation", combinationId: "ELU", combinationName: "ELU", widthM: 1, lengthM: 1, thicknessM: 0.2, columnWidthM: 0.2, columnDepthM: 0.2, axialKn: 20, shearKn: 0, momentXKnM: 0, momentYKnM: 0, soilBearingKPa: 300 }] });
     expect(proposals.some(item => item.elementId === "S1" && item.proposedSection.dimensions[0] < 1)).toBe(true);
   });
