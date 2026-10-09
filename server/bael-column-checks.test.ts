@@ -154,4 +154,17 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(longitudinal?.label).toContain("répartition circulaire régulière");
     expect(design.checks.find(item => item.id === "column-bael-detailing")?.status).toBe("satisfaisant");
   });
+
+  it("vérifie le cisaillement du poteau et conserve les composantes Vx/Vy", () => {
+    const result = designReinforcedConcrete({
+      basis: baelBasis(),
+      members: [{ id: "PV", type: "column", combinationId: "ELU-V", combinationName: "ELU cisaillement", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 1000, axialKn: 100, shearKn: 0, shearXKn: 12, shearYKn: 9, momentKnM: 0, momentXKnM: 0, momentYKnM: 0, anchorageAvailableTopMm: 800, anchorageAvailableBottomMm: 800 }],
+      slabs: [],
+    });
+    const shear = result.elements[0].checks.find(item => item.id === "column-shear");
+    expect(shear?.status).toBe("satisfaisant");
+    expect(shear?.demand).toBeCloseTo(15, 8);
+    expect(shear?.formula).toContain("Vx=12.00");
+    expect(shear?.formula).toContain("Vy=9.00");
+  });
 });

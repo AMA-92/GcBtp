@@ -51,6 +51,9 @@ export type RCMemberDemand = {
   anchorageAvailableBottomMm?: number;
   axialKn: number;
   shearKn: number;
+  /** Efforts tranchants locaux optionnels; shearKn reste la valeur historique uniaxiale. */
+  shearXKn?: number;
+  shearYKn?: number;
   momentKnM: number;
   positiveMomentKnM?: number;
   negativeMomentKnM?: number;
@@ -607,6 +610,14 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const tieSpacingLimitMm = isBael ? baelMaximumColumnTieSpacingMm(width, height, diameter) : basis.maxLinkSpacingMm;
   const tieCount = Math.ceil(length / Math.max(tieSpacingLimitMm, 1)) + 1;
   const tieSpacingMm = length / Math.max(1, tieCount - 1);
+  const effectiveShearDepthMm = Math.max(50, Math.min(width, height) - basis.coverMm - tieDiameter - diameter / 2);
+  const shearDemandKn = Number.isFinite(demand.shearXKn) || Number.isFinite(demand.shearYKn)
+    ? Math.hypot(demand.shearXKn ?? 0, demand.shearYKn ?? 0)
+    : Math.abs(demand.shearKn);
+  const concreteShearResistanceKn = basis.concreteShearStressLimitMpa * Math.min(width, height) * effectiveShearDepthMm / 1000;
+  const tieLegAreaMm2 = 2 * barArea(tieDiameter);
+  const shearSteelPerSpacingMm2PerMm = Math.max(0, shearDemandKn - concreteShearResistanceKn) * 1000 / (0.87 * fyd * effectiveShearDepthMm);
+  const tieShearResistanceKn = tieLegAreaMm2 / Math.max(tieSpacingMm, 1) * 0.87 * fyd * effectiveShearDepthMm / 1000;
   const tieLengthM = shape === "circular"
     ? Math.PI * Math.max(0, width - 2 * (basis.coverMm + tieDiameter / 2)) / 1000
     : 2 * (Math.max(0, width - 2 * basis.coverMm - tieDiameter) + Math.max(0, height - 2 * basis.coverMm - tieDiameter)) / 1000;
@@ -642,6 +653,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     check("column-bar-spacing", isBael ? "Répartition des barres sur le contour" : "Espacement libre des barres", isBael ? Math.max(selectedBars.maxPitchMm / Math.max(barPitchLimitMm, 1), basis.minClearSpacingMm / Math.max(selectedBars.clearSpacingMm, 1e-9)) : basis.minClearSpacingMm, isBael ? 1 : selectedBars.clearSpacingMm, isBael ? "—" : "mm", isBael ? "A.8.1,22 : pas de face ≤ min(petit côté+100 mm, 400 mm) et jeu libre conforme au minimum saisi" : "Disposition symétrique indicative ; sclair ≥ minimum déclaré", combinationId, combinationName),
     check("column-bar-layout-count", "Disposition longitudinale · nombre de barres", selectedBars.minimumCount, count, "barres", isBael ? (shape === "circular" ? "Au moins six barres équidistantes pour la section circulaire; adaptation géométrique A.8.1,22" : "Une barre à chaque angle et nombre suffisant pour le pas maximal A.8.1,22") : "Nombre pair ≥ 4 pour la répartition retenue", combinationId, combinationName),
     check("column-tie-spacing", "Espacement des cadres", tieSpacingMm, tieSpacingLimitMm, "mm", isBael ? `A.8.1,3 : s ≤ min(15·φlong=${(15 * diameter).toFixed(0)} mm, 400 mm, petit côté+100 mm)` : "sCadres ≤ espacement maximal déclaré dans la base du projet", combinationId, combinationName),
+    check("column-shear", "Cisaillement du poteau · béton + cadres", shearDemandKn, concreteShearResistanceKn + tieShearResistanceKn, "kN", `VEd=${shearDemandKn.toFixed(2)} kN (Vx=${(demand.shearXKn ?? demand.shearKn).toFixed(2)}, Vy=${(demand.shearYKn ?? 0).toFixed(2)}); VEd ≤ VRd,c + VRd,s; τRd,c=${basis.concreteShearStressLimitMpa.toFixed(3)} MPa, d=${effectiveShearDepthMm.toFixed(0)} mm, Asw/s=${shearSteelPerSpacingMm2PerMm.toFixed(3)} mm²/mm. Vérifier la clause de cisaillement du règlement et le détail sismique applicable.`, combinationId, combinationName),
   ];
   if (isBael) {
     const anchorTop = demand.anchorageAvailableTopMm;
