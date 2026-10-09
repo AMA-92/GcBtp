@@ -1,0 +1,3437 @@
+{
+  "format": "gcbtp-complete-analytical-export",
+  "schemaVersion": 1,
+  "exportedAt": "2026-10-09T22:56:51.900Z",
+  "sourceFile": "Villa-R+2-corrige.gcbtp.json",
+  "project": {
+    "id": "6b706112-ef02-4048-a560-0cbf7073c7ae",
+    "name": "Villa R+2",
+    "updatedAt": "À l’instant",
+    "levels": [
+      {
+        "id": "foundation",
+        "label": "Fondation",
+        "elevation": "-1.00",
+        "height": "1.00",
+        "elements": [
+          {
+            "id": "S1",
+            "type": "Semelle",
+            "section": "S1",
+            "color": "#7620a8",
+            "x": 4,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 3
+            }
+          },
+          {
+            "id": "S2",
+            "type": "Semelle",
+            "section": "S1",
+            "color": "#7620a8",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "S3",
+            "type": "Semelle",
+            "section": "S1",
+            "color": "#7620a8",
+            "x": 4,
+            "y": 0,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 0
+            }
+          },
+          {
+            "id": "S4",
+            "type": "Semelle",
+            "section": "S1",
+            "color": "#7620a8",
+            "x": 0,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          {
+            "id": "P1",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "P2",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 0,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 0
+            }
+          },
+          {
+            "id": "P3",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          {
+            "id": "P4",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 3
+            }
+          }
+        ]
+      },
+      {
+        "id": "rdc",
+        "label": "RDC",
+        "elevation": "0.00",
+        "height": "3.20",
+        "elements": [
+          {
+            "id": "P5",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "P6",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 0,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 0
+            }
+          },
+          {
+            "id": "P7",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          {
+            "id": "P8",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 3
+            }
+          }
+        ]
+      },
+      {
+        "id": "r1",
+        "label": "R+1",
+        "elevation": "3.20",
+        "height": "3.20",
+        "elements": [
+          {
+            "id": "P9",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "P10",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 0,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 0
+            }
+          },
+          {
+            "id": "P11",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          {
+            "id": "P12",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 3
+            }
+          }
+        ]
+      },
+      {
+        "id": "r2",
+        "label": "R+2",
+        "elevation": "6.40",
+        "height": "3.20",
+        "elements": [
+          {
+            "id": "P13",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "P14",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 0,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 0
+            }
+          },
+          {
+            "id": "P15",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 0,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          {
+            "id": "P16",
+            "type": "Poteau",
+            "section": "Pot_20x30",
+            "color": "#27358f",
+            "x": 4,
+            "y": 4,
+            "originalCoordinates": {
+              "x": 3,
+              "y": 3
+            }
+          }
+        ]
+      }
+    ],
+    "city": "",
+    "location": "",
+    "structure": "Béton armé",
+    "norm": "BAEL 91 mod. 99",
+    "country": "Sénégal"
+  },
+  "workspace": {
+    "buildingConfig": {
+      "xAxes": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "yAxes": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "zLevels": [
+        "Fondation -1.00 m",
+        "RDC 0.00 m"
+      ],
+      "gridDistance": "4.00",
+      "loads": {
+        "permanent": true,
+        "exploitation": true,
+        "wind": false,
+        "seismic": false
+      },
+      "xNumbering": "numeric",
+      "yNumbering": "alpha",
+      "xDistances": [
+        "4.00",
+        "4.00",
+        "4.00"
+      ],
+      "yDistances": [
+        "4.00",
+        "4.00",
+        "4.00"
+      ],
+      "analyticalTolerance": "0.01",
+      "activeLevelId": "rdc"
+    },
+    "customModels": [],
+    "floorConfigs": {
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:rdc": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      },
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:r1": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      },
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:r2": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      },
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:foundation": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      }
+    },
+    "loadProgram": {
+      "schemaVersion": 1,
+      "selectedStandard": "BAEL 91 mod. 99",
+      "patterns": [
+        {
+          "id": "G",
+          "name": "Poids propre",
+          "category": "self-weight",
+          "unit": "kN",
+          "value": 0,
+          "source": "Géométrie/sections — calcul à confirmer",
+          "status": "calculated",
+          "direction": "vertical",
+          "selfWeightMultiplier": 1,
+          "enabled": true
+        },
+        {
+          "id": "Gsup",
+          "name": "Charges permanentes ajoutées",
+          "category": "permanent",
+          "unit": "kN",
+          "value": 0,
+          "source": "À saisir et associer à des éléments",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "Q",
+          "name": "Exploitation",
+          "category": "variable",
+          "unit": "kN",
+          "value": 0,
+          "source": "À saisir selon l’usage des locaux",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": true
+        },
+        {
+          "id": "partitions",
+          "name": "Cloisons et murs",
+          "category": "permanent",
+          "unit": "kN",
+          "value": 0,
+          "source": "À saisir et associer à des éléments",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "roof",
+          "name": "Toiture",
+          "category": "variable",
+          "unit": "kN",
+          "value": 0,
+          "source": "À confirmer selon le complexe et l’usage",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "windX",
+          "name": "Vent X",
+          "category": "wind",
+          "unit": "kN",
+          "value": 0,
+          "source": "Paramètres locaux requis",
+          "status": "to-confirm",
+          "direction": "x",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "windY",
+          "name": "Vent Y",
+          "category": "wind",
+          "unit": "kN",
+          "value": 0,
+          "source": "Paramètres locaux requis",
+          "status": "to-confirm",
+          "direction": "y",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "snow",
+          "name": "Neige",
+          "category": "snow",
+          "unit": "kN",
+          "value": 0,
+          "source": "Zone et altitude à confirmer",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "seismicX",
+          "name": "Séisme X",
+          "category": "seismic",
+          "unit": "kN",
+          "value": 0,
+          "source": "Zone, spectre et masse à confirmer",
+          "status": "to-confirm",
+          "direction": "x",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "seismicY",
+          "name": "Séisme Y",
+          "category": "seismic",
+          "unit": "kN",
+          "value": 0,
+          "source": "Zone, spectre et masse à confirmer",
+          "status": "to-confirm",
+          "direction": "y",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "temperature",
+          "name": "Température",
+          "category": "thermal",
+          "unit": "kN",
+          "value": 0,
+          "source": "Cas thermique non encore analysé",
+          "status": "to-confirm",
+          "direction": "none",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "settlement",
+          "name": "Tassement imposé",
+          "category": "settlement",
+          "unit": "kN",
+          "value": 0,
+          "source": "Déplacement imposé à définir",
+          "status": "to-confirm",
+          "direction": "none",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "accidental",
+          "name": "Accidentel / incendie",
+          "category": "accidental",
+          "unit": "kN",
+          "value": 0,
+          "source": "Scénario à définir selon le projet",
+          "status": "to-confirm",
+          "direction": "none",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        }
+      ],
+      "cases": [
+        {
+          "id": "case:G",
+          "name": "G — permanentes et poids propre",
+          "type": "linear-static",
+          "patternFactors": {
+            "G": 1,
+            "Gsup": 1,
+            "partitions": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:Q",
+          "name": "Q — exploitation",
+          "type": "linear-static",
+          "patternFactors": {
+            "Q": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:roof",
+          "name": "Toiture",
+          "type": "linear-static",
+          "patternFactors": {
+            "roof": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windX+",
+          "name": "Vent X +",
+          "type": "linear-static",
+          "patternFactors": {
+            "windX": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windX-",
+          "name": "Vent X −",
+          "type": "linear-static",
+          "patternFactors": {
+            "windX": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windY+",
+          "name": "Vent Y +",
+          "type": "linear-static",
+          "patternFactors": {
+            "windY": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windY-",
+          "name": "Vent Y −",
+          "type": "linear-static",
+          "patternFactors": {
+            "windY": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:snow",
+          "name": "Neige",
+          "type": "linear-static",
+          "patternFactors": {
+            "snow": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicX+",
+          "name": "Séisme X +",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicX": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicX-",
+          "name": "Séisme X −",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicX": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicY+",
+          "name": "Séisme Y +",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicY": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicY-",
+          "name": "Séisme Y −",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicY": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:temperature",
+          "name": "Température",
+          "type": "linear-static",
+          "patternFactors": {
+            "temperature": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:settlement",
+          "name": "Tassement",
+          "type": "linear-static",
+          "patternFactors": {
+            "settlement": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:accidental",
+          "name": "Accidentel",
+          "type": "linear-static",
+          "patternFactors": {
+            "accidental": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        }
+      ],
+      "combinations": [
+        {
+          "id": "comb:uls-gravity",
+          "name": "ELU gravitaire",
+          "category": "ULS",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.5,
+            "case:roof": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:sls-char",
+          "name": "ELS caractéristique",
+          "category": "SLS-characteristic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 1,
+            "case:roof": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:sls-frequent",
+          "name": "ELS fréquente",
+          "category": "SLS-frequent",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.5,
+            "case:roof": 0.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:sls-quasi",
+          "name": "ELS quasi-permanente",
+          "category": "SLS-quasi-permanent",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:roof": 0.3
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-x+",
+          "name": "ELU vent X +",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windX+": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-x-",
+          "name": "ELU vent X −",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windX-": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-y+",
+          "name": "ELU vent Y +",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windY+": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-y-",
+          "name": "ELU vent Y −",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windY-": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-snow",
+          "name": "ELU neige",
+          "category": "ULS",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.75,
+            "case:snow": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-x+",
+          "name": "Sismique X +",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicX+": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-x-",
+          "name": "Sismique X −",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicX-": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-y+",
+          "name": "Sismique Y +",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicY+": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-y-",
+          "name": "Sismique Y −",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicY-": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:accidental",
+          "name": "Accidentelle",
+          "category": "accidental",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:accidental": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        }
+      ],
+      "massSource": {
+        "id": "mass:default",
+        "name": "Source de masse préliminaire",
+        "patternFactors": {
+          "G": 1,
+          "Gsup": 1,
+          "partitions": 1,
+          "roof": 1,
+          "Q": 0.3
+        },
+        "gravityMPerS2": 9.80665,
+        "status": "provisional",
+        "note": "Fraction de Q provisoire ; la masse effective doit suivre la norme et l’usage retenus."
+      },
+      "reconciliation": {
+        "status": "BLOCKED_REQUIRES_PROJECT_CONFIRMATION",
+        "unit": "kN/m²",
+        "permanent": {
+          "detailedComponents": {
+            "finish": 1,
+            "ceiling": 0.3,
+            "partitions": 1,
+            "equipment": 0.5
+          },
+          "detailedSumExcludingRoof": 2.8,
+          "globalDeclared": 5.84,
+          "differenceGlobalMinusDetailedExcludingRoof": 3.04,
+          "roofLoad": 0.8,
+          "message": "Le total global Gk ne peut pas être remplacé automatiquement par la somme détaillée."
+        },
+        "imposed": {
+          "detailed": 2,
+          "globalDeclared": 1.5,
+          "differenceGlobalMinusDetailed": -0.5,
+          "message": "La charge détaillée et la charge globale doivent être validées selon l’usage réel."
+        },
+        "rule": "Aucune charge n’est additionnée deux fois et aucune valeur ne remplace silencieusement une autre."
+      }
+    },
+    "climateDraft": {
+      "schemaVersion": 1,
+      "sourceReference": "",
+      "sourceClaim": "user-input",
+      "altitudeM": "",
+      "terrainCategory": "",
+      "wind": {
+        "basicSpeedMPerS": "",
+        "exposureFactor": "",
+        "orographyFactor": "",
+        "topographyFactor": "",
+        "netPressureCoefficientX": "",
+        "netPressureCoefficientY": "",
+        "airDensityKgM3": "1.225"
+      },
+      "snow": {
+        "groundLoadKnM2": "",
+        "shapeCoefficient": "",
+        "exposureCoefficient": "",
+        "thermalCoefficient": "",
+        "asymmetryRatio": "0"
+      },
+      "seismic": {
+        "zone": "",
+        "soilClass": "",
+        "importanceClass": "",
+        "designLifeYears": "",
+        "referenceAccelerationG": "",
+        "importanceFactor": "",
+        "behaviourFactor": "",
+        "dampingFactor": "",
+        "spectrumText": "",
+        "storyStiffnessKnPerM": [
+          "",
+          "",
+          ""
+        ]
+      }
+    },
+    "visual": {
+      "threeD": false,
+      "showLabels": true,
+      "gridOpacity": "100",
+      "snapToGrid": true
+    },
+    "sectionCatalog": {
+      "Pot_20x30": {
+        "shape": "rectangular",
+        "widthMm": 200,
+        "depthMm": 300,
+        "source": "Dimensions inférées uniquement à partir de l’identifiant Pot_20x30",
+        "status": "A_CONFIRM_WITH_PROJECT_SECTION_CATALOG"
+      },
+      "S1": {
+        "shape": null,
+        "widthMm": null,
+        "depthMm": null,
+        "thicknessMm": null,
+        "source": "Aucune définition numérique dans le fichier source",
+        "status": "MISSING_SECTION_DEFINITION"
+      }
+    }
+  },
+  "structureSummary": {
+    "levels": [
+      {
+        "id": "foundation",
+        "label": "Fondation",
+        "elevation": "-1.00",
+        "height": "1.00",
+        "elementCount": 8
+      },
+      {
+        "id": "rdc",
+        "label": "RDC",
+        "elevation": "0.00",
+        "height": "3.20",
+        "elementCount": 4
+      },
+      {
+        "id": "r1",
+        "label": "R+1",
+        "elevation": "3.20",
+        "height": "3.20",
+        "elementCount": 4
+      },
+      {
+        "id": "r2",
+        "label": "R+2",
+        "elevation": "6.40",
+        "height": "3.20",
+        "elementCount": 4
+      }
+    ],
+    "elementCountByType": {
+      "Semelle": 4,
+      "Poteau": 16
+    },
+    "totalElementCount": 20,
+    "columns": [
+      {
+        "id": "P1",
+        "levelId": "foundation",
+        "levelLabel": "Fondation",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "P2",
+        "levelId": "foundation",
+        "levelLabel": "Fondation",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 0
+      },
+      {
+        "id": "P3",
+        "levelId": "foundation",
+        "levelLabel": "Fondation",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 4
+      },
+      {
+        "id": "P4",
+        "levelId": "foundation",
+        "levelLabel": "Fondation",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "P5",
+        "levelId": "rdc",
+        "levelLabel": "RDC",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "P6",
+        "levelId": "rdc",
+        "levelLabel": "RDC",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 0
+      },
+      {
+        "id": "P7",
+        "levelId": "rdc",
+        "levelLabel": "RDC",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 4
+      },
+      {
+        "id": "P8",
+        "levelId": "rdc",
+        "levelLabel": "RDC",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "P9",
+        "levelId": "r1",
+        "levelLabel": "R+1",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "P10",
+        "levelId": "r1",
+        "levelLabel": "R+1",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 0
+      },
+      {
+        "id": "P11",
+        "levelId": "r1",
+        "levelLabel": "R+1",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 4
+      },
+      {
+        "id": "P12",
+        "levelId": "r1",
+        "levelLabel": "R+1",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "P13",
+        "levelId": "r2",
+        "levelLabel": "R+2",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "P14",
+        "levelId": "r2",
+        "levelLabel": "R+2",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 0
+      },
+      {
+        "id": "P15",
+        "levelId": "r2",
+        "levelLabel": "R+2",
+        "section": "Pot_20x30",
+        "x": 0,
+        "y": 4
+      },
+      {
+        "id": "P16",
+        "levelId": "r2",
+        "levelLabel": "R+2",
+        "section": "Pot_20x30",
+        "x": 4,
+        "y": 4
+      }
+    ],
+    "grid": {
+      "xDistancesM": [
+        4,
+        4,
+        4
+      ],
+      "yDistancesM": [
+        4,
+        4,
+        4
+      ],
+      "xAxes": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "yAxes": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "nodeMergeToleranceM": 0.01
+    }
+  },
+  "analytical": {
+    "input": {
+      "levels": [
+        {
+          "id": "foundation",
+          "label": "Fondation",
+          "elevation": "-1.00",
+          "height": "1.00",
+          "elements": [
+            {
+              "id": "S1",
+              "type": "Semelle",
+              "section": "S1",
+              "color": "#7620a8",
+              "x": 4,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 3
+              }
+            },
+            {
+              "id": "S2",
+              "type": "Semelle",
+              "section": "S1",
+              "color": "#7620a8",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "S3",
+              "type": "Semelle",
+              "section": "S1",
+              "color": "#7620a8",
+              "x": 4,
+              "y": 0,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 0
+              }
+            },
+            {
+              "id": "S4",
+              "type": "Semelle",
+              "section": "S1",
+              "color": "#7620a8",
+              "x": 0,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 0,
+                "y": 3
+              }
+            },
+            {
+              "id": "P1",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "P2",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 0,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 0
+              }
+            },
+            {
+              "id": "P3",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 0,
+                "y": 3
+              }
+            },
+            {
+              "id": "P4",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "rdc",
+          "label": "RDC",
+          "elevation": "0.00",
+          "height": "3.20",
+          "elements": [
+            {
+              "id": "P5",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "P6",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 0,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 0
+              }
+            },
+            {
+              "id": "P7",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 0,
+                "y": 3
+              }
+            },
+            {
+              "id": "P8",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "r1",
+          "label": "R+1",
+          "elevation": "3.20",
+          "height": "3.20",
+          "elements": [
+            {
+              "id": "P9",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "P10",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 0,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 0
+              }
+            },
+            {
+              "id": "P11",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 0,
+                "y": 3
+              }
+            },
+            {
+              "id": "P12",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 3
+              }
+            }
+          ]
+        },
+        {
+          "id": "r2",
+          "label": "R+2",
+          "elevation": "6.40",
+          "height": "3.20",
+          "elements": [
+            {
+              "id": "P13",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "P14",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 0,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 0
+              }
+            },
+            {
+              "id": "P15",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 0,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 0,
+                "y": 3
+              }
+            },
+            {
+              "id": "P16",
+              "type": "Poteau",
+              "section": "Pot_20x30",
+              "color": "#27358f",
+              "x": 4,
+              "y": 4,
+              "originalCoordinates": {
+                "x": 3,
+                "y": 3
+              }
+            }
+          ]
+        }
+      ],
+      "xDistancesM": [
+        4,
+        4,
+        4
+      ],
+      "yDistancesM": [
+        4,
+        4,
+        4
+      ],
+      "nodeMergeToleranceM": 0.01,
+      "structure": "Béton armé",
+      "concreteClass": "C25/30",
+      "modelCatalog": [
+        {
+          "family": "Poteau (Rect)",
+          "type": "Poteau",
+          "name": "Pot_20x30",
+          "dimensions": "0.20 × 0.30 m",
+          "color": "#27358f"
+        },
+        {
+          "family": "Poteau (Rect)",
+          "type": "Poteau",
+          "name": "Pot_25x25",
+          "dimensions": "0.25 × 0.25 m",
+          "color": "#604239"
+        },
+        {
+          "family": "Poteau (Cir)",
+          "type": "Poteau",
+          "name": "Pot_D25",
+          "dimensions": "0.25 m",
+          "color": "#ed5b00"
+        },
+        {
+          "family": "Poutre",
+          "type": "Poutre",
+          "name": "Poutre_20x40",
+          "dimensions": "0.20 × 0.40 m",
+          "color": "#2f8735"
+        },
+        {
+          "family": "Voile",
+          "type": "Voile",
+          "name": "Voile_20cm",
+          "dimensions": "0.20 × 3.20 m",
+          "color": "#7556b3"
+        },
+        {
+          "family": "Voile",
+          "type": "Voile",
+          "name": "Voile_25cm",
+          "dimensions": "0.25 × 3.20 m",
+          "color": "#5d4194"
+        },
+        {
+          "family": "Longrine de redressement",
+          "type": "Longrine de redressement",
+          "name": "Longrine_20x40",
+          "dimensions": "0.20 × 0.40 m",
+          "color": "#d47b16"
+        },
+        {
+          "family": "Semelle",
+          "type": "Semelle",
+          "name": "S1",
+          "dimensions": "1.00 × 1.00 × 0.30 m",
+          "color": "#7620a8"
+        },
+        {
+          "family": "Plancher (Corps Creux)",
+          "type": "Dalle",
+          "name": "Pl_16+4",
+          "dimensions": "0.16 × 0.04 × 3.00 × 1.50 m",
+          "color": "#0e8d96"
+        },
+        {
+          "family": "Plancher (Dalle BA)",
+          "type": "Dalle",
+          "name": "Pl_E20",
+          "dimensions": "0.20 × 3.00 × 1.50 m",
+          "color": "#d92b2b"
+        },
+        {
+          "family": "Balcon",
+          "type": "Balcon",
+          "name": "Balcon BA 20 cm",
+          "dimensions": "0.20 × 3.00 × 1.50 m",
+          "color": "#148477"
+        },
+        {
+          "family": "Escaliers",
+          "type": "Escaliers",
+          "name": "Escalier BA 15 cm",
+          "dimensions": "0.15 × 3.00 × 1.20 m",
+          "color": "#e87538"
+        }
+      ]
+    },
+    "model": {
+      "schemaVersion": 2,
+      "units": {
+        "length": "m",
+        "force": "kN",
+        "stress": "kN/m²",
+        "moment": "kN·m"
+      },
+      "nodeMergeToleranceM": 0.01,
+      "nodes": [
+        {
+          "id": "N00001",
+          "x": 15.5,
+          "y": 15.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S1"
+          ]
+        },
+        {
+          "id": "N00002",
+          "x": 16.5,
+          "y": 15.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S1"
+          ]
+        },
+        {
+          "id": "N00003",
+          "x": 16.5,
+          "y": 16.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S1"
+          ]
+        },
+        {
+          "id": "N00004",
+          "x": 15.5,
+          "y": 16.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S1"
+          ]
+        },
+        {
+          "id": "N00005",
+          "x": -0.5,
+          "y": -0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S2"
+          ]
+        },
+        {
+          "id": "N00006",
+          "x": 0.5,
+          "y": -0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S2"
+          ]
+        },
+        {
+          "id": "N00007",
+          "x": 0.5,
+          "y": 0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S2"
+          ]
+        },
+        {
+          "id": "N00008",
+          "x": -0.5,
+          "y": 0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S2"
+          ]
+        },
+        {
+          "id": "N00009",
+          "x": 15.5,
+          "y": -0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S3"
+          ]
+        },
+        {
+          "id": "N00010",
+          "x": 16.5,
+          "y": -0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S3"
+          ]
+        },
+        {
+          "id": "N00011",
+          "x": 16.5,
+          "y": 0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S3"
+          ]
+        },
+        {
+          "id": "N00012",
+          "x": 15.5,
+          "y": 0.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S3"
+          ]
+        },
+        {
+          "id": "N00013",
+          "x": -0.5,
+          "y": 15.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S4"
+          ]
+        },
+        {
+          "id": "N00014",
+          "x": 0.5,
+          "y": 15.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S4"
+          ]
+        },
+        {
+          "id": "N00015",
+          "x": 0.5,
+          "y": 16.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S4"
+          ]
+        },
+        {
+          "id": "N00016",
+          "x": -0.5,
+          "y": 16.5,
+          "z": -1.35,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "S4"
+          ]
+        },
+        {
+          "id": "N00017",
+          "x": 0,
+          "y": 0,
+          "z": -1.1700000000000002,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "P1"
+          ]
+        },
+        {
+          "id": "N00018",
+          "x": 0,
+          "y": 0,
+          "z": -0.15000000000000002,
+          "levelIds": [
+            "foundation",
+            "rdc"
+          ],
+          "sourceElementIds": [
+            "P1",
+            "P5"
+          ]
+        },
+        {
+          "id": "N00019",
+          "x": 16,
+          "y": 0,
+          "z": -1.1700000000000002,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "P2"
+          ]
+        },
+        {
+          "id": "N00020",
+          "x": 16,
+          "y": 0,
+          "z": -0.15000000000000002,
+          "levelIds": [
+            "foundation",
+            "rdc"
+          ],
+          "sourceElementIds": [
+            "P2",
+            "P6"
+          ]
+        },
+        {
+          "id": "N00021",
+          "x": 0,
+          "y": 16,
+          "z": -1.1700000000000002,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "P3"
+          ]
+        },
+        {
+          "id": "N00022",
+          "x": 0,
+          "y": 16,
+          "z": -0.15000000000000002,
+          "levelIds": [
+            "foundation",
+            "rdc"
+          ],
+          "sourceElementIds": [
+            "P3",
+            "P7"
+          ]
+        },
+        {
+          "id": "N00023",
+          "x": 16,
+          "y": 16,
+          "z": -1.1700000000000002,
+          "levelIds": [
+            "foundation"
+          ],
+          "sourceElementIds": [
+            "P4"
+          ]
+        },
+        {
+          "id": "N00024",
+          "x": 16,
+          "y": 16,
+          "z": -0.15000000000000002,
+          "levelIds": [
+            "foundation",
+            "rdc"
+          ],
+          "sourceElementIds": [
+            "P4",
+            "P8"
+          ]
+        },
+        {
+          "id": "N00025",
+          "x": 0,
+          "y": 0,
+          "z": 3.2,
+          "levelIds": [
+            "rdc",
+            "r1"
+          ],
+          "sourceElementIds": [
+            "P5",
+            "P9"
+          ]
+        },
+        {
+          "id": "N00026",
+          "x": 16,
+          "y": 0,
+          "z": 3.2,
+          "levelIds": [
+            "rdc",
+            "r1"
+          ],
+          "sourceElementIds": [
+            "P6",
+            "P10"
+          ]
+        },
+        {
+          "id": "N00027",
+          "x": 0,
+          "y": 16,
+          "z": 3.2,
+          "levelIds": [
+            "rdc",
+            "r1"
+          ],
+          "sourceElementIds": [
+            "P7",
+            "P11"
+          ]
+        },
+        {
+          "id": "N00028",
+          "x": 16,
+          "y": 16,
+          "z": 3.2,
+          "levelIds": [
+            "rdc",
+            "r1"
+          ],
+          "sourceElementIds": [
+            "P8",
+            "P12"
+          ]
+        },
+        {
+          "id": "N00029",
+          "x": 0,
+          "y": 0,
+          "z": 6.4,
+          "levelIds": [
+            "r1",
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P9",
+            "P13"
+          ]
+        },
+        {
+          "id": "N00030",
+          "x": 16,
+          "y": 0,
+          "z": 6.4,
+          "levelIds": [
+            "r1",
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P10",
+            "P14"
+          ]
+        },
+        {
+          "id": "N00031",
+          "x": 0,
+          "y": 16,
+          "z": 6.4,
+          "levelIds": [
+            "r1",
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P11",
+            "P15"
+          ]
+        },
+        {
+          "id": "N00032",
+          "x": 16,
+          "y": 16,
+          "z": 6.4,
+          "levelIds": [
+            "r1",
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P12",
+            "P16"
+          ]
+        },
+        {
+          "id": "N00033",
+          "x": 0,
+          "y": 0,
+          "z": 9.600000000000001,
+          "levelIds": [
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P13"
+          ]
+        },
+        {
+          "id": "N00034",
+          "x": 16,
+          "y": 0,
+          "z": 9.600000000000001,
+          "levelIds": [
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P14"
+          ]
+        },
+        {
+          "id": "N00035",
+          "x": 0,
+          "y": 16,
+          "z": 9.600000000000001,
+          "levelIds": [
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P15"
+          ]
+        },
+        {
+          "id": "N00036",
+          "x": 16,
+          "y": 16,
+          "z": 9.600000000000001,
+          "levelIds": [
+            "r2"
+          ],
+          "sourceElementIds": [
+            "P16"
+          ]
+        }
+      ],
+      "frames": [
+        {
+          "id": "F:P1",
+          "sourceElementId": "P1",
+          "sourceType": "Poteau",
+          "startNodeId": "N00017",
+          "endNodeId": "N00018",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P2",
+          "sourceElementId": "P2",
+          "sourceType": "Poteau",
+          "startNodeId": "N00019",
+          "endNodeId": "N00020",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P3",
+          "sourceElementId": "P3",
+          "sourceType": "Poteau",
+          "startNodeId": "N00021",
+          "endNodeId": "N00022",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P4",
+          "sourceElementId": "P4",
+          "sourceType": "Poteau",
+          "startNodeId": "N00023",
+          "endNodeId": "N00024",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P5",
+          "sourceElementId": "P5",
+          "sourceType": "Poteau",
+          "startNodeId": "N00018",
+          "endNodeId": "N00025",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "rdc",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P6",
+          "sourceElementId": "P6",
+          "sourceType": "Poteau",
+          "startNodeId": "N00020",
+          "endNodeId": "N00026",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "rdc",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P7",
+          "sourceElementId": "P7",
+          "sourceType": "Poteau",
+          "startNodeId": "N00022",
+          "endNodeId": "N00027",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "rdc",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P8",
+          "sourceElementId": "P8",
+          "sourceType": "Poteau",
+          "startNodeId": "N00024",
+          "endNodeId": "N00028",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "rdc",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P9",
+          "sourceElementId": "P9",
+          "sourceType": "Poteau",
+          "startNodeId": "N00025",
+          "endNodeId": "N00029",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r1",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P10",
+          "sourceElementId": "P10",
+          "sourceType": "Poteau",
+          "startNodeId": "N00026",
+          "endNodeId": "N00030",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r1",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P11",
+          "sourceElementId": "P11",
+          "sourceType": "Poteau",
+          "startNodeId": "N00027",
+          "endNodeId": "N00031",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r1",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P12",
+          "sourceElementId": "P12",
+          "sourceType": "Poteau",
+          "startNodeId": "N00028",
+          "endNodeId": "N00032",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r1",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P13",
+          "sourceElementId": "P13",
+          "sourceType": "Poteau",
+          "startNodeId": "N00029",
+          "endNodeId": "N00033",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r2",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P14",
+          "sourceElementId": "P14",
+          "sourceType": "Poteau",
+          "startNodeId": "N00030",
+          "endNodeId": "N00034",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r2",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P15",
+          "sourceElementId": "P15",
+          "sourceType": "Poteau",
+          "startNodeId": "N00031",
+          "endNodeId": "N00035",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r2",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "F:P16",
+          "sourceElementId": "P16",
+          "sourceType": "Poteau",
+          "startNodeId": "N00032",
+          "endNodeId": "N00036",
+          "sectionId": "section:Poteau:Pot_20x30",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "r2",
+          "releases": {
+            "start": [],
+            "end": []
+          },
+          "eccentricityM": {
+            "start": [
+              0,
+              0,
+              0
+            ],
+            "end": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "surfaces": [
+        {
+          "id": "S:S1:1",
+          "sourceElementId": "S1",
+          "sourceType": "Semelle",
+          "kind": "footing",
+          "nodeIds": [
+            "N00001",
+            "N00002",
+            "N00003",
+            "N00004"
+          ],
+          "sectionId": "section:Semelle:S1",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "openings": []
+        },
+        {
+          "id": "S:S2:1",
+          "sourceElementId": "S2",
+          "sourceType": "Semelle",
+          "kind": "footing",
+          "nodeIds": [
+            "N00005",
+            "N00006",
+            "N00007",
+            "N00008"
+          ],
+          "sectionId": "section:Semelle:S1",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "openings": []
+        },
+        {
+          "id": "S:S3:1",
+          "sourceElementId": "S3",
+          "sourceType": "Semelle",
+          "kind": "footing",
+          "nodeIds": [
+            "N00009",
+            "N00010",
+            "N00011",
+            "N00012"
+          ],
+          "sectionId": "section:Semelle:S1",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "openings": []
+        },
+        {
+          "id": "S:S4:1",
+          "sourceElementId": "S4",
+          "sourceType": "Semelle",
+          "kind": "footing",
+          "nodeIds": [
+            "N00013",
+            "N00014",
+            "N00015",
+            "N00016"
+          ],
+          "sectionId": "section:Semelle:S1",
+          "materialId": "material:concrete:C25/30",
+          "levelId": "foundation",
+          "openings": []
+        }
+      ],
+      "supports": [
+        {
+          "id": "SUP:S2:P1",
+          "sourceElementId": "S2",
+          "nodeId": "N00017",
+          "kind": "fixed-base",
+          "role": "column-base",
+          "restrainedDofs": [
+            "ux",
+            "uy",
+            "uz",
+            "rx",
+            "ry",
+            "rz"
+          ],
+          "selectionReason": "Poteau directement posé sur une semelle identifiée au même nœud ; encastrement de base retenu par défaut.",
+          "status": "inferred-from-footing"
+        },
+        {
+          "id": "SUP:S3:P2",
+          "sourceElementId": "S3",
+          "nodeId": "N00019",
+          "kind": "fixed-base",
+          "role": "column-base",
+          "restrainedDofs": [
+            "ux",
+            "uy",
+            "uz",
+            "rx",
+            "ry",
+            "rz"
+          ],
+          "selectionReason": "Poteau directement posé sur une semelle identifiée au même nœud ; encastrement de base retenu par défaut.",
+          "status": "inferred-from-footing"
+        },
+        {
+          "id": "SUP:S4:P3",
+          "sourceElementId": "S4",
+          "nodeId": "N00021",
+          "kind": "fixed-base",
+          "role": "column-base",
+          "restrainedDofs": [
+            "ux",
+            "uy",
+            "uz",
+            "rx",
+            "ry",
+            "rz"
+          ],
+          "selectionReason": "Poteau directement posé sur une semelle identifiée au même nœud ; encastrement de base retenu par défaut.",
+          "status": "inferred-from-footing"
+        },
+        {
+          "id": "SUP:S1:P4",
+          "sourceElementId": "S1",
+          "nodeId": "N00023",
+          "kind": "fixed-base",
+          "role": "column-base",
+          "restrainedDofs": [
+            "ux",
+            "uy",
+            "uz",
+            "rx",
+            "ry",
+            "rz"
+          ],
+          "selectionReason": "Poteau directement posé sur une semelle identifiée au même nœud ; encastrement de base retenu par défaut.",
+          "status": "inferred-from-footing"
+        }
+      ],
+      "connections": [],
+      "materials": [
+        {
+          "id": "material:concrete:C25/30",
+          "name": "Béton C25/30 — catalogue",
+          "elasticModulusKnM2": 31476000,
+          "poissonRatio": 0.2,
+          "densityKnM3": 25,
+          "provenance": "model-catalog",
+          "concreteClass": "C25/30",
+          "fckMpa": 25,
+          "fcdMpa": 14.17,
+          "fctmMpa": 2.56,
+          "coverMm": 30
+        }
+      ],
+      "sections": [
+        {
+          "id": "section:Semelle:S1",
+          "name": "S1",
+          "shape": "rectangle",
+          "dimensionsM": [
+            1,
+            1,
+            0.3
+          ],
+          "areaM2": 1,
+          "inertiaY4M4": 0.08333333333333333,
+          "inertiaZ4M4": 0.08333333333333333,
+          "torsionConstantM4": 0.14083333333333334,
+          "provenance": "model-catalog"
+        },
+        {
+          "id": "section:Poteau:Pot_20x30",
+          "name": "Pot_20x30",
+          "shape": "rectangle",
+          "dimensionsM": [
+            0.2,
+            0.3
+          ],
+          "areaM2": 0.06,
+          "inertiaY4M4": 0.00044999999999999993,
+          "inertiaZ4M4": 0.00020000000000000006,
+          "torsionConstantM4": 0.00046953086419753093,
+          "provenance": "model-catalog"
+        }
+      ],
+      "mesh": {
+        "globalSizeM": 1,
+        "maxAspectRatio": 5,
+        "refinementRegions": []
+      },
+      "sourceElementIds": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P8",
+        "P9",
+        "P10",
+        "P11",
+        "P12",
+        "P13",
+        "P14",
+        "P15",
+        "P16"
+      ]
+    },
+    "precheck": {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "checkedNodeCount": 36,
+      "checkedFrameCount": 16,
+      "checkedSurfaceCount": 4,
+      "supportedComponentCount": 1
+    },
+    "validation": {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "checkedNodeCount": 36,
+      "checkedFrameCount": 16,
+      "checkedSurfaceCount": 4,
+      "supportedComponentCount": 1
+    },
+    "counts": {
+      "nodes": 36,
+      "frames": 16,
+      "surfaces": 4,
+      "supports": 4,
+      "materials": 1,
+      "sections": 2
+    }
+  },
+  "calculations": {
+    "status": "inputs-and-analytical-precheck-exported",
+    "note": "Le fichier source local contient la structure, l’espace de travail et les paramètres de charges, mais pas un résultat de solveur sauvegardé au moment de l’export. Les résultats numériques d’une nouvelle analyse doivent être générés après validation du maillage et des cas de charge dans l’application.",
+    "loadProgram": {
+      "schemaVersion": 1,
+      "selectedStandard": "BAEL 91 mod. 99",
+      "patterns": [
+        {
+          "id": "G",
+          "name": "Poids propre",
+          "category": "self-weight",
+          "unit": "kN",
+          "value": 0,
+          "source": "Géométrie/sections — calcul à confirmer",
+          "status": "calculated",
+          "direction": "vertical",
+          "selfWeightMultiplier": 1,
+          "enabled": true
+        },
+        {
+          "id": "Gsup",
+          "name": "Charges permanentes ajoutées",
+          "category": "permanent",
+          "unit": "kN",
+          "value": 0,
+          "source": "À saisir et associer à des éléments",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "Q",
+          "name": "Exploitation",
+          "category": "variable",
+          "unit": "kN",
+          "value": 0,
+          "source": "À saisir selon l’usage des locaux",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": true
+        },
+        {
+          "id": "partitions",
+          "name": "Cloisons et murs",
+          "category": "permanent",
+          "unit": "kN",
+          "value": 0,
+          "source": "À saisir et associer à des éléments",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "roof",
+          "name": "Toiture",
+          "category": "variable",
+          "unit": "kN",
+          "value": 0,
+          "source": "À confirmer selon le complexe et l’usage",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "windX",
+          "name": "Vent X",
+          "category": "wind",
+          "unit": "kN",
+          "value": 0,
+          "source": "Paramètres locaux requis",
+          "status": "to-confirm",
+          "direction": "x",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "windY",
+          "name": "Vent Y",
+          "category": "wind",
+          "unit": "kN",
+          "value": 0,
+          "source": "Paramètres locaux requis",
+          "status": "to-confirm",
+          "direction": "y",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "snow",
+          "name": "Neige",
+          "category": "snow",
+          "unit": "kN",
+          "value": 0,
+          "source": "Zone et altitude à confirmer",
+          "status": "to-confirm",
+          "direction": "vertical",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "seismicX",
+          "name": "Séisme X",
+          "category": "seismic",
+          "unit": "kN",
+          "value": 0,
+          "source": "Zone, spectre et masse à confirmer",
+          "status": "to-confirm",
+          "direction": "x",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "seismicY",
+          "name": "Séisme Y",
+          "category": "seismic",
+          "unit": "kN",
+          "value": 0,
+          "source": "Zone, spectre et masse à confirmer",
+          "status": "to-confirm",
+          "direction": "y",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "temperature",
+          "name": "Température",
+          "category": "thermal",
+          "unit": "kN",
+          "value": 0,
+          "source": "Cas thermique non encore analysé",
+          "status": "to-confirm",
+          "direction": "none",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "settlement",
+          "name": "Tassement imposé",
+          "category": "settlement",
+          "unit": "kN",
+          "value": 0,
+          "source": "Déplacement imposé à définir",
+          "status": "to-confirm",
+          "direction": "none",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        },
+        {
+          "id": "accidental",
+          "name": "Accidentel / incendie",
+          "category": "accidental",
+          "unit": "kN",
+          "value": 0,
+          "source": "Scénario à définir selon le projet",
+          "status": "to-confirm",
+          "direction": "none",
+          "selfWeightMultiplier": 0,
+          "enabled": false
+        }
+      ],
+      "cases": [
+        {
+          "id": "case:G",
+          "name": "G — permanentes et poids propre",
+          "type": "linear-static",
+          "patternFactors": {
+            "G": 1,
+            "Gsup": 1,
+            "partitions": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:Q",
+          "name": "Q — exploitation",
+          "type": "linear-static",
+          "patternFactors": {
+            "Q": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:roof",
+          "name": "Toiture",
+          "type": "linear-static",
+          "patternFactors": {
+            "roof": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windX+",
+          "name": "Vent X +",
+          "type": "linear-static",
+          "patternFactors": {
+            "windX": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windX-",
+          "name": "Vent X −",
+          "type": "linear-static",
+          "patternFactors": {
+            "windX": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windY+",
+          "name": "Vent Y +",
+          "type": "linear-static",
+          "patternFactors": {
+            "windY": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:windY-",
+          "name": "Vent Y −",
+          "type": "linear-static",
+          "patternFactors": {
+            "windY": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:snow",
+          "name": "Neige",
+          "type": "linear-static",
+          "patternFactors": {
+            "snow": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicX+",
+          "name": "Séisme X +",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicX": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicX-",
+          "name": "Séisme X −",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicX": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicY+",
+          "name": "Séisme Y +",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicY": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:seismicY-",
+          "name": "Séisme Y −",
+          "type": "linear-static",
+          "patternFactors": {
+            "seismicY": -1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:temperature",
+          "name": "Température",
+          "type": "linear-static",
+          "patternFactors": {
+            "temperature": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:settlement",
+          "name": "Tassement",
+          "type": "linear-static",
+          "patternFactors": {
+            "settlement": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        },
+        {
+          "id": "case:accidental",
+          "name": "Accidentel",
+          "type": "linear-static",
+          "patternFactors": {
+            "accidental": 1
+          },
+          "enabled": true,
+          "provenance": "automatic",
+          "status": "provisional"
+        }
+      ],
+      "combinations": [
+        {
+          "id": "comb:uls-gravity",
+          "name": "ELU gravitaire",
+          "category": "ULS",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.5,
+            "case:roof": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:sls-char",
+          "name": "ELS caractéristique",
+          "category": "SLS-characteristic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 1,
+            "case:roof": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:sls-frequent",
+          "name": "ELS fréquente",
+          "category": "SLS-frequent",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.5,
+            "case:roof": 0.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:sls-quasi",
+          "name": "ELS quasi-permanente",
+          "category": "SLS-quasi-permanent",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:roof": 0.3
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-x+",
+          "name": "ELU vent X +",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windX+": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-x-",
+          "name": "ELU vent X −",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windX-": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-y+",
+          "name": "ELU vent Y +",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windY+": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-wind-y-",
+          "name": "ELU vent Y −",
+          "category": "wind",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.05,
+            "case:windY-": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:uls-snow",
+          "name": "ELU neige",
+          "category": "ULS",
+          "caseFactors": {
+            "case:G": 1.35,
+            "case:Q": 1.75,
+            "case:snow": 1.5
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-x+",
+          "name": "Sismique X +",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicX+": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-x-",
+          "name": "Sismique X −",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicX-": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-y+",
+          "name": "Sismique Y +",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicY+": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:seismic-y-",
+          "name": "Sismique Y −",
+          "category": "seismic",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:seismicY-": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        },
+        {
+          "id": "comb:accidental",
+          "name": "Accidentelle",
+          "category": "accidental",
+          "caseFactors": {
+            "case:G": 1,
+            "case:Q": 0.3,
+            "case:accidental": 1
+          },
+          "enabled": true,
+          "origin": "automatic",
+          "status": "provisional",
+          "note": "Coefficients génériques provisoires — à confirmer avec la norme et l’annexe nationale du projet."
+        }
+      ],
+      "massSource": {
+        "id": "mass:default",
+        "name": "Source de masse préliminaire",
+        "patternFactors": {
+          "G": 1,
+          "Gsup": 1,
+          "partitions": 1,
+          "roof": 1,
+          "Q": 0.3
+        },
+        "gravityMPerS2": 9.80665,
+        "status": "provisional",
+        "note": "Fraction de Q provisoire ; la masse effective doit suivre la norme et l’usage retenus."
+      },
+      "reconciliation": {
+        "status": "BLOCKED_REQUIRES_PROJECT_CONFIRMATION",
+        "unit": "kN/m²",
+        "permanent": {
+          "detailedComponents": {
+            "finish": 1,
+            "ceiling": 0.3,
+            "partitions": 1,
+            "equipment": 0.5
+          },
+          "detailedSumExcludingRoof": 2.8,
+          "globalDeclared": 5.84,
+          "differenceGlobalMinusDetailedExcludingRoof": 3.04,
+          "roofLoad": 0.8,
+          "message": "Le total global Gk ne peut pas être remplacé automatiquement par la somme détaillée."
+        },
+        "imposed": {
+          "detailed": 2,
+          "globalDeclared": 1.5,
+          "differenceGlobalMinusDetailed": -0.5,
+          "message": "La charge détaillée et la charge globale doivent être validées selon l’usage réel."
+        },
+        "rule": "Aucune charge n’est additionnée deux fois et aucune valeur ne remplace silencieusement une autre."
+      }
+    },
+    "floorConfigs": {
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:rdc": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      },
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:r1": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      },
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:r2": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      },
+      "6b706112-ef02-4048-a560-0cbf7073c7ae:foundation": {
+        "type": "Corps creux",
+        "thickness": "16+4 cm",
+        "span": "4.00",
+        "direction": "X",
+        "hollowBlockHeight": "16",
+        "compressionSlab": "4",
+        "ribWidth": "12",
+        "concreteClass": "C25/30",
+        "finishLoad": "1.00",
+        "ceilingLoad": "0.30",
+        "partitionLoad": "1.00",
+        "equipmentLoad": "0.50",
+        "imposedLoad": "2.00",
+        "roofLoad": "0.80",
+        "characteristicPermanentLoad": "5.84",
+        "characteristicImposedLoad": "1.50"
+      }
+    },
+    "availableCalculationInputs": {
+      "projectGeometry": true,
+      "grid": true,
+      "materials": true,
+      "loadProgram": true,
+      "floorLoads": true,
+      "solverResultsPersisted": false
+    }
+  },
+  "columnCalculationEngine": {
+    "implementation": {
+      "sourceFile": "shared/column-design-engine.ts",
+      "integratedDesignFile": "shared/rc-design.ts",
+      "independence": "Le nouveau moteur autonome ne réutilise pas les anciens moteurs BAEL/EC2 pour son cœur de vérification.",
+      "currentApplicationPhase": "prédimensionnement puis vérification de la disposition sélectionnée"
+    },
+    "inputs": [
+      "Référentiel : BAEL 91 mod. 99 ou Eurocode 2",
+      "Géométrie : largeur, profondeur, hauteur libre, longueur de flambement et orientation",
+      "Matériaux : fck, fyk, gammaC, gammaS, alphaCC, enrobage",
+      "Actions : NEd, MEdx, MEdy, ou Gk/Qk servant à construire les combinaisons",
+      "Ferraillage : barres longitudinales réelles avec diamètre et coordonnées, cadres et espacement",
+      "Catalogue : diamètres disponibles, nombre de barres imposé et sélections mixtes éventuelles"
+    ],
+    "workflow": [
+      {
+        "step": 1,
+        "name": "Précontrôles",
+        "description": "Vérification de la géométrie, des matériaux, du référentiel, des efforts et des données nécessaires."
+      },
+      {
+        "step": 2,
+        "name": "Géométrie de section",
+        "description": "Calcul de l’aire, des inerties, des rayons de giration et du périmètre."
+      },
+      {
+        "step": 3,
+        "name": "Prédimensionnement",
+        "description": "Recherche d’une section et d’une aire d’acier compatibles avec les efforts, les taux minimal/maximal et les espacements."
+      },
+      {
+        "step": 4,
+        "name": "Catalogue HA",
+        "description": "Si aucun diamètre ni nombre n’est imposé, le moteur choisit automatiquement. Sinon, il respecte exactement le nombre choisi et limite la recherche aux diamètres sélectionnés."
+      },
+      {
+        "step": 5,
+        "name": "Composition mixte",
+        "description": "Pour plusieurs diamètres et un nombre imposé, énumération des répartitions possibles puis sélection de la combinaison dont l’aire est la plus proche au-dessus de l’aire requise."
+      },
+      {
+        "step": 6,
+        "name": "Second ordre",
+        "description": "Prise en compte de la longueur efficace, de la finesse et des moments de second ordre lorsque le domaine réglementaire l’exige."
+      },
+      {
+        "step": 7,
+        "name": "Interaction biaxiale",
+        "description": "Contrôle combiné de l’effort normal et des moments Mx/My par rapport aux résistances disponibles."
+      },
+      {
+        "step": 8,
+        "name": "Détails",
+        "description": "Contrôle de l’espacement libre, du pas des cadres, du nombre minimal de barres, des taux d’acier et, lorsque demandé, de l’ancrage."
+      },
+      {
+        "step": 9,
+        "name": "Traçabilité",
+        "description": "Production des hypothèses, formules, avertissements, statuts et composition proposée."
+      }
+    ],
+    "selectionModes": {
+      "automatic": "Aucun nombre et aucun acier sélectionné : le moteur choisit diamètre et nombre automatiquement.",
+      "countOnly": "Nombre imposé : le nombre est strictement conservé ; le diamètre est choisi automatiquement.",
+      "diametersOnly": "Diamètre(s) imposé(s) : seuls ces diamètres sont utilisés ; le nombre est recherché automatiquement.",
+      "countAndDiameters": "Nombre et diamètre(s) imposés : le nombre est strictement conservé et une combinaison mixte est recherchée parmi les diamètres sélectionnés."
+    },
+    "formulas": {
+      "barArea": "AΦ = π·Φ²/4",
+      "steelArea": "As = Σ(nᵢ·AΦᵢ)",
+      "axialResistanceSimplified": "NRd = [0,8·(Ac−As)·fcd + As·fyd] / 1000",
+      "interaction": "η = NEd/NRd + MEdx/MRdx + MEdy/MRdy ≤ 1",
+      "baelAnchorage": "ls = Φ·fe/(4·τsu), avec τsu = 0,6·ψs²·ft28",
+      "eurocodeAnchorage": "lb,rqd = Φ/4·σsd/fbd, avec fbd = 2,25·η1·η2·fctd"
+    },
+    "statuses": [
+      "satisfaisant",
+      "non satisfaisant",
+      "bloqué",
+      "à vérifier",
+      "en attente du ferraillage"
+    ]
+  },
+  "filesAndReferences": {
+    "analyticalModelSource": "shared/analytical-model.ts",
+    "columnEngineSource": "shared/column-design-engine.ts",
+    "integratedReinforcedConcreteSource": "shared/rc-design.ts",
+    "userInterfaceSource": "client/src/components/BuildingCreateFlow.tsx",
+    "validationTests": [
+      "server/column-design-engine.test.ts",
+      "server/rc-design.test.ts"
+    ]
+  },
+  "warnings": [
+    "Ce fichier est un export de calcul et de traçabilité, pas une note de calcul réglementaire signée.",
+    "Les annexes nationales, hypothèses de charges, fondations, vent et séisme doivent être validés pour une étude d’exécution."
+  ]
+}

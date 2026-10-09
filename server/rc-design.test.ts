@@ -167,6 +167,29 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(result.elements[0].checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
   });
 
+  it("sélectionne automatiquement une composition mixte pour le nombre de barres imposé", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(),
+      members: [{ id: "PM", type: "column", combinationId: "comb:uls", combinationName: "ELU mixte", sectionWidthMm: 300, sectionDepthMm: 300, lengthMm: 3200, axialKn: 320, shearKn: 0, momentKnM: 8, momentXKnM: 8, momentYKnM: 0 }],
+      slabs: [],
+      overrides: { "PM:longitudinal": { diameterMm: 16, count: 8, diameters: [12, 16] } },
+    });
+    const proposal = result.elements[0].reinforcement.find(item => item.id === "PM:longitudinal");
+    expect(proposal?.count).toBe(8);
+    expect(proposal?.label).toMatch(/HA12|HA16/);
+    expect(proposal?.areaMm2).toBeGreaterThan(0);
+  });
+
+  it("respecte exactement neuf barres, sans arrondir vers un nombre pair", () => {
+    const result = designReinforcedConcrete({
+      basis: basis(),
+      members: [{ id: "P9", type: "column", combinationId: "comb:uls", combinationName: "ELU exact", sectionWidthMm: 400, sectionDepthMm: 400, lengthMm: 3000, axialKn: 250, shearKn: 0, momentKnM: 5, momentXKnM: 5, momentYKnM: 0 }],
+      slabs: [],
+      overrides: { "P9:longitudinal": { diameterMm: 0, count: 9 } },
+    });
+    expect(result.elements[0].reinforcement.find(item => item.id === "P9:longitudinal")?.count).toBe(9);
+  });
+
   it("ignores and blocks a longitudinal HA8 override while proposing an admissible catalog diameter", () => {
     const result = designReinforcedConcrete({
       basis: basis(),

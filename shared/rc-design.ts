@@ -35,7 +35,8 @@ export type RCDesignBasis = {
   seismicDuctilityClass?: "DCL" | "DCM" | "DCH";
 };
 
-export type RebarOverride = { diameterMm: number; count: number };
+export type RebarComponent = { diameterMm: number; count: number };
+export type RebarOverride = { diameterMm: number; count: number; composition?: RebarComponent[]; diameters?: number[] };
 export type RCDesignOverrides = Record<string, RebarOverride>;
 export type RCMemberDemand = {
   id: string;
@@ -517,33 +518,60 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     const tieLengthM = shape === "circular" ? Math.PI * Math.max(0, width - 2 * (basis.coverMm + tieDiameter / 2)) / 1000 : 2 * (Math.max(0, width - 2 * basis.coverMm - tieDiameter) + Math.max(0, height - 2 * basis.coverMm - tieDiameter)) / 1000;
     return { elementId: demand.id, type: "column", combinationId, combinationName, checks: [emptyCheck("column-longitudinal-diameter", "Diamètre longitudinal admissible", "mm", combinationId, combinationName, message)], reinforcement: [proposal(`${demand.id}:ties`, `Cadres · HA ${tieDiameter} / ${tieSpacing} mm`, tieDiameter, tieCount, 0, tieLengthM)], limitations: [...limitations, message] };
   }
-  const override = overrides[`${demand.id}:longitudinal`];
-  const overrideDiameterAdmissible = !!override && longitudinalDiameters.includes(override.diameterMm);
-  const effectiveOverride = overrideDiameterAdmissible ? override : undefined;
-  const ignoredLongitudinalOverride = !!override && !overrideDiameterAdmissible;
   const minimumCount = shape === "circular" ? 6 : 4;
+  const override = overrides[`${demand.id}:longitudinal`];
+  const requestedDiameters = override?.diameters?.filter(diameter => longitudinalDiameters.includes(diameter)) ?? [];
+  const forcedCount = override && Number.isInteger(override.count) && override.count > 0 ? override.count : undefined;
+  const chooseMixedComposition = (barDiameters: number[], count: number): RebarComponent[] | undefined => {
+    if (barDiameters.length < 2 || count > 24) return undefined;
+    let best: RebarComponent[] | undefined;
+    let bestScore = Number.POSITIVE_INFINITY;
+    const walk = (index: number, remaining: number, parts: RebarComponent[]) => {
+      if (index === barDiameters.length - 1) {
+        const composition = [...parts, { diameterMm: barDiameters[index], count: remaining }].filter(item => item.count > 0);
+        const area = composition.reduce((sum, item) => sum + item.count * barArea(item.diameterMm), 0);
+        const score = area >= minSteel ? area - minSteel : 1e6 + minSteel - area;
+        if (score < bestScore) { bestScore = score; best = composition; }
+        return;
+      }
+      for (let amount = 0; amount <= remaining; amount++) walk(index + 1, remaining - amount, [...parts, { diameterMm: barDiameters[index], count: amount }]);
+    };
+    walk(0, count, []);
+    return best;
+  };
+  const overrideComposition = override?.composition?.filter(item => longitudinalDiameters.includes(item.diameterMm) && Number.isInteger(item.count) && item.count > 0)
+    ?? (requestedDiameters.length > 1 && forcedCount ? chooseMixedComposition(requestedDiameters, forcedCount) : undefined)
+    ?? [];
+  const overrideDiameterAdmissible = !!override && longitudinalDiameters.includes(override.diameterMm);
+  const mixedOverrideAdmissible = overrideComposition.length > 0 && overrideComposition.reduce((sum, item) => sum + item.count, 0) === forcedCount;
+  const countOnlyOverride = !!override && forcedCount !== undefined && requestedDiameters.length === 0 && !override.composition;
+  const effectiveOverride = overrideDiameterAdmissible && !countOnlyOverride ? override : undefined;
+  const ignoredLongitudinalOverride = !!override && !overrideDiameterAdmissible;
   const barPitchLimitMm = isBael ? baelMaximumColumnBarPitchMm(width, height) : Number.POSITIVE_INFINITY;
-  const candidateFor = (barDiameterMm: number, barCount: number) => {
-    const areaMm2 = barCount * barArea(barDiameterMm);
-    const tieDiameterMm = isBael ? (baelColumnTieDiameterMm(barDiameterMm) ?? 6) : Math.max(6, Math.min(...diameters));
+  const candidateFor = (barDiameterMm: number, barCount: number, composition?: RebarComponent[]) => {
+    const normalizedComposition = composition?.length ? composition : [{ diameterMm: barDiameterMm, count: barCount }];
+    const areaMm2 = normalizedComposition.reduce((sum, item) => sum + item.count * barArea(item.diameterMm), 0);
+    const maximumDiameterMm = Math.max(...normalizedComposition.map(item => item.diameterMm));
+    const tieDiameterMm = isBael ? (baelColumnTieDiameterMm(maximumDiameterMm) ?? 6) : Math.max(6, Math.min(...diameters));
     const layout = isBael
-      ? baelColumnLayoutForCount(shape, width, height, barCount, barDiameterMm, tieDiameterMm, basis.coverMm, barPitchLimitMm)
-      : { valid: true, minimumCount: 4, maxPitchMm: Number.POSITIVE_INFINITY, clearSpacingMm: (Math.min(width, height) - 2 * basis.coverMm - 2 * barDiameterMm) / Math.max(1, barCount / 2 - 1) };
+      ? baelColumnLayoutForCount(shape, width, height, barCount, maximumDiameterMm, tieDiameterMm, basis.coverMm, barPitchLimitMm)
+      : { valid: true, minimumCount: 4, maxPitchMm: Number.POSITIVE_INFINITY, clearSpacingMm: (Math.min(width, height) - 2 * basis.coverMm - 2 * maximumDiameterMm) / Math.max(1, barCount / 2 - 1) };
     const concreteAreaMm2 = Math.max(0, areaGross - areaMm2);
     const axialResistanceKn = (0.8 * concreteAreaMm2 * fcd + areaMm2 * fyd) / 1000;
-    const leverX = Math.max(0, height - 2 * (basis.coverMm + tieDiameterMm + barDiameterMm / 2));
-    const leverY = Math.max(0, width - 2 * (basis.coverMm + tieDiameterMm + barDiameterMm / 2));
+    const leverX = Math.max(0, height - 2 * (basis.coverMm + tieDiameterMm + maximumDiameterMm / 2));
+    const leverY = Math.max(0, width - 2 * (basis.coverMm + tieDiameterMm + maximumDiameterMm / 2));
     const mxResistanceKnM = areaMm2 * fyd * leverX * 0.25 / 1e6;
     const myResistanceKnM = areaMm2 * fyd * leverY * 0.25 / 1e6;
     const interactionRatio = axialKn / Math.max(axialResistanceKn, 1e-9)
       + preselectionMomentX / Math.max(mxResistanceKnM, 1e-9)
       + preselectionMomentY / Math.max(myResistanceKnM, 1e-9);
-    return { diameterMm: barDiameterMm, count: barCount, areaMm2, axialResistanceKn, interactionRatio, clearSpacingMm: layout.clearSpacingMm, maxPitchMm: layout.maxPitchMm, minimumCount: Math.max(minimumCount, layout.minimumCount), layoutValid: layout.valid && layout.clearSpacingMm >= basis.minClearSpacingMm, tieDiameterMm };
+    return { diameterMm: maximumDiameterMm, count: barCount, composition: normalizedComposition, areaMm2, axialResistanceKn, interactionRatio, clearSpacingMm: layout.clearSpacingMm, maxPitchMm: layout.maxPitchMm, minimumCount: Math.max(minimumCount, layout.minimumCount), layoutValid: layout.valid && layout.clearSpacingMm >= basis.minClearSpacingMm, tieDiameterMm };
   };
   const catalogCandidates = longitudinalDiameters.flatMap(barDiameterMm => {
     const largestCount = Math.max(minimumCount, Math.min(100, Math.floor(maxSteel / barArea(barDiameterMm) / 2) * 2));
     return Array.from({ length: Math.floor((largestCount - minimumCount) / 2) + 1 }, (_, index) => candidateFor(barDiameterMm, minimumCount + index * 2));
   });
+  const exactCountCandidates = forcedCount === undefined ? [] : (requestedDiameters.length ? requestedDiameters : longitudinalDiameters).map(barDiameterMm => candidateFor(barDiameterMm, forcedCount));
   const passingCandidates = catalogCandidates.filter(candidate =>
     candidate.areaMm2 >= minSteel && candidate.areaMm2 <= maxSteel
     && candidate.axialResistanceKn >= axialKn
@@ -559,10 +587,19 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     candidate.minimumCount / Math.max(candidate.count, 1),
     isBael ? candidate.maxPitchMm / Math.max(barPitchLimitMm, 1) : 0,
   );
-  const overrideCount = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count >= minimumCount
-    ? Math.max(minimumCount, effectiveOverride.count + (effectiveOverride.count % 2)) : undefined;
-  let selectedBars = effectiveOverride && overrideCount
+  const overrideCount = effectiveOverride && Number.isInteger(effectiveOverride.count) && effectiveOverride.count > 0 ? effectiveOverride.count : undefined;
+  const exactCountPassingCandidates = exactCountCandidates.filter(candidate =>
+    candidate.areaMm2 >= minSteel && candidate.areaMm2 <= maxSteel
+    && candidate.axialResistanceKn >= axialKn
+    && candidate.interactionRatio <= 1
+    && candidate.layoutValid && candidate.count === forcedCount,
+  ).sort((a, b) => a.areaMm2 - b.areaMm2 || a.diameterMm - b.diameterMm);
+  let selectedBars = mixedOverrideAdmissible
+    ? candidateFor(Math.max(...overrideComposition.map(item => item.diameterMm)), overrideComposition.reduce((sum, item) => sum + item.count, 0), overrideComposition)
+    : effectiveOverride && overrideCount
     ? candidateFor(effectiveOverride.diameterMm, overrideCount)
+    : countOnlyOverride
+    ? exactCountPassingCandidates[0] ?? [...exactCountCandidates].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || a.areaMm2 - b.areaMm2)[0] ?? candidateFor(longitudinalDiameters[0], forcedCount ?? minimumCount)
     : passingCandidates[0] ?? [...catalogCandidates].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || a.areaMm2 - b.areaMm2)[0] ?? candidateFor(longitudinalDiameters[0], minimumCount);
   let baelIsolatedEquilibrium: ReturnType<typeof solveBAELIsolatedColumnEquilibrium> | null = null;
   if (isBael && !a43WithinDomain && baelSecondX && baelSecondY && basis.fckMpa <= 60) {
@@ -630,7 +667,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
       : `Enveloppe linéaire de pré-étude; moments après imperfections: Mx,Ed=${interactionMomentX.toFixed(2)} kN·m, My,Ed=${interactionMomentY.toFixed(2)} kN·m.`
     : "NEd/NRd + |Mx|/MRdx + |My|/MRdy ≤ 1 ; enveloppe linéaire non normative";
   const reinforcement: RebarProposal[] = [
-    proposal(`${demand.id}:longitudinal`, `Longitudinal poteau · ${count}HA${diameter} · ${shape === "circular" ? "répartition circulaire régulière" : "répartition sur les faces"}`, diameter, count, requiredSteel, length / 1000),
+    proposal(`${demand.id}:longitudinal`, `Longitudinal poteau · ${selectedBars.composition.map(item => `${item.count}HA${item.diameterMm}`).join(" + ")} · ${shape === "circular" ? "répartition circulaire régulière" : "répartition sur les faces"}`, diameter, count, requiredSteel, length / 1000),
     proposal(`${demand.id}:ties`, `Cadres BAEL · HA ${tieDiameter} / ${tieSpacingMm.toFixed(0)} mm · ceinture continue`, tieDiameter, tieCount, 0, tieLengthM),
   ];
   let baelAnchorageRatio: number | null = null;
