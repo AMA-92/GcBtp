@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FRENCH_BAEL_LEGACY_STANDARD } from "@shared/french-standard-profile";
+import { formatAreaValuesMm2AndCm2 } from "@shared/area-units";
 import { designReinforcedConcrete, proposeColumnSectionIncreases, type RCDesignBasis } from "@shared/rc-design";
 import {
   baelColumnLayoutForCount,
@@ -133,8 +134,16 @@ describe("BAEL 91 mod. 99 — calculs de poteaux", () => {
     expect(design.columnReport?.AsRequiredMm2).toBe(400);
     expect(bars.map(item => `${item.count}HA${item.diameterMm}`)).toEqual(["4HA12"]);
     expect(bars.reduce((sum, item) => sum + item.areaMm2, 0)).toBeCloseTo(452, 8);
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsRequiredMm2 ?? Infinity);
+    expect(formatAreaValuesMm2AndCm2([
+      design.columnReport!.AsTheoreticalMm2,
+      design.columnReport!.AsMinimumMm2,
+      design.columnReport!.AsRequiredMm2,
+      design.columnReport!.AsProvidedMm2,
+    ])).toBe("3,49 / 400,00 / 400,00 / 452,00 mm² (0,03 / 4,00 / 4,00 / 4,52 cm²)");
     expect(design.checks.find(item => item.id === "column-axial")?.status).toBe("satisfaisant");
     expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-steel-axial")?.status).toBe("satisfaisant");
   });
 
   it("ne conclut pas en compression centrée BAEL sans effort normal positif", () => {

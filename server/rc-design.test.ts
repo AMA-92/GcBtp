@@ -125,7 +125,7 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(result.schedule.every(item => item.massKg > 0)).toBe(true);
   });
 
-  it("proposes larger A/B column dimensions under Eurocode 2 while retaining the selected bars", () => {
+  it("does not propose EC2 column dimensions as compliant while detailing remains blocked", () => {
     const eurocodeBasis = { ...basis(), availableBarDiametersMm: [14] };
     const member = { id: "P-EC2", type: "column" as const, combinationId: "ELU", combinationName: "ELU EC2", sectionWidthMm: 200, sectionDepthMm: 300, lengthMm: 1000, axialKn: 776, shearKn: 0, momentKnM: 0.48, momentXKnM: 0.39, momentYKnM: 0.48 };
     const proposals = proposeColumnSectionIncreases({
@@ -135,9 +135,7 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
       selfWeightIncluded: true,
       permanentLoadFactor: 1.35,
     });
-    expect(proposals.length).toBeGreaterThan(0);
-    expect(proposals.every(item => item.proposedSection.dimensions[0] >= 200 && item.proposedSection.dimensions[1] >= 300)).toBe(true);
-    expect(proposals.every(item => item.utilization <= 1)).toBe(true);
+    expect(proposals).toHaveLength(0);
   });
 
   it("classifies a modeled corner column, records connected members, and exposes its calculation sheet", () => {
@@ -178,6 +176,8 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(design.columnReport?.NEdKn).toBe(500);
     expect(design.columnReport?.TEdKnM).toBe(1);
     expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsMinimumMm2 ?? Infinity);
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsRequiredMm2 ?? Infinity);
+    expect(design.checks.find(item => item.id === "column-steel-axial")?.status).toBe("satisfaisant");
   });
 
   it("reports the configured slenderness limit and does not mark zero first-order moment as a second-order failure", () => {
@@ -211,6 +211,8 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(design.checks.find(item => item.id === "column-second-order")?.label).toContain("amplification biaxiale");
     expect(design.checks.find(item => item.id === "column-second-order")?.formula).toContain("L0=3200 mm");
     expect(design.columnReport?.MEdXKnM).toBeGreaterThan(30);
+    expect(design.checks.find(item => item.id === "column-steel-axial")?.status).toBe("satisfaisant");
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsRequiredMm2 ?? Infinity);
   });
 
   it("chooses symmetric mixed HA groups when they satisfy a biaxial column check", () => {
@@ -227,6 +229,8 @@ describe("priority 6 — reinforced concrete pre-design and detailing proposals"
     expect(new Set(longitudinal.map(item => item.diameterMm)).size).toBeGreaterThan(1);
     expect(longitudinal.every(item => item.barPositionsMm?.length === item.count)).toBe(true);
     expect(design.checks.find(item => item.id === "column-interaction")?.status).toBe("satisfaisant");
+    expect(design.checks.find(item => item.id === "column-steel-axial")?.status).toBe("satisfaisant");
+    expect(design.columnReport?.AsProvidedMm2).toBeGreaterThanOrEqual(design.columnReport?.AsRequiredMm2 ?? Infinity);
     expect(design.reinforcement.some(item => item.id === "P-MIX:cross-ties" && !!item.tieSegmentsMm?.length)).toBe(true);
   });
 

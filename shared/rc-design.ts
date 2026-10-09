@@ -733,7 +733,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const compareCandidates = (a: ReturnType<typeof candidateFor>, b: ReturnType<typeof candidateFor>) =>
     a.count - b.count || a.areaMm2 - b.areaMm2 || a.groups.length - b.groups.length || a.diameterMm - b.diameterMm;
   const isAcceptableCandidate = (candidate: ReturnType<typeof candidateFor>) =>
-    candidate.areaMm2 >= minSteel && candidate.areaMm2 <= maxSteel
+    candidate.areaMm2 >= minSteel && candidate.areaMm2 >= asTheoreticalMm2 && candidate.areaMm2 <= maxSteel
     && candidate.axialResistanceKn >= axialKn
     && candidate.interactionRatio <= 1
     && candidate.layoutValid && candidate.count >= candidate.minimumCount;
@@ -775,7 +775,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
   const scoreCandidate = (candidate: typeof catalogCandidates[number]) => Math.max(
     axialKn / Math.max(candidate.axialResistanceKn, 1e-9),
     candidate.interactionRatio,
-    minSteel / Math.max(candidate.areaMm2, 1e-9),
+    requiredSteel / Math.max(candidate.areaMm2, 1e-9),
     candidate.areaMm2 / Math.max(maxSteel, 1e-9),
     basis.minClearSpacingMm / Math.max(candidate.clearSpacingMm, 1e-9),
     candidate.minimumCount / Math.max(candidate.count, 1),
@@ -786,6 +786,7 @@ function designColumn(demand: RCMemberDemand, basis: RCDesignBasis, overrides: R
     : passingCandidates[0] ?? [...(fallbackCandidates.length ? fallbackCandidates : constrainedCandidates.filter(candidate => candidate.areaMm2 > 0 && candidate.areaMm2 <= maxSteel))].sort((a, b) => scoreCandidate(a) - scoreCandidate(b) || compareCandidates(a, b))[0] ?? candidateFor(longitudinalDiameters[0], longitudinalDiameters[0], targetBarCount ?? minimumCount);
   const rejectionReason = (candidate: typeof catalogCandidates[number]) => candidate.areaMm2 < minSteel
     ? `As=${(candidate.areaMm2 / 100).toFixed(2)} cm² < As,min=${(minSteel / 100).toFixed(2)} cm²`
+    : candidate.areaMm2 < asTheoreticalMm2 ? `As=${(candidate.areaMm2 / 100).toFixed(2)} cm² < As,th=${(asTheoreticalMm2 / 100).toFixed(2)} cm²`
     : candidate.areaMm2 > maxSteel ? `As>${(maxSteel / 100).toFixed(2)} cm² maximal`
     : candidate.axialResistanceKn < axialKn ? `NRd=${candidate.axialResistanceKn.toFixed(1)} kN < NEd=${axialKn.toFixed(1)} kN`
     : candidate.interactionRatio > 1 ? `interaction N–Mx–My=${candidate.interactionRatio.toFixed(2)} > 1`
@@ -1253,12 +1254,14 @@ export function proposeColumnSectionIncreases(input: {
     ? Math.PI * (widthMm / 1000) ** 2 / 4
     : (widthMm * depthMm) / 1e6;
   const isBael = resolveRCStandardProfile(basis.standard).family === "bael-91-99";
-  const requiredCheckIds = [
-    "column-axial", "column-interaction", "column-steel-min", "column-steel-max",
-    "column-bar-spacing", "column-bar-layout-count", "column-tie-spacing",
-    ...(isBael ? ["column-second-order", "column-bael-detailing"] : []),
-  ];
   const meetsModalChecks = (design: RCElementDesign) => {
+    const requiredCheckIds = [
+      "column-axial", "column-interaction", "column-steel-axial", "column-steel-min", "column-steel-max",
+      "column-bar-spacing", "column-bar-layout-count", "column-tie-spacing", "column-bael-detailing",
+      ...(isBael ? ["column-second-order"] : ["column-slenderness", "column-second-order"]),
+      ...(isBael && (design.columnReport?.baelCompression?.slenderness ?? 0) > 70 ? ["column-bael-alpha-range"] : []),
+      ...(basis.seismicDetailingEnabled ? ["column-seismic-detailing"] : []),
+    ];
     const coreChecks = design.checks.filter(item => requiredCheckIds.includes(item.id));
     return coreChecks.length === requiredCheckIds.length
       && coreChecks.every(item => item.status === "satisfaisant")
